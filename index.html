@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#080b11">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="port.folio Fab">
+<meta name="description" content="Portefeuille temps réel — Fab v6.0">
+<title>port.folio Fab</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23080b11'/%3E%3Ctext x='50' y='62' font-size='52' text-anchor='middle' font-family='system-ui' font-weight='800' fill='%23dde3f0'%3Ep%3Ctspan fill='%234f83f5'%3E.%3C/tspan%3Ef%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23080b11'/%3E%3Ctext x='50' y='62' font-size='52' text-anchor='middle' font-family='system-ui' font-weight='800' fill='%23dde3f0'%3Ep%3Ctspan fill='%234f83f5'%3E.%3C/tspan%3Ef%3C/text%3E%3C/svg%3E">
+<style>
+*,*::before,*::after{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:#080b11;color:#dde3f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;line-height:1.4;-webkit-font-smoothing:antialiased;overscroll-behavior:none}
+button{font-family:inherit;font-size:inherit;color:inherit;background:none;border:none;cursor:pointer;padding:0}
+input,select{font-family:inherit;color:inherit;background:#161c2a;border:1px solid rgba(255,255,255,.08);border-radius:6px;padding:8px 10px;width:100%;font-size:13px}
+input:focus,select:focus{outline:none;border-color:#4f83f5}
+.app{max-width:640px;margin:0 auto;padding:0 12px 84px;min-height:100vh;position:relative}
+.hd{display:flex;align-items:center;justify-content:space-between;padding:14px 4px 10px;position:sticky;top:0;background:linear-gradient(180deg,#080b11 0%,#080b11 80%,rgba(8,11,17,0));z-index:10}
+.lg{font-size:18px;font-weight:800;letter-spacing:-.02em}
+.lg .dot{color:#4f83f5}
+.hd-r{display:flex;align-items:center;gap:10px}
+.ring{width:30px;height:30px;position:relative}
+.ring svg{transform:rotate(-90deg)}
+.pill{display:flex;align-items:center;gap:6px;background:#0f1420;border:1px solid rgba(255,255,255,.06);border-radius:20px;padding:5px 11px;font-size:11px;font-variant-numeric:tabular-nums;cursor:pointer;transition:background .15s}
+.pill:active{background:#161c2a}
+.pill .dt{width:7px;height:7px;border-radius:50%;background:#2ecc8f;animation:bl 1.2s ease-in-out infinite}
+.pill.ld .dt{background:#f0a020}
+.pill.er .dt{background:#e85d5d;animation:none}
+@keyframes bl{0%,100%{opacity:.4}50%{opacity:1}}
+.strip{display:flex;gap:8px;overflow-x:auto;padding:4px 0 12px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.strip::-webkit-scrollbar{display:none}
+.met{flex:0 0 auto;background:#0f1420;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:10px 12px;min-width:108px}
+.met .lb{font-size:8px;font-weight:800;letter-spacing:.08em;color:#3a4560;text-transform:uppercase;margin-bottom:4px}
+.met .vl{font-size:15px;font-weight:700;font-family:"SF Mono","Fira Code",Consolas,monospace}
+.met .sb{font-size:10px;color:#8892a8;margin-top:2px;font-family:"SF Mono",Consolas,monospace}
+.card{background:#0f1420;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:12px;margin-bottom:9px}
+.cd-ti{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.cd-ti h3{margin:0;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8892a8}
+.row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.row:last-child{border-bottom:none}
+.row.tap{cursor:pointer;transition:opacity .15s}
+.row.tap:active{opacity:.6}
+.tk{font-weight:700;font-size:13px}
+.nm{font-size:10px;color:#8892a8}
+.num{font-family:"SF Mono",Consolas,monospace;font-variant-numeric:tabular-nums;text-align:right}
+.chip{display:inline-block;padding:2px 8px;border-radius:4px;font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.chip.buy{background:rgba(46,204,143,.2);color:#2ecc8f}
+.chip.hold{background:rgba(240,160,32,.2);color:#f0a020}
+.chip.sell{background:rgba(232,93,93,.2);color:#e85d5d}
+.chip.spec{background:rgba(139,124,245,.2);color:#8b7cf5}
+.tab{position:fixed;bottom:0;left:0;right:0;background:rgba(8,11,17,.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-around;padding:6px 0 max(6px,env(safe-area-inset-bottom));z-index:50}
+.tb{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 4px;border-radius:6px;font-size:9px;font-weight:600;color:#8892a8;letter-spacing:.04em;text-transform:uppercase;transition:color .15s}
+.tb.ac{color:#4f83f5}
+.tb .ic{font-size:18px;line-height:1}
+.bn{padding:11px 14px;border-radius:8px;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:background .15s}
+.bn:active{transform:scale(.98)}
+.bn-r{background:rgba(232,93,93,.15);border:1px solid rgba(232,93,93,.4);color:#e85d5d}
+.bn-g{background:rgba(46,204,143,.15);border:1px solid rgba(46,204,143,.4);color:#2ecc8f}
+.bn-b{background:rgba(79,131,245,.15);border:1px solid rgba(79,131,245,.4);color:#4f83f5}
+.bn-w{background:#161c2a;border:1px solid rgba(255,255,255,.08);color:#dde3f0}
+.bn.ic-only{padding:6px 9px;font-size:13px}
+.tag{display:inline-block;padding:3px 7px;border-radius:4px;font-size:8px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;background:rgba(255,255,255,.06);color:#8892a8}
+.bar{height:5px;border-radius:3px;background:#161c2a;overflow:hidden;position:relative}
+.bar>span{display:block;height:100%;border-radius:3px;transition:width .3s ease}
+.toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:#0f1420;border:1px solid rgba(255,255,255,.1);padding:10px 16px;border-radius:8px;font-size:12px;z-index:100;animation:fadein .25s}
+@keyframes fadein{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.lbl{font-size:8px;font-weight:800;letter-spacing:.08em;color:#3a4560;text-transform:uppercase;margin-bottom:4px}
+.dt-ovr{position:fixed;inset:0;background:#080b11;z-index:200;overflow-y:auto;padding:0 12px 80px;-webkit-overflow-scrolling:touch}
+.bk{display:flex;align-items:center;gap:8px;padding:14px 0 10px;font-size:13px;color:#8892a8;cursor:pointer}
+.bk:active{color:#dde3f0}
+.warn{padding:10px 12px;border-radius:8px;font-size:11px;line-height:1.45;margin-bottom:9px;background:rgba(240,160,32,.08);border:1px solid rgba(240,160,32,.3);color:#f0a020}
+.err{padding:10px 12px;border-radius:8px;font-size:11px;line-height:1.45;margin-bottom:9px;background:rgba(232,93,93,.08);border:1px solid rgba(232,93,93,.3);color:#e85d5d}
+.dim{color:#8892a8}
+.mono{font-family:"SF Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
+.boot{padding:60px 24px;text-align:center;color:#8892a8;font-size:13px}
+.boot .lg{font-size:24px;margin-bottom:12px;color:#dde3f0}
+.seg{display:flex;background:#0f1420;border-radius:8px;padding:3px;gap:3px;margin-bottom:10px}
+.seg .it{flex:1;text-align:center;padding:7px 8px;font-size:11px;font-weight:700;border-radius:5px;cursor:pointer;color:#8892a8;transition:all .15s}
+.seg .it.ac{background:#4f83f5;color:#fff}
+</style>
+</head>
+<body>
+<div id="root"><div class="boot"><div class="lg">port<span style="color:#4f83f5">.</span>folio</div>Chargement...</div></div>
+
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+<script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react" data-type="module">
+/* ===== port.folio Fab v6.0 — Standalone PWA ===== */
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart } = Recharts;
+
+/* ============== CONSTANTES ============== */
+const BUILD = "v7.0-2026-04-27-004";
+const STORE_KEY = "fab-pf-v6";
+const ALERTS_KEY = "fab-pf-alerts-v6";
+const DB_NAME = "fab-pf-history";
+const DB_VERSION = 1;
+const SNAP_STORE = "snapshots";
+const REFRESH_MS = 10000;
+const FALLBACK_EURUSD = 1.174; // 1 EUR = 1.174 USD (ECB ~ 28/04/2026)
+
+/* Mapping vérifié par ISIN (28/04/2026) */
+const YF = {
+  FTI:  { y: "FTI",     ccy: "USD" },
+  HPE:  { y: "HPE",     ccy: "USD" },
+  AMZN: { y: "AMZN",    ccy: "USD" },
+  MC:   { y: "MC.PA",   ccy: "EUR" }, // LVMH FR0000121014
+  NATO: { y: "NATO.L",  ccy: "USD" }, // HANetf Future of Defence IE000OJ5TQP4
+  NVDA: { y: "NVDA",    ccy: "USD" },
+  ABUS: { y: "ABUS",    ccy: "USD" },
+  GAD:  { y: "DFND.MI", ccy: "USD" }, // iShares Global Aero & Def IE000U9ODG19
+  MSFT: { y: "MSFT",    ccy: "USD" }
+};
+
+/* Snapshot prix de boot — affiché immédiatement, écrasé dès le 1er fetch */
+const PRICE_DEF = {
+  FTI: 67.59, HPE: 23.61, AMZN: 208.27, MC: 456.15,
+  NATO: 20.85, NVDA: 170.85, ABUS: 4.10, GAD: 9.85, MSFT: 358.96
+};
+
+/* Portefeuille par défaut — PRU figé en EUR */
+const PORT_DEF = [
+  { t:"FTI",  n:"TechnipFMC",        q:1,        b:8.09,   s:"Énergie", sig:"sell", v:28 },
+  { t:"HPE",  n:"HP Enterprise",     q:1,        b:16.79,  s:"Tech",    sig:"hold", v:32 },
+  { t:"AMZN", n:"Amazon",            q:0.07,     b:130.86, s:"Tech",    sig:"buy",  v:25 },
+  { t:"MC",   n:"LVMH",              q:0.014547, b:756.17, s:"Luxe",    sig:"hold", v:24 },
+  { t:"NATO", n:"Future of Defence", q:0.314544, b:15.90,  s:"Défense", sig:"buy",  v:20 },
+  { t:"NVDA", n:"NVIDIA",            q:0.03,     b:145.33, s:"Tech",    sig:"buy",  v:38 },
+  { t:"ABUS", n:"Arbutus Biopharma", q:0.484261, b:4.13,   s:"Biotech", sig:"spec", v:65 },
+  { t:"GAD",  n:"Global Aero & Def", q:0.119033, b:8.40,   s:"Défense", sig:"buy",  v:18 },
+  { t:"MSFT", n:"Microsoft",         q:0.002811, b:355.75, s:"Tech",    sig:"buy",  v:22 }
+];
+
+/* Données analyste (compactes) */
+const AN = {
+  FTI:{r:"ALLÉGER",c:85,p:5,sig:"sell",tgt:{l:42,a:63,h:82},
+    th:"Cours dépasse consensus analystes. Concentration importante du portefeuille = risque de drawdown asymétrique. Recommandation : alléger 50-60% sur force, réinvestir sur convictions IA/défense.",
+    cat:["Backlog offshore +12 Md$","Rebond capex pétrolier","Cycle haut Brent"],
+    ris:["Concentration extrême","Volatilité brent","Cyclicité offshore"],
+    act:"Vendre 50-60% sur force",edg:"Le marché récompense déjà la thèse — marge de surprise positive faible."},
+  HPE:{r:"CONSERVER",c:55,p:15,sig:"hold",tgt:{l:18,a:24,h:30},
+    th:"Infra IA via Juniper (14 Md$), GreenLake (NRR>110%). EV/EBITDA ~5x bas mais croissance lente. Conserver sans renforcer.",
+    cat:["Intégration Juniper","Stack souverain IA","Multiples bas"],
+    ris:["Exécution Juniper","Concurrence Cisco/Dell","CapEx clients lent"],
+    act:"Conserver",edg:"Sous-suivi vs hyperscalers — re-rating possible si AI infra delivers."},
+  AMZN:{r:"RENFORCER FORT",c:90,p:35,sig:"buy",tgt:{l:200,a:260,h:320},
+    th:"AWS (70% des profits), Advertising en accélération, CapEx >100 Md$. Seul mégacap où la croissance +40% YoY n'est pas encore dans le multiple.",
+    cat:["AWS Bedrock","Ads +25% YoY","Marges retail"],
+    ris:["Régulation FTC","Concurrence Azure","CapEx élevé"],
+    act:"Renforcer agressivement",edg:"Marché sous-estime la marge AWS sur l'inférence IA."},
+  ABUS:{r:"MAINTENIR SPEC",c:45,p:15,sig:"spec",tgt:{l:2,a:4.5,h:8},
+    th:"Pari binaire settlement Moderna ~950 M$ (juil. 2026). ~190 M$ net = 54% market cap. Position spéculative.",
+    cat:["Settlement Moderna juillet","Royalties LNP","Pipeline HBV"],
+    ris:["Décision défavorable","Cash burn","Faible market cap"],
+    act:"Maintenir taille spéculative",edg:"Le marché actualise une probabilité de victoire trop faible."},
+  NVDA:{r:"PRIORITÉ #1",c:95,p:55,sig:"buy",tgt:{l:160,a:230,h:300},
+    th:"Infrastructure centrale de l'IA mondiale. Contrainte = capacité TSMC pas demande. Inférence > training en volumes 2027. Souverains IA = backlog absent des estimations.",
+    cat:["Blackwell Ultra","Souverains IA (UAE, Saoudie)","Inférence x10"],
+    ris:["Restrictions Chine","Cycle CapEx hyperscalers","Concurrence custom"],
+    act:"Priorité absolue, accumuler les replis",edg:"Marché pricé pour le training, ignore l'inférence."},
+  MSFT:{r:"RENFORCER FORT",c:92,p:45,sig:"buy",tgt:{l:330,a:420,h:500},
+    th:"Seul Big Tech ayant monétisé l'IA immédiatement. Copilot M365 (400M+ users), Azure +37% YoY. Correction = opportunité d'entrée.",
+    cat:["Copilot adoption","Azure AI workloads","OpenAI deal"],
+    ris:["CapEx massif","Régulation","Concurrence Google/AWS"],
+    act:"Renforcer sous 340€",edg:"Institutionnels sous-pondérés post-correction."},
+  MC:{r:"CONSERVER",c:60,p:30,sig:"hold",tgt:{l:480,a:620,h:780},
+    th:"P/E ~18x vs historique 25-30x. Ralentissement Chine cyclique pas structurel. Marque irremplaçable.",
+    cat:["Reprise Chine 2026","Pricing power","Marges 25%"],
+    ris:["Récession EU","Tourisme chinois","FX yen"],
+    act:"Conserver, cible 24M",edg:"Le marché extrapole le ralentissement Chine — bias court-termiste."},
+  NATO:{r:"RENFORCER",c:80,p:25,sig:"buy",tgt:{l:14,a:21,h:28},
+    th:"Biais européen (Rheinmetall, Safran, BAE). Europe rachète sa souveraineté militaire. ETF UCITS Acc à combiner avec GAD.",
+    cat:["NATO 5% PIB 2035","Réarmement EU","Cyber budgets"],
+    ris:["Cessation conflits","Budgets contraints","Concentration top 10"],
+    act:"Renforcer + DCA mensuel",edg:"Cycle pluridécennal pas pricé au-delà 12 mois."},
+  GAD:{r:"RENFORCER",c:82,p:22,sig:"buy",tgt:{l:7,a:11,h:14},
+    th:"Supercycle dépenses militaires globales. Biais US (LMT, RTX, NOC, GD). Commandes pluriannuelles visibles.",
+    cat:["Budget DoD record","Aerospace défense civil","Contrats Indo-Pacific"],
+    ris:["Shutdown US","Cycle pacifique","Coûts programmes F-35"],
+    act:"Renforcer + DCA",edg:"ETF mondial bénéficie même si un pays sous-performe."}
+};
+
+/* Nouvelles opportunités */
+const OPPS = [
+  {t:"CEG",n:"Constellation Energy",s:"Énergie",p:65,tgt:500,c:90,
+    note:"Trade de la décennie. PPA Microsoft 20 ans Three Mile Island. IA = 24/7 dispatchable → seul nucléaire scalable.",
+    edg:"Biais émotionnel 'nucléaire = catastrophe' EST l'opportunité."},
+  {t:"PLTR",n:"Palantir Technologies",s:"Tech",p:45,tgt:90,c:85,
+    note:"Pure-play IA + défense. Contrats DoD/CIA/OTAN pluriannuels. AIP = killer app entreprise.",
+    edg:"No man's land entre value et growth = alpha."},
+  {t:"FCX",n:"Freeport-McMoRan",s:"Matériaux",p:35,tgt:80,c:80,
+    note:"Le pétrole de la transition. Chaque data center IA = 3-10x plus de cuivre. Offre contrainte (mines = 15-20 ans).",
+    edg:"IA = infra physique = cuivre. Achetez la pioche."},
+  {t:"ASML",n:"ASML Holding",s:"Tech",p:28,tgt:1100,c:88,
+    note:"Monopole absolu EUV lithography. Aucun concurrent avant 2035. Backlog 40 Md€+.",
+    edg:"Société la plus critique de l'économie mondiale, peu suivie particuliers."},
+  {t:"URA",n:"Global X Uranium ETF",s:"Énergie",p:40,tgt:45,c:75,
+    note:"50+ réacteurs en construction. Renaissance US/EU. Offre met 10-15 ans à répondre.",
+    edg:"Réaction négative au mot nucléaire = biais = opportunité."}
+];
+
+const MACRO = {
+  regime:"Transition inflationniste vers stagflation partielle",
+  fed:"Fed contrainte : inflation services >3%. 1-2 baisses max 2026. Taux longs >4.5% jusqu'en 2027.",
+  geo:"Fragmentation géopolitique permanente : vents porteurs défense, énergie, matières premières pour une décennie.",
+  ia:"CapEx IA pas une bulle : ROI mesurables. Inférence dépasse training en volumes dès 2027. Demande GPU > offre.",
+  wrong:[
+    "« IA est pricée » : FAUX — valorisation de l'inférence pas dans les modèles",
+    "« Défense est toppy après +38% » : FAUX — début d'un réarmement pluridécennal",
+    "« LVMH est cassé » : FAUX — pause cyclique Chine, pas destruction structurelle",
+    "« Nucléaire est risqué » : BIAIS émotionnel qui crée l'opportunité CEG/URA"
+  ]
+};
+
+const SECS = [
+  {n:"IA Infrastructure",   r:55, m:"↑↑", col:"#4f83f5", tag:"Surpondérer", c:95},
+  {n:"Nucléaire & Énergie", r:60, m:"↑↑", col:"#f0a020", tag:"Accumuler",   c:88},
+  {n:"Défense & Sécurité",  r:35, m:"↑↑", col:"#2ecc8f", tag:"Surpondérer", c:90},
+  {n:"Cloud & SaaS IA",     r:35, m:"↑",  col:"#4f83f5", tag:"Renforcer",   c:85},
+  {n:"Matières premières",  r:40, m:"↑",  col:"#d4a843", tag:"Accumuler",   c:78},
+  {n:"Luxe",                r:25, m:"→",  col:"#8b7cf5", tag:"Conserver",   c:60},
+  {n:"Énergie offshore",    r:8,  m:"↓",  col:"#f0a020", tag:"Alléger",     c:85},
+  {n:"Immo Tech",           r:-70,m:"↓↓", col:"#e85d5d", tag:"Vendre",      c:99}
+];
+
+/* ============== STORAGE ============== */
+function loadStore() {
+  try {
+    const s = localStorage.getItem(STORE_KEY);
+    if (!s) return null;
+    const p = JSON.parse(s);
+    // On garde prices/eurusd même si BUILD a changé (le code évolue, les cours Yahoo non)
+    return p;
+  } catch(e) { console.warn("[Store] read err", e); return null; }
+}
+function saveStore(o) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify({ ...o, build: BUILD, savedAt: Date.now() })); }
+  catch(e) { console.warn("[Store] save err", e); }
+}
+function loadAlerts() {
+  try { const s = localStorage.getItem(ALERTS_KEY); return s ? JSON.parse(s) : {}; }
+  catch(e) { return {}; }
+}
+function saveAlerts(o) {
+  try { localStorage.setItem(ALERTS_KEY, JSON.stringify(o)); } catch(e) {}
+}
+
+/* ============== INDEXEDDB (historique) ============== */
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(SNAP_STORE)) {
+        const s = db.createObjectStore(SNAP_STORE, { keyPath: "ts" });
+        s.createIndex("date", "date", { unique: false });
+      }
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function snapshotAdd(snap) {
+  try {
+    const db = await openDB();
+    return new Promise((res, rej) => {
+      const tx = db.transaction(SNAP_STORE, "readwrite");
+      tx.objectStore(SNAP_STORE).put(snap);
+      tx.oncomplete = () => { db.close(); res(); };
+      tx.onerror = () => { db.close(); rej(tx.error); };
+    });
+  } catch(e) { console.warn("[DB] add err", e); }
+}
+async function snapshotsRange(fromTs) {
+  try {
+    const db = await openDB();
+    return new Promise((res) => {
+      const tx = db.transaction(SNAP_STORE, "readonly");
+      const out = [];
+      const req = tx.objectStore(SNAP_STORE).openCursor();
+      req.onsuccess = (e) => {
+        const c = e.target.result;
+        if (c) { if (c.value.ts >= fromTs) out.push(c.value); c.continue(); }
+        else { db.close(); res(out); }
+      };
+      req.onerror = () => { db.close(); res([]); };
+    });
+  } catch(e) { return []; }
+}
+
+/* ============== FETCH PRIX ============== */
+const PROXIES = [
+  s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`)}`,
+  s => `https://corsproxy.io/?${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`)}`,
+  s => `https://api.codetabs.com/v1/proxy?quest=https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`,
+  s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`)}`,
+  s => `https://corsproxy.io/?${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`)}`,
+  s => `https://api.allorigins.win/get?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`)}`
+];
+
+async function fetchOne(url, isWrap) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 9000);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(to);
+    if (!r.ok) throw new Error("http " + r.status);
+    const j = await r.json();
+    const data = isWrap ? JSON.parse(j.contents) : j;
+    const px = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+    if (!isFinite(px) || px <= 0) throw new Error("invalid price");
+    return px;
+  } catch(e) { clearTimeout(to); throw e; }
+}
+
+async function fetchSymbol(sym) {
+  const promises = PROXIES.map((mk, i) => fetchOne(mk(sym), i === 5));
+  return Promise.any(promises);
+}
+
+async function fetchAllPrices() {
+  const tickers = Object.keys(YF);
+  const results = {};
+  await Promise.all(tickers.map(async t => {
+    try { results[t] = await fetchSymbol(YF[t].y); }
+    catch(e) { console.warn("[Fetch]", t, "→", YF[t].y, "fail"); }
+  }));
+  let eurusd = FALLBACK_EURUSD;
+  try {
+    const r = await fetchSymbol("EURUSD=X");
+    if (r > 0.5 && r < 2) eurusd = r;
+  } catch(e) { console.warn("[Fetch] EURUSD fail, fallback", FALLBACK_EURUSD); }
+  return { prices: results, eurusd };
+}
+
+/* ============== CALCULS ============== */
+function priceEUR(t, prices, eurusd) {
+  const meta = YF[t]; const px = prices[t];
+  if (px == null || !meta) return null;
+  return meta.ccy === "EUR" ? px : px / eurusd;
+}
+function enrich(port, prices, eurusd) {
+  const items = port.map(p => {
+    const inv = p.q * p.b;
+    const pxE = priceEUR(p.t, prices, eurusd);
+    const val = pxE != null ? p.q * pxE : null;
+    const pnl = val != null ? val - inv : null;
+    const pct = (val != null && inv > 0) ? (pnl / inv) * 100 : null;
+    return { ...p, inv, pxE, val, pnl, pct };
+  });
+  const tot = items.reduce((s,p) => s + (p.val || 0), 0);
+  return items.map(p => ({ ...p, wt: tot > 0 && p.val ? (p.val/tot)*100 : 0 }));
+}
+function metrics(port) {
+  let tot=0, inv=0, pnl=0, wv2=0, wp=0, miss=0;
+  port.forEach(p => {
+    inv += p.inv;
+    if (p.val == null) { miss++; return; }
+    tot += p.val; pnl += p.pnl;
+    wv2 += Math.pow((p.v||20) * p.wt/100, 2);
+    wp  += (p.pct||0) * p.wt / 100;
+  });
+  const wv = Math.sqrt(wv2) * Math.sqrt(1.5);
+  return { tot, inv, pnl, wv, wp, sh: wv > 0 ? (wp - 3.5) / wv : 0, miss };
+}
+
+/* ============== FORMATEURS ============== */
+const fe = (v, d=2) => { if (v == null || !isFinite(v)) return "—"; return (v<0?"-":"") + "€" + Math.abs(v).toLocaleString("fr-FR",{minimumFractionDigits:d,maximumFractionDigits:d}); };
+const fd = (v, d=2) => { if (v == null || !isFinite(v)) return "—"; return (v<0?"-":"") + "$" + Math.abs(v).toLocaleString("fr-FR",{minimumFractionDigits:d,maximumFractionDigits:d}); };
+const fp = (v, d=1) => { if (v == null || !isFinite(v)) return "—"; return (v>=0?"+":"-") + Math.abs(v).toFixed(d) + "%"; };
+const fnum = (v, d=2) => { if (v == null || !isFinite(v)) return "—"; return v.toLocaleString("fr-FR",{minimumFractionDigits:d,maximumFractionDigits:d}); };
+const cl = v => v == null ? "#8892a8" : v >= 0 ? "#2ecc8f" : "#e85d5d";
+const cv = c => c >= 80 ? "#2ecc8f" : c >= 60 ? "#f0a020" : "#e85d5d";
+const ftime = (ts) => { if (!ts) return "—"; const d = new Date(ts); return d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}); };
+
+/* ============== NOTIFICATIONS ============== */
+async function askNotifPerm() {
+  if (!("Notification" in window)) return false;
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") return false;
+  try { const r = await Notification.requestPermission(); return r === "granted"; }
+  catch(e) { return false; }
+}
+function notify(title, body) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try { new Notification(title, { body, icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23080b11'/%3E%3Ctext x='50' y='62' font-size='52' text-anchor='middle' font-weight='800' fill='%23dde3f0'%3Ep%3Ctspan fill='%234f83f5'%3E.%3C/tspan%3Ef%3C/text%3E%3C/svg%3E" }); }
+  catch(e) {}
+}
+
+/* ============== ALERTES SEUILS ============== */
+function smartThresholds(pos, pxE) {
+  // Calcul intelligent des seuils par défaut basés sur PRU et volatilité
+  const v = pos.v || 25;
+  const lo = +(pos.b * (1 - Math.min(0.20, v/100 * 0.5))).toFixed(2);
+  const hi = +(pos.b * (1 + Math.min(0.40, v/100 * 1.0))).toFixed(2);
+  return { lo, hi };
+}
+function checkAlerts(port, alerts, prices, eurusd, lastNotifRef) {
+  const now = Date.now();
+  port.forEach(p => {
+    const pxE = priceEUR(p.t, prices, eurusd);
+    if (pxE == null) return;
+    const a = alerts[p.t]; if (!a || !a.on) return;
+    const lastT = lastNotifRef[p.t] || 0;
+    if (now - lastT < 3600000) return; // 1h cooldown par ticker
+    if (a.hi && pxE >= a.hi) {
+      notify(`🎯 ${p.t} a atteint le seuil HAUT`, `${pxE.toFixed(2)}€ ≥ ${a.hi}€ — prise de profit`);
+      lastNotifRef[p.t] = now;
+    } else if (a.lo && pxE <= a.lo) {
+      notify(`⚠️ ${p.t} sous le seuil BAS`, `${pxE.toFixed(2)}€ ≤ ${a.lo}€ — stop-loss`);
+      lastNotifRef[p.t] = now;
+    }
+  });
+}
+
+/* ============== MOTEUR PRÉVISION 10 FACTEURS ============== */
+function forecast(pos, mac) {
+  const an = AN[pos.t] || {};
+  // 10 facteurs (compactés) : conviction, momentum sectoriel, signal, volatilité, position cycle, etc.
+  const f1 = (an.c || 50) / 100;          // conviction analyste
+  const f2 = an.sig === "buy" ? 1 : an.sig === "sell" ? -1 : an.sig === "spec" ? .3 : 0;
+  const f3 = (an.p || 0) / 100;           // proj 12M brute
+  const f4 = pos.sig === "buy" ? .6 : pos.sig === "sell" ? -.4 : 0;
+  const f5 = (pos.v || 25) / 100;         // volatilité
+  const f6 = pos.pct != null ? Math.tanh(pos.pct/100) : 0; // momentum perso
+  const f7 = ["IA","Tech","Défense","Énergie"].includes(pos.s) ? .15 : 0; // tailwind sectoriel
+  const f8 = pos.s === "Énergie" && pos.sig === "sell" ? -.10 : 0;
+  const f9 = mac && mac.regime?.includes("stagflation") ? -.05 : 0;
+  const f10 = an.tgt ? (an.tgt.a / Math.max(0.01, pos.b) - 1) * 0.3 : 0;
+  const mu12 = f3*0.5 + f2*0.06 + f4*0.04 + f6*0.08 + f7 + f8 + f9 + f10*0.4;
+  const sigma12 = Math.max(0.10, f5 * 1.2);
+  // P10/P50/P90
+  return {
+    p10: mu12 - 1.28 * sigma12,
+    p50: mu12,
+    p90: mu12 + 1.28 * sigma12,
+    sigma: sigma12,
+    factors: { f1,f2,f3,f4,f5,f6,f7,f8,f9,f10 }
+  };
+}
+
+/* ============== COMPOSANTS UI ============== */
+function Ring({ pct }) {
+  const r = 12, c = 2*Math.PI*r;
+  const off = c * (1 - pct);
+  const col = pct < 0.15 ? "#f0a020" : "#2ecc8f";
+  return (
+    <div className="ring">
+      <svg width="30" height="30">
+        <circle cx="15" cy="15" r={r} fill="none" stroke="#161c2a" strokeWidth="2.5"/>
+        <circle cx="15" cy="15" r={r} fill="none" stroke={col} strokeWidth="2.5"
+          strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round"/>
+      </svg>
+    </div>
+  );
+}
+
+function Header({ countdownPct, status, lastTs, onPillClick }) {
+  return (
+    <div className="hd">
+      <div className="lg">port<span className="dot">.</span>folio</div>
+      <div className="hd-r">
+        <Ring pct={countdownPct}/>
+        <div className={"pill " + (status==="ld"?"ld":status==="er"?"er":"")} onClick={onPillClick}>
+          <span className="dt"></span>
+          <span>{status==="er"?"err":ftime(lastTs)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Strip({ m, alertCount }) {
+  return (
+    <div className="strip">
+      <div className="met">
+        <div className="lb">Valeur</div>
+        <div className="vl" style={{color: m.miss>0?"#f0a020":"#dde3f0"}}>{fe(m.tot)}</div>
+        <div className="sb">{m.miss>0?`${m.miss} prix manquant${m.miss>1?"s":""}`:"live"}</div>
+      </div>
+      <div className="met">
+        <div className="lb">P&amp;L</div>
+        <div className="vl" style={{color: cl(m.pnl)}}>{fe(m.pnl)}</div>
+        <div className="sb">{m.inv>0?fp(m.pnl/m.inv*100):"—"}</div>
+      </div>
+      <div className="met">
+        <div className="lb">Investi</div>
+        <div className="vl">{fe(m.inv)}</div>
+        <div className="sb">PRU figé</div>
+      </div>
+      <div className="met">
+        <div className="lb">Perf annu.</div>
+        <div className="vl" style={{color: m.wp>=10?"#2ecc8f":m.wp>=0?"#f0a020":"#e85d5d"}}>{fp(m.wp)}</div>
+        <div className="sb">cible 10–20%</div>
+      </div>
+      <div className="met">
+        <div className="lb">Sharpe</div>
+        <div className="vl" style={{color: m.sh>=1.5?"#2ecc8f":m.sh>=1?"#f0a020":"#e85d5d"}}>{m.sh.toFixed(2)}</div>
+        <div className="sb">{m.sh>=1.5?"Excellent":m.sh>=1?"Bon":m.sh>=0.5?"OK":"Faible"}</div>
+      </div>
+      <div className="met">
+        <div className="lb">Alertes</div>
+        <div className="vl" style={{color: alertCount>0?"#e85d5d":"#dde3f0"}}>{alertCount}</div>
+        <div className="sb">à alléger</div>
+      </div>
+    </div>
+  );
+}
+
+function PositionsView({ port, m, eurusd, onSelect, onTabChange }) {
+  const sells = port.filter(p => p.sig === "sell" && p.val != null);
+  const sectors = useMemo(() => {
+    const map = {};
+    port.forEach(p => { if (!p.val) return; map[p.s] = (map[p.s]||0) + p.val; });
+    return Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  }, [port]);
+  const totVal = sectors.reduce((s,[,v])=>s+v,0) || 1;
+  return (
+    <>
+      {sells.length > 0 && (
+        <div className="err" onClick={()=>onTabChange("adv")} style={{cursor:"pointer"}}>
+          <strong>⚠️ {sells.length} position{sells.length>1?"s":""} à alléger</strong> — voir Conseiller
+        </div>
+      )}
+      <div className="card">
+        <div className="cd-ti"><h3>Positions ({port.length})</h3>
+          <span className="dim mono" style={{fontSize:10}}>EUR/USD {eurusd?eurusd.toFixed(4):"—"}</span>
+        </div>
+        {port.map(p => (
+          <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}>
+            <div style={{flex:"0 0 38%"}}>
+              <div className="tk">{p.t} <span className={"chip "+p.sig} style={{marginLeft:6}}>{p.sig}</span></div>
+              <div className="nm">{p.n}</div>
+            </div>
+            <div className="num" style={{flex:"0 0 28%"}}>
+              <div>{p.pxE!=null?fe(p.pxE):"—"}</div>
+              <div style={{fontSize:10}} className="dim">{p.q.toLocaleString("fr-FR",{maximumFractionDigits:4})} u.</div>
+            </div>
+            <div className="num" style={{flex:"0 0 34%"}}>
+              <div style={{color:cl(p.pnl)}}>{fe(p.pnl)}</div>
+              <div style={{fontSize:10,color:cl(p.pct)}}>{fp(p.pct)} • {fp(p.wt,0)}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="card">
+        <div className="cd-ti"><h3>Exposition sectorielle</h3></div>
+        {sectors.map(([s,v]) => (
+          <div key={s} className="row">
+            <div>{s}</div>
+            <div style={{flex:1,margin:"0 12px"}}>
+              <div className="bar"><span style={{width:(v/totVal*100)+"%",background:"#4f83f5"}}/></div>
+            </div>
+            <div className="num" style={{minWidth:80}}>{fe(v)} <span className="dim" style={{fontSize:10}}>({(v/totVal*100).toFixed(0)}%)</span></div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function HistoryView({ snapshots, port }) {
+  const [period, setPeriod] = useState("30j");
+  const days = period === "7j" ? 7 : period === "30j" ? 30 : period === "90j" ? 90 : 99999;
+  const cutoff = Date.now() - days * 86400000;
+  const data = snapshots.filter(s => s.ts >= cutoff).map(s => ({
+    ts: s.ts,
+    date: new Date(s.ts).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"}),
+    val: s.tot,
+    pnl: s.pnl
+  }));
+  const cur = port.reduce((s,p)=>s+(p.val||0),0);
+  const first = data.length > 0 ? data[0].val : cur;
+  const delta = cur - first;
+  const deltaPct = first > 0 ? (delta/first)*100 : 0;
+
+  return (
+    <>
+      <div className="card">
+        <div className="cd-ti">
+          <h3>Évolution valeur</h3>
+          <span className="num" style={{fontSize:12,color:cl(delta)}}>{fp(deltaPct)} • {fe(delta)}</span>
+        </div>
+        <div className="seg">
+          {["7j","30j","90j","tout"].map(k =>
+            <div key={k} className={"it"+(period===k?" ac":"")} onClick={()=>setPeriod(k)}>{k}</div>
+          )}
+        </div>
+        {data.length < 2 ? (
+          <div className="warn">Historique en cours de constitution. Premiers points dans quelques jours d'utilisation. Snapshots actuels : {snapshots.length}</div>
+        ) : (
+          <div style={{height:220,marginTop:8}}>
+            <ResponsiveContainer>
+              <AreaChart data={data} margin={{top:5,right:5,left:0,bottom:0}}>
+                <defs>
+                  <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#4f83f5" stopOpacity={0.4}/>
+                    <stop offset="100%" stopColor="#4f83f5" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(255,255,255,.04)" vertical={false}/>
+                <XAxis dataKey="date" stroke="#3a4560" fontSize={10} tickLine={false}/>
+                <YAxis stroke="#3a4560" fontSize={10} tickLine={false} axisLine={false}
+                  tickFormatter={(v)=>v.toFixed(0)+"€"} width={45}/>
+                <Tooltip
+                  contentStyle={{background:"#0f1420",border:"1px solid rgba(255,255,255,.1)",borderRadius:6,fontSize:12}}
+                  formatter={(v)=>[fe(v),"Valeur"]}/>
+                <Area type="monotone" dataKey="val" stroke="#4f83f5" strokeWidth={2} fill="url(#gv)"/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        <div className="dim" style={{fontSize:10,marginTop:8,textAlign:"center"}}>
+          {snapshots.length} snapshot{snapshots.length>1?"s":""} stockés localement (IndexedDB)
+        </div>
+      </div>
+    </>
+  );
+}
+
+function MacroView() {
+  return (
+    <>
+      <div className="card">
+        <div className="cd-ti"><h3>Régime de marché</h3></div>
+        <div style={{padding:"6px 0"}}><span className="lbl">Régime</span><div>{MACRO.regime}</div></div>
+        <div style={{padding:"6px 0"}}><span className="lbl">Fed</span><div className="dim">{MACRO.fed}</div></div>
+        <div style={{padding:"6px 0"}}><span className="lbl">Géopolitique</span><div className="dim">{MACRO.geo}</div></div>
+        <div style={{padding:"6px 0"}}><span className="lbl">Cycle IA</span><div className="dim">{MACRO.ia}</div></div>
+      </div>
+      <div className="card">
+        <div className="cd-ti"><h3>Où le consensus se trompe</h3></div>
+        {MACRO.wrong.map((w,i) => <div key={i} className="row" style={{padding:"8px 0"}}>{w}</div>)}
+      </div>
+      <div className="card">
+        <div className="cd-ti"><h3>Classement sectoriel</h3></div>
+        {SECS.map(s => (
+          <div key={s.n} className="row">
+            <div style={{flex:1}}>
+              <div><strong>{s.n}</strong> <span style={{color:s.col}}>{s.m}</span></div>
+              <div className="dim" style={{fontSize:10}}>{s.tag}</div>
+            </div>
+            <div style={{flex:"0 0 100px"}}>
+              <div className="bar"><span style={{width:s.c+"%",background:s.col}}/></div>
+              <div className="num" style={{fontSize:10,marginTop:2}}>{fp(s.r,0)}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function AdvisorView({ port, m, onSelect }) {
+  const top = port.find(p => p.wt > 35);
+  const sells = port.filter(p => p.sig === "sell" && p.val != null);
+  const buys = port.filter(p => p.sig === "buy" && p.val != null).sort((a,b)=>(AN[b.t]?.c||0)-(AN[a.t]?.c||0));
+  return (
+    <>
+      <div className="card">
+        <div className="cd-ti"><h3>Diagnostic risque</h3></div>
+        <div className="g3">
+          <div><div className="lbl">Sharpe</div><div className="mono" style={{fontSize:18,color:cv(m.sh*40)}}>{m.sh.toFixed(2)}</div></div>
+          <div><div className="lbl">Volatilité</div><div className="mono" style={{fontSize:18}}>{m.wv.toFixed(1)}%</div></div>
+          <div><div className="lbl">Alertes</div><div className="mono" style={{fontSize:18,color:cl(-sells.length)}}>{sells.length}</div></div>
+        </div>
+      </div>
+      {top && (
+        <div className="err" onClick={()=>onSelect(top.t)} style={{cursor:"pointer"}}>
+          <strong>🚨 CONCENTRATION CRITIQUE</strong> — {top.t} représente {fp(top.wt,0)} du portefeuille. Diversifier prioritairement.
+        </div>
+      )}
+      {sells.length > 0 && (
+        <div className="card">
+          <div className="cd-ti"><h3>Actions immédiates</h3></div>
+          {sells.map(p => (
+            <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}>
+              <div>
+                <div><span className="tk">{p.t}</span> <span className="chip sell">{AN[p.t]?.r||"VENDRE"}</span></div>
+                <div className="dim" style={{fontSize:10}}>{AN[p.t]?.act||"Alléger"}</div>
+              </div>
+              <div className="num" style={{color:cl(p.pnl)}}>{fp(p.pct)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="card">
+        <div className="cd-ti"><h3>Plan de réallocation (50/30/20)</h3></div>
+        <div className="dim" style={{fontSize:11,marginBottom:8}}>Sur les conviction les plus fortes :</div>
+        {buys.slice(0,3).map((p,i) => (
+          <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}>
+            <div>
+              <span className="tk">{p.t}</span> <span className="chip buy">{AN[p.t]?.r||"ACHETER"}</span>
+              <div className="dim" style={{fontSize:10}}>conv. {AN[p.t]?.c||"—"}/100</div>
+            </div>
+            <div className="num"><strong>{[50,30,20][i]||10}%</strong></div>
+          </div>
+        ))}
+      </div>
+      <div className="card">
+        <div className="cd-ti"><h3>Nouvelles opportunités</h3></div>
+        {OPPS.map(o => (
+          <div key={o.t} className="row" style={{flexDirection:"column",alignItems:"flex-start"}}>
+            <div style={{display:"flex",justifyContent:"space-between",width:"100%",marginBottom:4}}>
+              <div><span className="tk">{o.t}</span> <span className="dim">{o.n}</span></div>
+              <div className="num" style={{color:cv(o.c)}}>{fp(o.p,0)}</div>
+            </div>
+            <div className="dim" style={{fontSize:11}}>{o.note}</div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function AnalysisView({ port, onSelect }) {
+  return port.map(p => {
+    const a = AN[p.t]; if (!a) return null;
+    return (
+      <div key={p.t} className="card tap" onClick={()=>onSelect(p.t)} style={{cursor:"pointer"}}>
+        <div className="cd-ti">
+          <h3 style={{color:"#dde3f0",fontSize:14,letterSpacing:0,textTransform:"none"}}>{p.t} — {p.n}</h3>
+          <span className={"chip "+a.sig}>{a.r}</span>
+        </div>
+        <div className="dim" style={{fontSize:11,lineHeight:1.5}}>{a.th.length>180?a.th.slice(0,180)+"…":a.th}</div>
+        <div className="g2" style={{marginTop:8}}>
+          <div><div className="lbl">Conviction</div>
+            <div className="bar"><span style={{width:a.c+"%",background:cv(a.c)}}/></div>
+            <div className="num" style={{fontSize:11,marginTop:3,color:cv(a.c)}}>{a.c}/100</div>
+          </div>
+          <div><div className="lbl">Cible 12M</div>
+            <div className="num" style={{fontSize:14,color:cl(a.p)}}>{fp(a.p,0)}</div>
+          </div>
+        </div>
+      </div>
+    );
+  });
+}
+
+function ScenariosView({ port, m }) {
+  const [horizon, setHorizon] = useState(12);
+  const h = horizon / 12;
+
+  // Backtest stub - cherche un snapshot vieux de ~3M
+  const [backtest, setBacktest] = useState(null);
+  useEffect(() => {
+    snapshotsRange(Date.now() - 100*86400000).then(arr => {
+      if (arr.length === 0) { setBacktest({ available:false }); return; }
+      const target = Date.now() - 90*86400000;
+      const closest = arr.reduce((a,b) => Math.abs(b.ts-target)<Math.abs(a.ts-target)?b:a);
+      const ageDays = Math.round((Date.now() - closest.ts)/86400000);
+      if (ageDays < 60) { setBacktest({ available:false, ageDays }); return; }
+      const realPct = closest.tot > 0 ? ((m.tot - closest.tot)/closest.tot)*100 : 0;
+      const predPct = (closest.pred3M || 0);
+      setBacktest({ available:true, ageDays, realPct, predPct, gap: realPct - predPct });
+    });
+  }, [m.tot]);
+
+  const items = port.map(p => {
+    if (p.val == null) return null;
+    const f = forecast(p, MACRO);
+    return {
+      t: p.t,
+      val: p.val,
+      p10: p.val * (1 + f.p10 * h),
+      p50: p.val * (1 + f.p50 * h),
+      p90: p.val * (1 + f.p90 * h)
+    };
+  }).filter(Boolean);
+  const tot10 = items.reduce((s,x)=>s+x.p10,0);
+  const tot50 = items.reduce((s,x)=>s+x.p50,0);
+  const tot90 = items.reduce((s,x)=>s+x.p90,0);
+
+  return (
+    <>
+      <div className="warn">
+        ℹ️ <strong>Estimation probabiliste, pas une certitude.</strong> Le moteur 10 facteurs combine convictions analyste, momentum, volatilité. Les bandes P10/P50/P90 reflètent l'incertitude — pas un objectif.
+      </div>
+      <div className="card">
+        <div className="cd-ti"><h3>Horizon</h3></div>
+        <div className="seg">
+          {[3,6,9,12].map(n =>
+            <div key={n} className={"it"+(horizon===n?" ac":"")} onClick={()=>setHorizon(n)}>{n}M</div>
+          )}
+        </div>
+      </div>
+      <div className="g3">
+        <div className="card" style={{textAlign:"center"}}>
+          <div className="lbl">P10 (pessimiste)</div>
+          <div className="mono" style={{fontSize:18,color:"#e85d5d"}}>{fe(tot10)}</div>
+          <div className="num" style={{fontSize:11,color:"#e85d5d"}}>{fp((tot10/m.tot-1)*100,0)}</div>
+        </div>
+        <div className="card" style={{textAlign:"center"}}>
+          <div className="lbl">P50 (médian)</div>
+          <div className="mono" style={{fontSize:18,color:"#4f83f5"}}>{fe(tot50)}</div>
+          <div className="num" style={{fontSize:11,color:"#4f83f5"}}>{fp((tot50/m.tot-1)*100,0)}</div>
+        </div>
+        <div className="card" style={{textAlign:"center"}}>
+          <div className="lbl">P90 (optimiste)</div>
+          <div className="mono" style={{fontSize:18,color:"#2ecc8f"}}>{fe(tot90)}</div>
+          <div className="num" style={{fontSize:11,color:"#2ecc8f"}}>{fp((tot90/m.tot-1)*100,0)}</div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="cd-ti"><h3>Backtest 3 mois</h3></div>
+        {!backtest ? <div className="dim">Calcul...</div> :
+         !backtest.available ? <div className="warn">Backtest en cours de constitution. {backtest.ageDays?`Données ${backtest.ageDays}j seulement.`:""} Premier résultat utile dans 3 mois d'utilisation continue.</div> :
+         <div>
+           <div className="g3">
+             <div><div className="lbl">Prédit (P50)</div><div className="num">{fp(backtest.predPct,1)}</div></div>
+             <div><div className="lbl">Réel</div><div className="num">{fp(backtest.realPct,1)}</div></div>
+             <div><div className="lbl">Écart</div><div className="num" style={{color:cl(-Math.abs(backtest.gap))}}>{fp(backtest.gap,1)}</div></div>
+           </div>
+         </div>
+        }
+      </div>
+      <div className="card">
+        <div className="cd-ti"><h3>Détail par position</h3></div>
+        {items.map(x => (
+          <div key={x.t} className="row">
+            <div className="tk" style={{flex:"0 0 25%"}}>{x.t}</div>
+            <div className="num dim" style={{flex:1}}>{fe(x.p10,0)}</div>
+            <div className="num" style={{flex:1}}><strong>{fe(x.p50,0)}</strong></div>
+            <div className="num dim" style={{flex:1}}>{fe(x.p90,0)}</div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* CfgView — DÉCLARÉE HORS de App */
+function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onAskNotif, notifPerm, prices, eurusd, lastTs, fetchCount }) {
+  const [editing, setEditing] = useState(null); // ticker en édition seuils
+  const [form, setForm] = useState({ t:"", n:"", q:"", b:"", s:"Tech", sig:"hold", v:25 });
+
+  const removePos = (t) => {
+    if (!confirm(`Supprimer ${t} du portefeuille ?`)) return;
+    onPortChange(port.filter(p => p.t !== t));
+  };
+  const addPos = () => {
+    if (!form.t || !form.q || !form.b) { alert("Ticker, quantité et PRU obligatoires"); return; }
+    const exists = port.find(p => p.t === form.t.toUpperCase());
+    if (exists) { alert("Ticker déjà présent — supprimer puis re-ajouter"); return; }
+    onPortChange([...port, { ...form, t: form.t.toUpperCase(), q: +form.q, b: +form.b, v: +form.v }]);
+    setForm({ t:"", n:"", q:"", b:"", s:"Tech", sig:"hold", v:25 });
+  };
+
+  return (
+    <>
+      <div className="card">
+        <div className="cd-ti"><h3>État système</h3></div>
+        <div className="row"><span>Build</span><span className="mono">{BUILD}</span></div>
+        <div className="row"><span>EUR/USD live</span><span className="mono">{eurusd ? eurusd.toFixed(4) : "—"}</span></div>
+        <div className="row"><span>Prix fetchés</span><span className="mono">{Object.keys(prices).length} / {Object.keys(YF).length}</span></div>
+        <div className="row"><span>Dernier refresh</span><span className="mono">{ftime(lastTs)}</span></div>
+        <div className="row"><span>Cycles depuis ouverture</span><span className="mono">{fetchCount}</span></div>
+        <div className="row"><span>Notifications</span>
+          <span style={{color: notifPerm==="granted"?"#2ecc8f":notifPerm==="denied"?"#e85d5d":"#f0a020"}}>
+            {notifPerm==="granted"?"✓ activées":notifPerm==="denied"?"✗ refusées":"non demandées"}
+          </span>
+        </div>
+        {notifPerm !== "granted" && notifPerm !== "denied" && (
+          <button className="bn bn-b" style={{marginTop:8,width:"100%"}} onClick={onAskNotif}>🔔 Activer les notifications</button>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="cd-ti"><h3>Seuils d'alerte par position</h3></div>
+        <div className="dim" style={{fontSize:11,marginBottom:8}}>Auto-rempli intelligent (±vol). Modifiable ci-dessous. Notification à 1h d'intervalle max.</div>
+        {port.map(p => {
+          const a = alerts[p.t] || { ...smartThresholds(p), on: true };
+          const isEd = editing === p.t;
+          return (
+            <div key={p.t} className="row" style={{flexDirection:"column",alignItems:"stretch",gap:6}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><span className="tk">{p.t}</span> <span className="dim" style={{fontSize:10}}>PRU {fe(p.b)}</span></div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <label style={{fontSize:10,display:"flex",alignItems:"center",gap:4}}>
+                    <input type="checkbox" checked={a.on!==false} onChange={(e)=>onAlertsChange({...alerts,[p.t]:{...a,on:e.target.checked}})} style={{width:"auto"}}/>
+                    actif
+                  </label>
+                  <button className="bn bn-w ic-only" onClick={()=>setEditing(isEd?null:p.t)}>{isEd?"✓":"✎"}</button>
+                </div>
+              </div>
+              {isEd ? (
+                <div className="g2">
+                  <div><div className="lbl">Bas (stop)</div>
+                    <input type="number" step="0.01" value={a.lo} onChange={(e)=>onAlertsChange({...alerts,[p.t]:{...a,lo:+e.target.value}})}/>
+                  </div>
+                  <div><div className="lbl">Haut (profit)</div>
+                    <input type="number" step="0.01" value={a.hi} onChange={(e)=>onAlertsChange({...alerts,[p.t]:{...a,hi:+e.target.value}})}/>
+                  </div>
+                </div>
+              ) : (
+                <div className="dim mono" style={{fontSize:11}}>
+                  Bas: {fe(a.lo)} ({fp((a.lo/p.b-1)*100,0)}) — Haut: {fe(a.hi)} ({fp((a.hi/p.b-1)*100,0)})
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="card">
+        <div className="cd-ti"><h3>Ajouter / Supprimer une position</h3></div>
+        <div className="g2" style={{marginBottom:6}}>
+          <input placeholder="Ticker (ex: TSLA)" value={form.t} onChange={(e)=>setForm({...form,t:e.target.value})}/>
+          <input placeholder="Nom" value={form.n} onChange={(e)=>setForm({...form,n:e.target.value})}/>
+        </div>
+        <div className="g2" style={{marginBottom:6}}>
+          <input placeholder="Quantité" type="number" step="0.000001" value={form.q} onChange={(e)=>setForm({...form,q:e.target.value})}/>
+          <input placeholder="PRU EUR" type="number" step="0.01" value={form.b} onChange={(e)=>setForm({...form,b:e.target.value})}/>
+        </div>
+        <div className="g3" style={{marginBottom:8}}>
+          <select value={form.s} onChange={(e)=>setForm({...form,s:e.target.value})}>
+            {["Tech","Énergie","Défense","Luxe","Biotech","Matériaux","Autre"].map(s=><option key={s}>{s}</option>)}
+          </select>
+          <select value={form.sig} onChange={(e)=>setForm({...form,sig:e.target.value})}>
+            {["buy","hold","sell","spec"].map(s=><option key={s}>{s}</option>)}
+          </select>
+          <input placeholder="Vol %" type="number" value={form.v} onChange={(e)=>setForm({...form,v:e.target.value})}/>
+        </div>
+        <button className="bn bn-g" style={{width:"100%"}} onClick={addPos}>+ Ajouter</button>
+        <div style={{marginTop:14,paddingTop:12,borderTop:"1px solid rgba(255,255,255,.06)"}}>
+          {port.map(p => (
+            <div key={p.t} className="row">
+              <span><strong>{p.t}</strong> <span className="dim" style={{fontSize:10}}>{p.n}</span></span>
+              <button className="bn bn-r ic-only" onClick={()=>removePos(p.t)}>✕</button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="cd-ti"><h3>Maintenance</h3></div>
+        <button className="bn bn-w" style={{width:"100%",marginBottom:6}} onClick={onClearCache}>🗑 Vider le cache prix</button>
+        <div className="dim" style={{fontSize:10,textAlign:"center",marginTop:6}}>
+          Données stockées localement (localStorage + IndexedDB). Aucun envoi serveur.
+        </div>
+      </div>
+    </>
+  );
+}
+
+function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
+  const p = port.find(x => x.t === ticker); if (!p) return null;
+  const a = AN[ticker] || {};
+  const [history, setHistory] = useState(null);
+
+  useEffect(() => {
+    snapshotsRange(Date.now() - 90*86400000).then(arr => {
+      const series = arr.map(s => {
+        const pos = (s.port || []).find(x => x.t === ticker);
+        return pos ? { ts: s.ts, date: new Date(s.ts).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"}), px: pos.pxE } : null;
+      }).filter(Boolean);
+      setHistory(series);
+    });
+  }, [ticker]);
+
+  const f = forecast(p, MACRO);
+  const al = alerts[ticker];
+
+  return (
+    <div className="dt-ovr">
+      <div className="bk" onClick={onBack}>← Retour</div>
+      <div className="card">
+        <div className="cd-ti">
+          <div>
+            <div style={{fontSize:20,fontWeight:800}}>{p.t}</div>
+            <div className="dim" style={{fontSize:12}}>{p.n} • {p.s}</div>
+          </div>
+          <span className={"chip "+p.sig}>{p.sig}</span>
+        </div>
+        <div className="g2">
+          <div><div className="lbl">Cours actuel</div><div className="mono" style={{fontSize:16}}>{fe(p.pxE)}</div></div>
+          <div><div className="lbl">PRU</div><div className="mono" style={{fontSize:16}}>{fe(p.b)}</div></div>
+          <div><div className="lbl">Quantité</div><div className="mono">{p.q.toLocaleString("fr-FR",{maximumFractionDigits:6})}</div></div>
+          <div><div className="lbl">Valeur</div><div className="mono" style={{fontSize:16}}>{fe(p.val)}</div></div>
+          <div><div className="lbl">P&amp;L</div><div className="mono" style={{fontSize:16,color:cl(p.pnl)}}>{fe(p.pnl)}</div></div>
+          <div><div className="lbl">Performance</div><div className="mono" style={{fontSize:16,color:cl(p.pct)}}>{fp(p.pct)}</div></div>
+        </div>
+      </div>
+
+      {al && al.on && (
+        <div className="card">
+          <div className="cd-ti"><h3>Seuils actifs</h3></div>
+          <div className="g2">
+            <div><div className="lbl">Stop bas</div><div className="mono" style={{color:p.pxE&&p.pxE<=al.lo*1.05?"#e85d5d":"#dde3f0"}}>{fe(al.lo)}</div></div>
+            <div><div className="lbl">Profit haut</div><div className="mono" style={{color:p.pxE&&p.pxE>=al.hi*0.95?"#2ecc8f":"#dde3f0"}}>{fe(al.hi)}</div></div>
+          </div>
+        </div>
+      )}
+
+      {history && history.length >= 2 && (
+        <div className="card">
+          <div className="cd-ti"><h3>Évolution cours (90j)</h3></div>
+          <div style={{height:180}}>
+            <ResponsiveContainer>
+              <LineChart data={history} margin={{top:5,right:5,left:0,bottom:0}}>
+                <CartesianGrid stroke="rgba(255,255,255,.04)" vertical={false}/>
+                <XAxis dataKey="date" stroke="#3a4560" fontSize={10}/>
+                <YAxis stroke="#3a4560" fontSize={10} tickFormatter={(v)=>v.toFixed(2)} width={50}/>
+                <Tooltip contentStyle={{background:"#0f1420",border:"1px solid rgba(255,255,255,.1)",fontSize:12}}
+                  formatter={(v)=>[fe(v),"Cours"]}/>
+                <ReferenceLine y={p.b} stroke="#8892a8" strokeDasharray="3 3" label={{value:"PRU",fill:"#8892a8",fontSize:9}}/>
+                <Line type="monotone" dataKey="px" stroke="#4f83f5" strokeWidth={2} dot={false}/>
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {a.tgt && (
+        <div className="card">
+          <div className="cd-ti"><h3>Objectifs analystes</h3></div>
+          <div className="g3">
+            <div><div className="lbl">Bas</div><div className="mono">{fd(a.tgt.l)}</div></div>
+            <div><div className="lbl">Médian</div><div className="mono"><strong>{fd(a.tgt.a)}</strong></div></div>
+            <div><div className="lbl">Haut</div><div className="mono">{fd(a.tgt.h)}</div></div>
+          </div>
+        </div>
+      )}
+
+      {a.th && (
+        <div className="card">
+          <div className="cd-ti"><h3>Thèse</h3><span className={"chip "+a.sig}>{a.r}</span></div>
+          <div style={{lineHeight:1.55}}>{a.th}</div>
+          {a.edg && <div className="warn" style={{marginTop:10}}><strong>Edge :</strong> {a.edg}</div>}
+        </div>
+      )}
+
+      {a.cat && (
+        <div className="g2">
+          <div className="card">
+            <div className="cd-ti"><h3 style={{color:"#2ecc8f"}}>Catalyseurs</h3></div>
+            {a.cat.map((c,i)=><div key={i} className="row" style={{padding:"6px 0"}}>{c}</div>)}
+          </div>
+          <div className="card">
+            <div className="cd-ti"><h3 style={{color:"#e85d5d"}}>Risques</h3></div>
+            {a.ris.map((r,i)=><div key={i} className="row" style={{padding:"6px 0"}}>{r}</div>)}
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="cd-ti"><h3>Prévision (10 facteurs)</h3></div>
+        <div className="g3">
+          <div><div className="lbl">P10 12M</div><div className="mono" style={{color:"#e85d5d"}}>{fp(f.p10*100,0)}</div></div>
+          <div><div className="lbl">P50 12M</div><div className="mono"><strong>{fp(f.p50*100,0)}</strong></div></div>
+          <div><div className="lbl">P90 12M</div><div className="mono" style={{color:"#2ecc8f"}}>{fp(f.p90*100,0)}</div></div>
+        </div>
+        <div className="dim" style={{fontSize:10,marginTop:8,fontStyle:"italic"}}>Estimation probabiliste, pas une certitude.</div>
+      </div>
+
+      {a.act && (
+        <div className="card" style={{background:"rgba(79,131,245,.08)",borderColor:"rgba(79,131,245,.3)"}}>
+          <div className="cd-ti"><h3 style={{color:"#4f83f5"}}>Action recommandée</h3></div>
+          <div style={{fontSize:14,fontWeight:600}}>{a.act}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============== APP PRINCIPALE ============== */
+function App() {
+  const [port, setPort] = useState(() => {
+    const s = loadStore(); return s?.port || PORT_DEF;
+  });
+  const [prices, setPrices] = useState(() => {
+    const stored = loadStore()?.prices || {};
+    // PRICE_DEF en fallback pour combler les éventuels trous → jamais "—" au boot
+    return { ...PRICE_DEF, ...stored };
+  });
+  const [eurusd, setEurusd] = useState(() => loadStore()?.eurusd || FALLBACK_EURUSD);
+  const [lastTs, setLastTs] = useState(() => loadStore()?.priceTs || 0);
+  const [status, setStatus] = useState("ld");
+  const [tab, setTab] = useState("pos");
+  const [detail, setDetail] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [alerts, setAlerts] = useState(loadAlerts);
+  const [snapshots, setSnapshots] = useState([]);
+  const [countdown, setCountdown] = useState(1);
+  const [fetchCount, setFetchCount] = useState(0);
+  const [notifPerm, setNotifPerm] = useState(typeof Notification !== "undefined" ? Notification.permission : "default");
+
+  const busyRef = useRef(false);
+  const portRef = useRef(port); useEffect(() => { portRef.current = port; }, [port]);
+  const timerRef = useRef(null);
+  const cdRef = useRef(null);
+  const lastNotifRef = useRef({});
+
+  const showToast = useCallback((msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2500);
+  }, []);
+
+  // Auto-init alertes pour positions sans seuils
+  useEffect(() => {
+    let changed = false;
+    const next = { ...alerts };
+    port.forEach(p => {
+      if (!next[p.t]) {
+        next[p.t] = { ...smartThresholds(p), on: true };
+        changed = true;
+      }
+    });
+    if (changed) { setAlerts(next); saveAlerts(next); }
+  }, [port]);
+
+  // Charger snapshots
+  const reloadSnapshots = useCallback(async () => {
+    const s = await snapshotsRange(0);
+    setSnapshots(s.sort((a,b)=>a.ts-b.ts));
+  }, []);
+  useEffect(() => { reloadSnapshots(); }, [reloadSnapshots]);
+
+  // Fetch principal
+  const fetchAll = useCallback(async (silent) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    if (!silent) setStatus("ld");
+    try {
+      const { prices: np, eurusd: ne } = await fetchAllPrices();
+      setPrices(prev => ({ ...prev, ...np }));
+      setEurusd(ne);
+      const now = Date.now();
+      setLastTs(now);
+      setStatus("");
+      setFetchCount(c => c + 1);
+
+      // Sauvegarde locale
+      const enriched = enrich(portRef.current, np, ne);
+      const m = metrics(enriched);
+      saveStore({ port: portRef.current, prices: np, eurusd: ne, priceTs: now });
+
+      // Snapshot historique (max 1 par 5min)
+      const last = snapshots[snapshots.length-1];
+      if (!last || now - last.ts > 5*60*1000) {
+        const snap = {
+          ts: now,
+          date: new Date(now).toISOString().slice(0,10),
+          tot: m.tot, inv: m.inv, pnl: m.pnl,
+          eurusd: ne,
+          port: enriched.map(p => ({ t:p.t, q:p.q, b:p.b, pxE:p.pxE, val:p.val })),
+          pred3M: enriched.reduce((s,p) => {
+            if (!p.val) return s;
+            const f = forecast(p, MACRO);
+            return s + p.val * (1 + f.p50 * 0.25);
+          }, 0) / Math.max(1, m.tot) * 100 - 100
+        };
+        await snapshotAdd(snap);
+        reloadSnapshots();
+      }
+
+      // Vérification alertes
+      checkAlerts(enriched, alerts, np, ne, lastNotifRef.current);
+
+      if (!silent && Object.keys(np).length > 0) showToast("✓ Cours actualisés");
+    } catch(e) {
+      console.error("[Fetch] global err", e);
+      setStatus("er");
+      if (!silent) showToast("✗ Erreur de récupération");
+    } finally {
+      busyRef.current = false;
+    }
+  }, [alerts, snapshots, showToast, reloadSnapshots]);
+
+  // Boot + interval
+  useEffect(() => {
+    fetchAll(true);
+    timerRef.current = setInterval(() => fetchAll(true), REFRESH_MS);
+    cdRef.current = setInterval(() => {
+      setCountdown(c => {
+        const elapsed = (Date.now() - (lastTs||Date.now())) / REFRESH_MS;
+        return Math.max(0, 1 - elapsed);
+      });
+    }, 200);
+    return () => { clearInterval(timerRef.current); clearInterval(cdRef.current); };
+  // eslint-disable-next-line
+  }, []);
+
+  // Sync au retour de visibilité
+  useEffect(() => {
+    const onVis = () => { if (!document.hidden) fetchAll(false); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [fetchAll]);
+
+  // Persistance portfolio
+  useEffect(() => {
+    saveStore({ port, prices, eurusd, priceTs: lastTs });
+  }, [port]);
+
+  // Persistance alertes
+  useEffect(() => { saveAlerts(alerts); }, [alerts]);
+
+  // Données dérivées
+  const enriched = useMemo(() => enrich(port, prices, eurusd), [port, prices, eurusd]);
+  const m = useMemo(() => metrics(enriched), [enriched]);
+  const sells = enriched.filter(p => p.sig === "sell").length;
+
+  // Update countdown depuis lastTs
+  useEffect(() => {
+    setCountdown(1);
+  }, [lastTs]);
+
+  // Détail
+  const detailPort = detail ? enriched.find(p => p.t === detail) : null;
+
+  return (
+    <div className="app">
+      <Header
+        countdownPct={countdown}
+        status={status}
+        lastTs={lastTs}
+        onPillClick={() => fetchAll(false)}
+      />
+
+      <Strip m={m} alertCount={sells}/>
+
+      {tab === "pos" && <PositionsView port={enriched} m={m} eurusd={eurusd} onSelect={setDetail} onTabChange={setTab}/>}
+      {tab === "his" && <HistoryView snapshots={snapshots} port={enriched}/>}
+      {tab === "macro" && <MacroView/>}
+      {tab === "adv" && <AdvisorView port={enriched} m={m} onSelect={setDetail}/>}
+      {tab === "anal" && <AnalysisView port={enriched} onSelect={setDetail}/>}
+      {tab === "scen" && <ScenariosView port={enriched} m={m}/>}
+      {tab === "cfg" && <CfgView
+        port={port} alerts={alerts}
+        onPortChange={setPort}
+        onAlertsChange={setAlerts}
+        onClearCache={() => { setPrices({}); showToast("Cache vidé"); fetchAll(false); }}
+        onAskNotif={async () => {
+          const ok = await askNotifPerm();
+          setNotifPerm(Notification.permission);
+          showToast(ok ? "✓ Notifications activées" : "✗ Notifications refusées");
+        }}
+        notifPerm={notifPerm}
+        prices={prices}
+        eurusd={eurusd}
+        lastTs={lastTs}
+        fetchCount={fetchCount}
+      />}
+
+      {detail && detailPort && <DetailView
+        ticker={detail} port={enriched} snapshots={snapshots}
+        alerts={alerts} eurusd={eurusd} onBack={() => setDetail(null)}
+      />}
+
+      {toast && <div className="toast">{toast}</div>}
+
+      <nav className="tab">
+        {[
+          {k:"pos",ic:"💼",l:"Positions"},
+          {k:"his",ic:"📈",l:"Historique"},
+          {k:"macro",ic:"🌍",l:"Macro"},
+          {k:"adv",ic:"🏦",l:"Conseil"},
+          {k:"anal",ic:"🔍",l:"Analyse"},
+          {k:"scen",ic:"🎯",l:"Scénar."},
+          {k:"cfg",ic:"⚙️",l:"Régl."}
+        ].map(t => (
+          <div key={t.k} className={"tb"+(tab===t.k?" ac":"")} onClick={() => { setTab(t.k); setDetail(null); }}>
+            <div className="ic">{t.ic}</div>
+            <div>{t.l}</div>
+          </div>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
