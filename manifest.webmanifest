@@ -1,0 +1,26 @@
+{
+  "name": "port.folio Fab",
+  "short_name": "port.folio",
+  "description": "Portefeuille temps réel avec prévisions 10 facteurs",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#080b11",
+  "theme_color": "#080b11",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='42' fill='%23080b11'/%3E%3Ctext x='96' y='120' font-size='100' text-anchor='middle' font-family='system-ui' font-weight='800' fill='%23dde3f0'%3Ep%3Ctspan fill='%234f83f5'%3E.%3C/tspan%3Ef%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%23080b11'/%3E%3Ctext x='256' y='320' font-size='266' text-anchor='middle' font-family='system-ui' font-weight='800' fill='%23dde3f0'%3Ep%3Ctspan fill='%234f83f5'%3E.%3C/tspan%3Ef%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
