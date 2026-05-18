@@ -10,18 +10,41 @@
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#080b11;-webkit-tap-highlight-color:transparent}
   #root{min-height:100vh}
-  .boot{display:flex;align-items:center;justify-content:center;min-height:100vh;color:#4f83f5;font-family:-apple-system,sans-serif;font-size:14px}
+  .boot{display:flex;align-items:center;justify-content:center;min-height:100vh;color:#4f83f5;font-family:-apple-system,sans-serif;font-size:14px;text-align:center;padding:20px}
+  .err{color:#e85d5d;font-size:12px;white-space:pre-wrap;font-family:monospace}
 </style>
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+<script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 </head>
 <body>
 <div id="root"><div class="boot">Chargement de port.folio Fab…</div></div>
-<script type="text/babel" data-type="module">
+<script>
+// Capture des erreurs globales pour affichage (au lieu d'écran noir)
+window.addEventListener('error', function(e){
+  var r=document.getElementById('root');
+  if(r && r.querySelector('.boot')){
+    r.innerHTML='<div class="boot"><div>Erreur de chargement<br><br><span class="err">'+(e.message||e.error||'inconnue')+'</span><br><br>Vérifie ta connexion et recharge.</div></div>';
+  }
+});
+// Vérification des dépendances avant exécution
+window.addEventListener('DOMContentLoaded', function(){
+  setTimeout(function(){
+    if(typeof React==='undefined'||typeof ReactDOM==='undefined'){
+      document.getElementById('root').innerHTML='<div class="boot"><div>React non chargé.<br>Vérifie ta connexion internet et recharge la page.</div></div>';
+    }
+  },5000);
+});
+</script>
+<script type="text/babel" data-presets="react">
 const { useState, useEffect, useCallback, useRef } = React;
-const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart, ComposedChart } = Recharts;
+// Recharts peut être absent : on protège l'accès
+const RC = (typeof Recharts !== "undefined") ? Recharts : {};
+const LineChart=RC.LineChart, Line=RC.Line, XAxis=RC.XAxis, YAxis=RC.YAxis,
+  CartesianGrid=RC.CartesianGrid, Tooltip=RC.Tooltip, ResponsiveContainer=RC.ResponsiveContainer,
+  ReferenceLine=RC.ReferenceLine, Area=RC.Area, AreaChart=RC.AreaChart, ComposedChart=RC.ComposedChart;
 
 // Shim window.storage → localStorage (pour GitHub Pages / navigateur standalone)
 if(typeof window !== "undefined" && !window.storage){
@@ -39,7 +62,7 @@ if(typeof window !== "undefined" && !window.storage){
 // ============================================================
 
 const APP_VERSION = "v11.0";
-const APP_BUILD = "2026-05-12-003";
+const APP_BUILD = "2026-05-13-001";
 const CHANGELOG = [
   {v:"v10.1",d:"2026-05-12",n:"Thèses et catalyseurs actualisés live au boot via API Anthropic web_search. Badge 📡 indique la fraîcheur des textes."},
   {v:"v10.0",d:"2026-05-11",n:"Historique 5 ans + recalcul AN dynamique au boot. Graphique HistoChart style ISIN v3."},
@@ -666,6 +689,14 @@ const Bar=({pct,col=C.ac,h=6})=>(<div style={{background:C.bg3,borderRadius:h/2,
 // ═══════════════════════════════════════════════════════════════════════════
 function HistoChart({history, position, an, eurRate, isEURNative}){
   const [range,setRange]=useState("trim"); // jour / sem / mois / trim
+  // Si Recharts n'a pas chargé, on dégrade proprement
+  if(!ComposedChart||!ResponsiveContainer){
+    return(
+      <div style={{padding:14,background:"#0f1420",borderRadius:8,textAlign:"center",color:"#8892a8",fontSize:11}}>
+        Graphique indisponible (bibliothèque non chargée)
+      </div>
+    );
+  }
   if(!history||history.length<5){
     return(
       <div style={{padding:14,background:"#0f1420",borderRadius:8,textAlign:"center",color:"#8892a8",fontSize:11}}>
@@ -2141,8 +2172,12 @@ function App(){
 }
 
 const rootEl = document.getElementById('root');
-const root = ReactDOM.createRoot(rootEl);
-root.render(React.createElement(App));
+try {
+  const root = ReactDOM.createRoot(rootEl);
+  root.render(React.createElement(App));
+} catch(err) {
+  rootEl.innerHTML = '<div class="boot"><div>Erreur au démarrage<br><br><span class="err">'+(err && err.message ? err.message : err)+'</span><br><br>Recharge la page.</div></div>';
+}
 </script>
 </body>
 </html>
