@@ -279,72 +279,76 @@ function saveAlerts(o) {
   try { localStorage.setItem(ALERTS_KEY, JSON.stringify(o)); } catch(e) {}
 }
 
-const ANT_KEY_K = "fab-ant-key";
-function getAnthropicKey() { try { return localStorage.getItem(ANT_KEY_K)||""; } catch(e){ return ""; } }
-function setAnthropicKeyLS(k) { try { if(k) localStorage.setItem(ANT_KEY_K,k); else localStorage.removeItem(ANT_KEY_K); } catch(e){} }
-
 const WATCH_KEY = "fab-pf-watch-v6";
 function loadWatch() { try { const s=localStorage.getItem(WATCH_KEY); return s?JSON.parse(s):OPPS.map(o=>o.t); } catch(e){ return OPPS.map(o=>o.t); } }
 function saveWatch(arr) { try { localStorage.setItem(WATCH_KEY, JSON.stringify(arr)); } catch(e){} }
 
-/* ============== CACHE LIVE ANALYSE ============== */
-const WATCH_ANAL_KEY = "fab-watch-anal";
-const STRESS_CACHE_KEY = "fab-stress-cache";
-const ANAL_TTL  = 4*60*60*1000; // 4h
-const STRESS_TTL = 2*60*60*1000; // 2h
+/* ============== CONTEXTE MACRO (Yahoo Finance — gratuit) ============== */
+// QQQ = Nasdaq/Tech · TLT = Obligations/Taux · ITA = Défense US
+const MACRO_CTX_KEY = "fab-macro-ctx";
+const MACRO_CTX_TTL = 4 * 60 * 60 * 1000; // 4h
 
-function loadWatchAnalysis() {
-  try { const s=localStorage.getItem(WATCH_ANAL_KEY); if(!s) return null;
-    const p=JSON.parse(s); return Date.now()-p.ts<ANAL_TTL?p.data:null; } catch(e){ return null; }
+function loadMacroCtx() {
+  try { const s = localStorage.getItem(MACRO_CTX_KEY); if(!s) return null;
+    const p = JSON.parse(s); return Date.now()-p.ts < MACRO_CTX_TTL ? p.data : null; } catch(e){ return null; }
 }
-function saveWatchAnalysis(d) {
-  try { localStorage.setItem(WATCH_ANAL_KEY,JSON.stringify({ts:Date.now(),data:d})); } catch(e){}
-}
-function loadStressCache() {
-  try { const s=localStorage.getItem(STRESS_CACHE_KEY); if(!s) return {};
-    const p=JSON.parse(s); return Date.now()-p.ts<STRESS_TTL?p.data:{}; } catch(e){ return {}; }
-}
-function saveStressCache(d) {
-  try { localStorage.setItem(STRESS_CACHE_KEY,JSON.stringify({ts:Date.now(),data:d})); } catch(e){}
+function saveMacroCtx(d) {
+  try { localStorage.setItem(MACRO_CTX_KEY, JSON.stringify({ts:Date.now(), data:d})); } catch(e){}
 }
 
-async function fetchWatchAnalysis(tickers) {
-  if(!tickers.length) return {};
-  const key=getAnthropicKey();
-  const headers={"Content-Type":"application/json","anthropic-version":"2023-06-01"};
-  if(key) headers["x-api-key"]=key;
-  try {
-    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers,
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:2000,
-        tools:[{type:"web_search_20250305",name:"web_search"}],
-        messages:[{role:"user",content:`Recherche les dernières actualités et analyse ces actions : ${tickers.join(", ")}. Pour chacune : thèse actuelle (2 phrases), edge marché, conviction /100, performance attendue 12M en %. Tout en français.\nFormat STRICT JSON, aucun autre texte : {"${tickers[0]}":{"note":"...","edg":"...","c":80,"p":40},...}`}]})});
-    const data=await res.json();
-    const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
-    const matches=txt.match(/\{[\s\S]*\}/g)||[];
-    let best=null,bestSize=0;
-    for(const m of matches){if(m.length>bestSize){try{const p=JSON.parse(m);if(typeof p==="object"&&!p.content){best=p;bestSize=m.length;}}catch(_){}}}
-    return best||{};
-  } catch(e){console.warn("[WatchAnalysis]",e.message);return {};}
+async function fetchMacroCtx() {
+  const pairs = [["qqq","QQQ"],["tlt","TLT"],["ita","ITA"],["gld","GLD"]];
+  const ctx = {};
+  await Promise.all(pairs.map(async ([k,sym]) => {
+    try { ctx[k] = await fetchSymbol(sym); } catch(e) {}
+  }));
+  if(Object.keys(ctx).length > 0) saveMacroCtx(ctx);
+  return ctx;
 }
 
-async function fetchStressData(id,label) {
-  const key=getAnthropicKey();
-  const headers={"Content-Type":"application/json","anthropic-version":"2023-06-01"};
-  if(key) headers["x-api-key"]=key;
-  try {
-    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers,
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:600,
-        tools:[{type:"web_search_20250305",name:"web_search"}],
-        messages:[{role:"user",content:`Scénario macro : "${label}". Recherche les données actuelles. Estime l'impact réaliste sur : Tech, Luxe, Défense, Énergie, Biotech.\nFormat STRICT JSON, aucun autre texte : {"desc":"1 phrase actualisée","shocks":{"Tech":0.12,"Luxe":0.05,"Défense":0.03,"Énergie":-0.04,"Biotech":0.06}}\nShocks = fraction (0.15=+15%, -0.20=-20%).`}]})});
-    const data=await res.json();
-    const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
-    const ms=txt.match(/\{[\s\S]*"shocks"[\s\S]*?\}/g)||[];
-    for(const m of ms){try{const p=JSON.parse(m);if(p.shocks)return p;}catch(_){}}
-    return null;
-  } catch(e){console.warn("[StressData]",e.message);return null;}
-}
+function computeDynShocks(scenarioId, ctx) {
+  const base = STRESS_SCENARIOS.find(s => s.id === scenarioId);
+  if(!base) return null;
+  const shocks = Object.assign({}, base.shocks);
+  const notes = [];
+  const hasCtx = ctx && Object.keys(ctx).length > 0;
 
-/* ============== INDEXEDDB (historique) ============== */
+  if(scenarioId === "fed100" && hasCtx) {
+    // TLT < 88 → taux très élevés → coupe impacte davantage croissance
+    const m = ctx.tlt ? (ctx.tlt < 88 ? 1.35 : ctx.tlt < 96 ? 1.10 : 0.90) : 1;
+    shocks.Tech = +(base.shocks.Tech * m).toFixed(3);
+    shocks.Luxe = +(base.shocks.Luxe * m).toFixed(3);
+    shocks.Biotech = +(base.shocks.Biotech * m).toFixed(3);
+    if(ctx.tlt) notes.push("TLT " + ctx.tlt.toFixed(0) + " → taux " + (ctx.tlt < 90 ? "très élevés : coupe = boost fort growth ↑" : ctx.tlt < 96 ? "élevés : coupe = boost modéré" : "normaux : coupe = impact limité"));
+  }
+
+  if(scenarioId === "tech30" && hasCtx) {
+    // QQQ élevé → valorisation étendue → correction plus sévère
+    const m = ctx.qqq ? (ctx.qqq > 490 ? 1.25 : ctx.qqq > 420 ? 1.00 : 0.70) : 1;
+    shocks.Tech = +(base.shocks.Tech * m).toFixed(3);
+    shocks.Luxe = +(base.shocks.Luxe * Math.min(1.2, m * 0.8)).toFixed(3);
+    if(ctx.qqq) notes.push("QQQ " + ctx.qqq.toFixed(0) + " → Tech " + (ctx.qqq > 490 ? "valorisation étendue : correction amplifiée ↑" : ctx.qqq > 420 ? "valorisation normale" : "déjà corrigée : choc atténué ↓"));
+  }
+
+  if(scenarioId === "taiwan" && hasCtx) {
+    // ITA élevé → défense déjà pricée → upside plus limité
+    const dm = ctx.ita ? (ctx.ita > 160 ? 0.75 : ctx.ita > 130 ? 1.00 : 1.25) : 1;
+    shocks.Défense = +(base.shocks.Défense * dm).toFixed(3);
+    const tm = ctx.qqq ? (ctx.qqq > 480 ? 1.20 : 0.90) : 1;
+    shocks.Tech = +(base.shocks.Tech * tm).toFixed(3);
+    if(ctx.ita) notes.push("ITA " + ctx.ita.toFixed(0) + " → Défense " + (ctx.ita > 155 ? "déjà valorisée, upside limité" : "upside disponible"));
+    if(ctx.qqq) notes.push("QQQ " + ctx.qqq.toFixed(0) + " → impact semi-conducteurs " + (ctx.qqq > 480 ? "amplifié" : "modéré"));
+  }
+
+  // Contexte général : GLD élevé = stress marché → amplifie chocs négatifs
+  if(hasCtx && ctx.gld && ctx.gld > 2500) {
+    const stressMult = Math.min(1.2, 1 + (ctx.gld - 2500) / 5000);
+    Object.keys(shocks).forEach(k => { if(shocks[k] < 0) shocks[k] = +(shocks[k] * stressMult).toFixed(3); });
+    notes.push("Or " + ctx.gld.toFixed(0) + " $ → stress marché élevé, chocs négatifs amplifiés");
+  }
+
+  return { sc: base, shocks, desc: base.desc, notes, ctx: ctx||{}, dynamic: hasCtx };
+}
 function openDB() {
   return new Promise((res, rej) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -875,50 +879,19 @@ function MacroView() {
 
 function AdvisorView({ port, m, onSelect }) {
   const [sub, setSub] = useState("diag");
-  const [aiQ, setAiQ] = useState("");
-  const [aiA, setAiA] = useState(null);
-  const [aiLoading, setAiLoading] = useState(false);
   const [watchList, setWatchList] = useState(loadWatch);
   const [watchPrices, setWatchPrices] = useState({});
   const [watchLoading, setWatchLoading] = useState(false);
   const [addTk, setAddTk] = useState("");
-  const [simTk, setSimTk] = useState(OPPS[0]?.t||"");
+  const [simTk, setSimTk] = useState(OPPS[0] ? OPPS[0].t : "");
   const [simQty, setSimQty] = useState("");
   const [simPx, setSimPx] = useState("");
   const [simRes, setSimRes] = useState(null);
-  const [watchAnalysis, setWatchAnalysis] = useState(() => loadWatchAnalysis() || {});
-  const [analLoading, setAnalLoading] = useState(false);
+  const [watchAnalysis] = useState({});  // données statiques OPPS uniquement
 
   const top = port.find(p => p.wt > 35);
   const sells = port.filter(p => p.sig === "sell" && p.val != null);
   const buys = port.filter(p => p.sig === "buy" && p.val != null).sort((a,b)=>(AN[b.t]?.c||0)-(AN[a.t]?.c||0));
-
-  const fetchAndCacheAnalysis = async (tickers) => {
-    if(!tickers.length || analLoading) return;
-    setAnalLoading(true);
-    const data = await fetchWatchAnalysis(tickers);
-    if(Object.keys(data).length > 0) { saveWatchAnalysis(data); setWatchAnalysis(data); }
-    setAnalLoading(false);
-  };
-
-  const askAI = async () => {
-    if (!aiQ.trim() || aiLoading) return;
-    setAiLoading(true); setAiA(null);
-    try {
-      const portCtx = port.map(p=>`${p.t}: ${p.val!=null?p.val.toFixed(0)+"€":"?"} P&L=${p.pnl!=null?(p.pnl>=0?"+":"")+p.pnl.toFixed(0)+"€":"?"} poids=${p.wt.toFixed(0)}% sig=${p.sig}`).join("; ");
-      const sys = `Tu es un conseiller financier personnel expert. Réponds en français, directement et avec des conseils actionnables (max 250 mots). Pas de disclaimer légal, tu es un outil privé. Portefeuille: ${portCtx}. Total: ${m.tot.toFixed(0)}€, P&L: ${(m.pnl>=0?"+":"")+m.pnl.toFixed(0)}€, Sharpe: ${m.sh.toFixed(2)}, Vol: ${m.wv.toFixed(1)}%. Macro: ${MACRO.regime}. Fed: ${MACRO.fed}`;
-      const key = getAnthropicKey();
-      const headers = { "Content-Type": "application/json", "anthropic-version": "2023-06-01" };
-      if (key) headers["x-api-key"] = key;
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", headers,
-        body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:500, system:sys, messages:[{role:"user",content:aiQ}] })
-      });
-      const data = await res.json();
-      setAiA(data.error ? "Erreur API : "+data.error.message : (data.content?.[0]?.text||"Réponse vide"));
-    } catch(e) { setAiA("Erreur : "+e.message); }
-    setAiLoading(false);
-  };
 
   const fetchWatchPrices = async () => {
     setWatchLoading(true);
@@ -928,12 +901,7 @@ function AdvisorView({ port, m, onSelect }) {
   };
 
   useEffect(() => {
-    if(sub==="watch") {
-      if(watchList.length>0) fetchWatchPrices();
-      const cached = loadWatchAnalysis();
-      if(cached && Object.keys(cached).length>0) setWatchAnalysis(cached);
-      else fetchAndCacheAnalysis(watchList);
-    }
+    if(sub==="watch" && watchList.length>0) fetchWatchPrices();
   }, [sub]);
 
   const addWatch = () => {
@@ -957,7 +925,7 @@ function AdvisorView({ port, m, onSelect }) {
   return (
     <>
       <div className="seg">
-        {[["diag","🏦 Diagnostic"],["ia","🤖 Assistant IA"],["watch","👁 Watchlist"]].map(([k,l])=>
+        {[["diag","🏦 Diagnostic"],["watch","👁 Watchlist"]].map(([k,l])=>
           <div key={k} className={"it"+(sub===k?" ac":"")} onClick={()=>setSub(k)}>{l}</div>
         )}
       </div>
@@ -978,8 +946,8 @@ function AdvisorView({ port, m, onSelect }) {
               <div className="cd-ti"><h3>Actions immédiates</h3></div>
               {sells.map(p=>(
                 <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}>
-                  <div><div><span className="tk">{p.t}</span> <span className="chip sell">{AN[p.t]?.r||"VENDRE"}</span></div>
-                    <div className="dim" style={{fontSize:10}}>{AN[p.t]?.act||"Alléger"}</div></div>
+                  <div><div><span className="tk">{p.t}</span> <span className="chip sell">{AN[p.t] && AN[p.t].r ? AN[p.t].r : "VENDRE"}</span></div>
+                    <div className="dim" style={{fontSize:10}}>{AN[p.t] && AN[p.t].act ? AN[p.t].act : "Alléger"}</div></div>
                   <div className="num" style={{color:cl(p.pnl)}}>{fp(p.pct)}</div>
                 </div>
               ))}
@@ -990,8 +958,8 @@ function AdvisorView({ port, m, onSelect }) {
             <div className="dim" style={{fontSize:11,marginBottom:8}}>Sur les convictions les plus fortes :</div>
             {buys.slice(0,3).map((p,i)=>(
               <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}>
-                <div><span className="tk">{p.t}</span> <span className="chip buy">{AN[p.t]?.r||"ACHETER"}</span>
-                  <div className="dim" style={{fontSize:10}}>conv. {AN[p.t]?.c||"—"}/100</div></div>
+                <div><span className="tk">{p.t}</span> <span className="chip buy">{AN[p.t] && AN[p.t].r ? AN[p.t].r : "ACHETER"}</span>
+                  <div className="dim" style={{fontSize:10}}>conv. {AN[p.t] ? AN[p.t].c : "—"}/100</div></div>
                 <div className="num"><strong>{[50,30,20][i]||10}%</strong></div>
               </div>
             ))}
@@ -1005,30 +973,6 @@ function AdvisorView({ port, m, onSelect }) {
                   <div className="num" style={{color:cv(o.c)}}>{fp(o.p,0)}</div>
                 </div>
                 <div className="dim" style={{fontSize:11}}>{o.note}</div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      {sub==="ia" && (
-        <>
-          <div className="card">
-            <div className="cd-ti"><h3>Assistant IA</h3><span className="dim" style={{fontSize:9}}>haiku-4-5 • données live</span></div>
-            <div className="dim" style={{fontSize:11,marginBottom:8}}>Pose une question sur ton portefeuille. L'IA a accès à toutes tes positions en temps réel.</div>
-            <textarea style={{background:"#161c2a",color:"#dde3f0",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,padding:"8px 10px",fontSize:12,fontFamily:"inherit",resize:"none",minHeight:72,width:"100%",boxSizing:"border-box"}}
-              placeholder={"Ex: Quelle position alléger en premier ?\nMon portefeuille est-il prêt pour une récession ?\nQue faire avec FTI maintenant ?"}
-              value={aiQ} onChange={e=>setAiQ(e.target.value)}/>
-            <button className="bn bn-b" style={{width:"100%",marginTop:6}} onClick={askAI} disabled={aiLoading}>
-              {aiLoading?"⌛ Analyse en cours…":"🤖 Envoyer"}
-            </button>
-            {aiA && <div style={{marginTop:10,padding:"10px 12px",background:"rgba(79,131,245,.08)",borderRadius:8,border:"1px solid rgba(79,131,245,.2)",fontSize:12,lineHeight:1.65,whiteSpace:"pre-wrap"}}>{aiA}</div>}
-          </div>
-          <div className="card">
-            <div className="cd-ti"><h3>Questions suggérées</h3></div>
-            {["Quelle position devrais-je alléger en premier ?","Mon portefeuille est-il prêt pour une récession ?","Que faire avec FTI maintenant ?","Quelle est ma plus grande source de risque ?","Comment améliorer mon ratio Sharpe ?"].map((q,i)=>(
-              <div key={i} className="row tap" onClick={()=>setAiQ(q)} style={{fontSize:12,cursor:"pointer"}}>
-                <span style={{color:"#4f83f5",marginRight:8}}>→</span>{q}
               </div>
             ))}
           </div>
@@ -1065,33 +1009,21 @@ function AdvisorView({ port, m, onSelect }) {
           </div>
           {watchList.length > 0 && (
             <div className="card">
-              <div className="cd-ti">
-                <h3>Analyse live {watchAnalysis && Object.keys(watchAnalysis).length>0 && <span style={{fontSize:9,color:"#2ecc8f",marginLeft:4}}>📡</span>}</h3>
-                <button className="bn bn-b ic-only" onClick={()=>fetchAndCacheAnalysis(watchList)} title="Rafraîchir l'analyse">{analLoading?"…":"↻"}</button>
-              </div>
-              {analLoading && <div style={{fontSize:11,color:"#8892a8",padding:"6px 0"}}>⌛ Analyse via IA + actualités en cours…</div>}
+              <div className="cd-ti"><h3>Analyse opportunités</h3></div>
               {watchList.map(tk => {
-                const a = watchAnalysis[tk];
                 const o = OPPS.find(x=>x.t===tk);
-                const note = (a && a.note) || (o && o.note);
-                const edg  = (a && a.edg)  || (o && o.edg);
-                const conv = a ? (a.c != null ? a.c : 0) : (o ? (o.c || 0) : 0);
-                const perf = a ? (a.p != null ? a.p : 0) : (o ? (o.p || 0) : 0);
+                if (!o) return <div key={tk} className="row"><span className="tk">{tk}</span><span className="dim" style={{fontSize:11}}>Pas de données analyste</span></div>;
                 return (
                   <div key={tk} style={{padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,.04)"}}>
                     <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                      <div>
-                        <span className="tk">{tk}</span>
-                        {a && <span style={{fontSize:9,color:"#2ecc8f",marginLeft:4,fontWeight:700}}>live</span>}
-                        {!a && o && <span style={{fontSize:9,color:"#f0a020",marginLeft:4}}>fallback</span>}
-                      </div>
-                      <span className="tag" style={{color:"#2ecc8f",background:"rgba(46,204,143,.1)"}}>Conv. {conv}/100</span>
+                      <div><span className="tk">{o.t}</span> <span className="dim" style={{fontSize:11}}>{o.n}</span></div>
+                      <span className="tag" style={{color:"#2ecc8f",background:"rgba(46,204,143,.1)"}}>Conv. {o.c}/100</span>
                     </div>
-                    {note && <div style={{fontSize:11,color:"#8892a8",marginBottom:4,lineHeight:1.4}}>{note}</div>}
-                    {edg  && <div style={{fontSize:10,color:"#4f83f5",fontStyle:"italic",marginBottom:4}}><strong>Edge :</strong> {edg}</div>}
+                    <div style={{fontSize:11,color:"#8892a8",marginBottom:4,lineHeight:1.4}}>{o.note}</div>
+                    <div style={{fontSize:10,color:"#4f83f5",fontStyle:"italic",marginBottom:4}}><strong>Edge :</strong> {o.edg}</div>
                     <div style={{display:"flex",gap:12,fontSize:10}}>
-                      <span>Cible 12M : <strong style={{color:perf>=0?"#2ecc8f":"#e85d5d"}}>{perf>=0?"+":""}{perf}%</strong></span>
-                      {o && <span>Objectif prix : <strong>${o.tgt}</strong></span>}
+                      <span>Cible 12M : <strong style={{color:"#2ecc8f"}}>{fp(o.p,0)}</strong></span>
+                      <span>Objectif : <strong>${o.tgt}</strong></span>
                     </div>
                   </div>
                 );
@@ -1157,40 +1089,30 @@ function AnalysisView({ port, onSelect }) {
 function ScenariosView({ port, m }) {
   const [horizon, setHorizon] = useState(12);
   const [activeStress, setActiveStress] = useState(null);
-  const [stressCache, setStressCache] = useState(() => loadStressCache());
-  const [stressLoading, setStressLoading] = useState(false);
+  const [macroCtx, setMacroCtx] = useState(() => loadMacroCtx() || {});
+  const [ctxLoading, setCtxLoading] = useState(false);
   const h = horizon / 12;
 
-  const handleStressClick = async (sc) => {
-    const id = sc.id;
-    if (activeStress === id) { setActiveStress(null); return; }
-    setActiveStress(id);
-    if (stressCache[id]) return; // déjà en cache
-    setStressLoading(true);
-    const data = await fetchStressData(id, sc.label);
-    if (data?.shocks) {
-      const next = { ...stressCache, [id]: data };
-      saveStressCache(next);
-      setStressCache(next);
-    }
-    setStressLoading(false);
+  // Charger / rafraîchir le contexte macro
+  const refreshCtx = async () => {
+    setCtxLoading(true);
+    const ctx = await fetchMacroCtx();
+    setMacroCtx(ctx);
+    setCtxLoading(false);
+  };
+
+  useEffect(() => {
+    if(!macroCtx || Object.keys(macroCtx).length === 0) refreshCtx();
+  }, []);
+
+  const handleStressClick = (sc) => {
+    setActiveStress(activeStress === sc.id ? null : sc.id);
   };
 
   const stressResult = useMemo(() => {
-    if (!activeStress) return null;
-    const sc = STRESS_SCENARIOS.find(s => s.id === activeStress); if (!sc) return null;
-    const live = stressCache[activeStress];
-    const shocks = live?.shocks || sc.shocks; // live en priorité, hardcodé en fallback
-    const desc   = live?.desc  || sc.desc;
-    const items = port.filter(p => p.val != null).map(p => {
-      const shock = shocks[p.s] || 0;
-      return { t:p.t, val:p.val, s:p.s, shockPct:shock*100, after:p.val*(1+shock) };
-    });
-    const totB = items.reduce((s,x)=>s+x.val,0);
-    const totA = items.reduce((s,x)=>s+x.after,0);
-    const top3 = [...items].sort((a,b)=>Math.abs(b.shockPct)-Math.abs(a.shockPct)).slice(0,3);
-    return { sc, desc, live:!!live, items, totB, totA, delta:totA-totB, deltaPct:(totA-totB)/totB*100, top3 };
-  }, [activeStress, stressCache, port]);
+    if(!activeStress) return null;
+    return computeDynShocks(activeStress, macroCtx);
+  }, [activeStress, macroCtx, port]);
 
   // Backtest stub - cherche un snapshot vieux de ~3M
   const [backtest, setBacktest] = useState(null);
@@ -1222,44 +1144,74 @@ function ScenariosView({ port, m }) {
   const tot50 = items.reduce((s,x)=>s+x.p50,0);
   const tot90 = items.reduce((s,x)=>s+x.p90,0);
 
+  // Calcul impacts portefeuille avec chocs dynamiques
+  const stressImpact = useMemo(() => {
+    if(!stressResult) return null;
+    const items = port.filter(p => p.val != null).map(p => {
+      const shock = stressResult.shocks[p.s] || 0;
+      return { t:p.t, val:p.val, s:p.s, shockPct:shock*100, after:p.val*(1+shock) };
+    });
+    const totB = items.reduce((s,x)=>s+x.val, 0);
+    const totA = items.reduce((s,x)=>s+x.after, 0);
+    const top3 = [...items].sort((a,b)=>Math.abs(b.shockPct)-Math.abs(a.shockPct)).slice(0,3);
+    return { items, totB, totA, delta:totA-totB, deltaPct:(totA-totB)/totB*100, top3 };
+  }, [stressResult, port]);
+
   return (
     <>
       <div className="card">
-        <div className="cd-ti"><h3>Stress-tests prédéfinis</h3>
-          {activeStress && stressCache[activeStress] && <span style={{fontSize:9,color:"#2ecc8f"}}>📡 données live</span>}
+        <div className="cd-ti">
+          <h3>Stress-tests dynamiques</h3>
+          <button className="bn bn-b ic-only" onClick={refreshCtx} title="Actualiser le contexte marché">
+            {ctxLoading ? "…" : "↻"}
+          </button>
         </div>
-        <div className="g3" style={{marginBottom:stressResult?10:0}}>
+        {/* Contexte marché */}
+        {Object.keys(macroCtx).length > 0 ? (
+          <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+            {macroCtx.qqq && <span style={{background:"rgba(79,131,245,.1)",border:"1px solid rgba(79,131,245,.2)",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#8892a8"}}>QQQ <strong style={{color:"#dde3f0"}}>${macroCtx.qqq.toFixed(0)}</strong></span>}
+            {macroCtx.tlt && <span style={{background:"rgba(79,131,245,.1)",border:"1px solid rgba(79,131,245,.2)",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#8892a8"}}>TLT <strong style={{color:"#dde3f0"}}>${macroCtx.tlt.toFixed(0)}</strong></span>}
+            {macroCtx.ita && <span style={{background:"rgba(79,131,245,.1)",border:"1px solid rgba(79,131,245,.2)",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#8892a8"}}>ITA <strong style={{color:"#dde3f0"}}>${macroCtx.ita.toFixed(0)}</strong></span>}
+            {macroCtx.gld && <span style={{background:"rgba(79,131,245,.1)",border:"1px solid rgba(79,131,245,.2)",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#8892a8"}}>GLD <strong style={{color:macroCtx.gld>2500?"#e85d5d":"#dde3f0"}}>${macroCtx.gld.toFixed(0)}</strong></span>}
+          </div>
+        ) : (
+          <div className="dim" style={{fontSize:10,marginBottom:8}}>{ctxLoading ? "⌛ Chargement contexte marché…" : "Contexte non chargé — appuie sur ↻"}</div>
+        )}
+        {/* Boutons scénarios */}
+        <div className="g3" style={{marginBottom:stressImpact?10:0}}>
           {STRESS_SCENARIOS.map(sc=>(
             <button key={sc.id} onClick={()=>handleStressClick(sc)}
               style={{background:activeStress===sc.id?"rgba(79,131,245,.25)":"#161c2a",border:activeStress===sc.id?"1px solid #4f83f5":"1px solid rgba(255,255,255,.06)",borderRadius:8,padding:"8px 6px",cursor:"pointer",textAlign:"center"}}>
               <div style={{fontSize:18,marginBottom:2}}>{sc.emoji}</div>
               <div style={{fontSize:9,fontWeight:800,color:activeStress===sc.id?"#4f83f5":"#8892a8",letterSpacing:".03em",lineHeight:1.3}}>{sc.label}</div>
-              {stressCache[sc.id] && <div style={{fontSize:8,color:"#2ecc8f",marginTop:2}}>📡</div>}
             </button>
           ))}
         </div>
-        {activeStress && stressLoading && (
-          <div style={{fontSize:11,color:"#8892a8",padding:"8px 0"}}>⌛ Analyse du scénario via IA + actualités…</div>
-        )}
-        {stressResult && !stressLoading && (
+        {/* Résultats */}
+        {stressResult && stressImpact && (
           <>
-            <div style={{fontSize:11,color:"#8892a8",marginBottom:10,lineHeight:1.4}}>
-              {stressResult.desc}
-              {!stressResult.live && <span style={{color:"#f0a020",marginLeft:6,fontSize:9}}>(données par défaut)</span>}
-            </div>
+            <div style={{fontSize:11,color:"#8892a8",marginBottom:8,lineHeight:1.4}}>{stressResult.desc}</div>
+            {/* Notes dynamiques */}
+            {stressResult.dynamic && stressResult.notes.length > 0 && (
+              <div style={{background:"rgba(79,131,245,.06)",borderRadius:6,padding:"8px 10px",marginBottom:10}}>
+                {stressResult.notes.map((n,i)=>(
+                  <div key={i} style={{fontSize:10,color:"#4f83f5",marginBottom:i<stressResult.notes.length-1?4:0}}>📊 {n}</div>
+                ))}
+              </div>
+            )}
             <div className="g2" style={{marginBottom:8}}>
               <div style={{background:"#161c2a",borderRadius:6,padding:"8px 10px"}}>
                 <div className="lbl">Valeur AVANT</div>
-                <div className="mono" style={{fontSize:16}}>{fe(stressResult.totB)}</div>
+                <div className="mono" style={{fontSize:16}}>{fe(stressImpact.totB)}</div>
               </div>
-              <div style={{background:stressResult.deltaPct>=0?"rgba(46,204,143,.08)":"rgba(232,93,93,.08)",borderRadius:6,padding:"8px 10px",border:"1px solid "+(stressResult.deltaPct>=0?"rgba(46,204,143,.3)":"rgba(232,93,93,.3)")}}>
+              <div style={{background:stressImpact.deltaPct>=0?"rgba(46,204,143,.08)":"rgba(232,93,93,.08)",borderRadius:6,padding:"8px 10px",border:"1px solid "+(stressImpact.deltaPct>=0?"rgba(46,204,143,.3)":"rgba(232,93,93,.3)")}}>
                 <div className="lbl">Valeur APRÈS</div>
-                <div className="mono" style={{fontSize:16,color:stressResult.deltaPct>=0?"#2ecc8f":"#e85d5d"}}>{fe(stressResult.totA)}</div>
-                <div style={{fontSize:10,color:stressResult.deltaPct>=0?"#2ecc8f":"#e85d5d"}}>{fp(stressResult.deltaPct,1)} ({fe(stressResult.delta)})</div>
+                <div className="mono" style={{fontSize:16,color:stressImpact.deltaPct>=0?"#2ecc8f":"#e85d5d"}}>{fe(stressImpact.totA)}</div>
+                <div style={{fontSize:10,color:stressImpact.deltaPct>=0?"#2ecc8f":"#e85d5d"}}>{fp(stressImpact.deltaPct,1)} ({fe(stressImpact.delta)})</div>
               </div>
             </div>
-            <div className="lbl" style={{marginBottom:4}}>Top 3 positions les plus exposées</div>
-            {stressResult.top3.map(x=>(
+            <div className="lbl" style={{marginBottom:4}}>Top 3 positions exposées</div>
+            {stressImpact.top3.map(x=>(
               <div key={x.t} className="row" style={{padding:"6px 0"}}>
                 <div style={{flex:"0 0 25%"}} className="tk">{x.t}</div>
                 <div style={{flex:1,textAlign:"right",paddingRight:8}} className="dim">{x.s}</div>
@@ -1267,6 +1219,7 @@ function ScenariosView({ port, m }) {
                 <div style={{flex:"0 0 70px",textAlign:"right",fontFamily:"monospace",fontSize:11}}>{fe(x.after-x.val)}</div>
               </div>
             ))}
+            {!stressResult.dynamic && <div style={{fontSize:9,color:"#3a4560",marginTop:6}}>Données statiques — appuie sur ↻ pour calibrer avec le marché</div>}
           </>
         )}
       </div>
@@ -1330,8 +1283,6 @@ function ScenariosView({ port, m }) {
 function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onAskNotif, notifPerm, prices, eurusd, lastTs, fetchCount }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ t:"", n:"", q:"", b:"", s:"Tech", sig:"hold", v:25 });
-  const [antKey, setAntKey] = useState(getAnthropicKey);
-  const [antInput, setAntInput] = useState("");
 
   const removePos = (t) => {
     if (!confirm(`Supprimer ${t} du portefeuille ?`)) return;
@@ -1347,27 +1298,6 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
 
   return (
     <>
-      <div className="card" style={{border:antKey?"1px solid rgba(46,204,143,.3)":"1px solid rgba(240,160,32,.3)"}}>
-        <div className="cd-ti"><h3>Assistant IA — Clé Anthropic</h3></div>
-        {antKey ? (
-          <>
-            <div style={{fontSize:11,color:"#2ecc8f",marginBottom:6}}>✓ Clé configurée — Assistant IA actif</div>
-            <div style={{fontFamily:"monospace",fontSize:10,color:"#3a4560",marginBottom:8}}>{"•".repeat(8)}{antKey.slice(-4)}</div>
-            <button className="bn bn-r" onClick={()=>{setAnthropicKeyLS("");setAntKey("");}}>Supprimer la clé</button>
-          </>
-        ) : (
-          <>
-            <div style={{fontSize:11,color:"#8892a8",lineHeight:1.5,marginBottom:8}}>Clé API Anthropic pour l'assistant IA (stockée localement, jamais transmise). Optionnel dans le contexte Claude.ai.</div>
-            <input placeholder="sk-ant-…" value={antInput} onChange={e=>setAntInput(e.target.value)}
-              style={{marginBottom:6}} type="password"/>
-            <button className="bn bn-b" style={{width:"100%"}} onClick={()=>{
-              const k=antInput.trim();
-              if(k.length<10){return;}
-              setAnthropicKeyLS(k); setAntKey(k); setAntInput("");
-            }}>Enregistrer</button>
-          </>
-        )}
-      </div>
       <div className="card">
         <div className="cd-ti"><h3>État système</h3></div>
         <div className="row"><span>Build</span><span className="mono">{BUILD}</span></div>
