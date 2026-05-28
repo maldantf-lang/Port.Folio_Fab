@@ -283,7 +283,46 @@ const WATCH_KEY = "fab-pf-watch-v6";
 function loadWatch() { try { const s=localStorage.getItem(WATCH_KEY); return s?JSON.parse(s):OPPS.map(o=>o.t); } catch(e){ return OPPS.map(o=>o.t); } }
 function saveWatch(arr) { try { localStorage.setItem(WATCH_KEY, JSON.stringify(arr)); } catch(e){} }
 
-/* ============== CONTEXTE MACRO (Yahoo Finance — gratuit) ============== */
+/* ============== HISTORIQUE TRIMESTRIEL 3 ANS (Yahoo Finance — gratuit) ============== */
+const HIST3Y_KEY = "fab-hist-3y";
+const HIST3Y_TTL = 24 * 60 * 60 * 1000; // 24h
+
+function loadHist3y() { try { const s=localStorage.getItem(HIST3Y_KEY); return s?JSON.parse(s):{}; } catch(e){ return {}; } }
+function saveHist3y(d) { try { localStorage.setItem(HIST3Y_KEY, JSON.stringify(d)); } catch(e){} }
+
+async function fetchQuarterlyHistory(yfsym) {
+  const cache = loadHist3y();
+  if(cache[yfsym] && Date.now()-cache[yfsym].ts < HIST3Y_TTL) return cache[yfsym].data;
+  const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yfsym)}?interval=3mo&range=3y`;
+  const proxUrls = [
+    `https://allorigins.win/raw?url=${encodeURIComponent(yUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(yUrl)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yUrl)}`
+  ];
+  for(const proxy of proxUrls) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), 9000);
+      const r = await fetch(proxy, {signal:ctrl.signal});
+      clearTimeout(t);
+      const json = await r.json();
+      const res = json?.chart?.result?.[0];
+      if(!res) continue;
+      const ts = res.timestamp||[];
+      const cl = (res.indicators?.adjclose?.[0]?.adjclose)||(res.indicators?.quote?.[0]?.close)||[];
+      const data = ts.map((t,i)=>({
+        date: new Date(t*1000).toLocaleDateString("fr-FR",{month:"2-digit",year:"2-digit"}),
+        ts: t*1000,
+        px: cl[i]!=null&&cl[i]>0 ? +Number(cl[i]).toFixed(4) : null
+      })).filter(d=>d.px!=null);
+      if(data.length>=4) {
+        const all=loadHist3y(); all[yfsym]={ts:Date.now(),data}; saveHist3y(all);
+        return data;
+      }
+    } catch(e){ continue; }
+  }
+  return [];
+}
 // QQQ = Nasdaq/Tech · TLT = Obligations/Taux · ITA = Défense US
 const MACRO_CTX_KEY = "fab-macro-ctx";
 const MACRO_CTX_TTL = 4 * 60 * 60 * 1000; // 4h
@@ -474,14 +513,39 @@ function calcHealth(port, m) {
   const hhi = valid.reduce((s,p) => s + Math.pow(p.wt/100, 2), 0);
   const hhiNorm = n > 1 ? (hhi - 1/n) / (1 - 1/n) : 1;
   const div = Math.round(25 * (1 - Math.min(1, hhiNorm)));
+  const topPos = valid.reduce((b,p) => p.wt > b.wt ? p : b, {wt:0, t:"—"});
   const wPos = valid.filter(p => p.pct != null && p.pct > 0).reduce((s,p) => s + p.wt, 0);
+  const negCount = valid.filter(p => p.pct != null && p.pct < 0).length;
   const res = Math.round(25 * wPos / 100);
   const momNorm = Math.min(1, Math.max(0, (m.wp + 20) / 40));
   const mom = Math.round(25 * momNorm);
   let convW = 0, convTot = 0;
   valid.forEach(p => { const a = AN[p.t]; if(a) { convW += a.c * p.wt; convTot += p.wt; }});
-  const conv = convTot > 0 ? Math.round(25 * convW / convTot / 100) : 12;
-  return { total: div+res+mom+conv, div, res, mom, conv };
+  const avgConv = convTot > 0 ? Math.round(convW / convTot) : 0;
+  const conv = Math.round(25 * avgConv / 100);
+  const diag = {
+    div: {
+      detail: `HHI normalisé ${(hhiNorm*100).toFixed(0)}% · ${n} positions actives · 0% = parfait, 100% = mono-position`,
+      issue: topPos.wt > 35 ? `${topPos.t} représente ${topPos.wt.toFixed(0)}% — concentration critique` : topPos.wt > 20 ? `${topPos.t} à ${topPos.wt.toFixed(0)}% — surveiller` : "Répartition équilibrée entre les positions",
+      tip: topPos.wt > 30 ? `Alléger ${topPos.t}, réinvestir sur 2-3 autres positions` : n < 6 ? "Ajouter des positions pour diversifier davantage" : "Maintenir la répartition actuelle"
+    },
+    res: {
+      detail: `${wPos.toFixed(0)}% de la valeur en profit · ${negCount} position${negCount>1?"s":""} en perte actuellement`,
+      issue: wPos < 40 ? "Majorité du portefeuille en territoire négatif" : wPos < 65 ? "Résilience modérée, quelques positions fragilisent l'ensemble" : "Portefeuille résilient — majorité des positions gagnantes",
+      tip: wPos < 55 ? "Réévaluer les positions en perte : stop-loss ou renforcement ?" : "Protéger les gains via des alertes de seuil haut (Réglages)"
+    },
+    mom: {
+      detail: `Perf. pondérée ${m.wp >= 0 ? "+" : ""}${m.wp.toFixed(1)}% · calibré sur cible 10-20%/an · plage [-20%, +20%] → 0-25pts`,
+      issue: m.wp > 30 ? "Fort momentum — surveiller le biais de confirmation" : m.wp > 10 ? "Dans la zone cible 10-20%/an" : m.wp > 0 ? "Momentum positif mais sous la cible annuelle" : "Momentum négatif — révision stratégique recommandée",
+      tip: m.wp < 0 ? "Identifier les freins et revoir l'allocation sectorielle" : m.wp > 40 ? "Envisager des prises de profit partielles sur les leaders" : "Maintenir le cap, ajuster les positions sous-performantes"
+    },
+    conv: {
+      detail: `Conviction analyste pondérée ${avgConv}/100 · seuils : ≥80 fort, ≥60 modéré, <60 faible`,
+      issue: avgConv >= 80 ? "Très forte conviction — thèses d'investissement solides" : avgConv >= 65 ? "Bonne conviction d'ensemble" : avgConv >= 50 ? "Conviction modérée, quelques positions spéculatives" : "Conviction faible — portefeuille à requalifier",
+      tip: avgConv < 60 ? "Renforcer NVDA/MSFT/AMZN (conv. 90-95) et alléger les spéculatifs" : "Profil solide — capitaliser sur les thèses à haute conviction"
+    }
+  };
+  return { total: div+res+mom+conv, div, res, mom, conv, diag };
 }
 
 /* ============== FORMATEURS ============== */
@@ -627,7 +691,7 @@ function Strip({ m, alertCount }) {
   );
 }
 
-function PositionsView({ port, m, eurusd, onSelect, onTabChange }) {
+function PositionsView({ port, m, eurusd, onSelect, onTabChange, onRefresh, lastTs }) {
   const sells = port.filter(p => p.sig === "sell" && p.val != null);
   const [showHealth, setShowHealth] = useState(false);
   const health = useMemo(() => calcHealth(port, m), [port, m]);
@@ -645,13 +709,15 @@ function PositionsView({ port, m, eurusd, onSelect, onTabChange }) {
           <strong>⚠️ {sells.length} position{sells.length>1?"s":""} à alléger</strong> — voir Conseiller
         </div>
       )}
-      <div className="card" onClick={()=>setShowHealth(v=>!v)} style={{cursor:"pointer",marginBottom:9}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div className="card" style={{marginBottom:9}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}} onClick={()=>setShowHealth(v=>!v)}>
           <div>
-            <div className="lbl">Score de santé</div>
+            <div className="lbl">Score de santé
+              <span style={{marginLeft:6,fontSize:9,color:"#3a4560"}}>actualisé {ftime(lastTs)||"en temps réel"}</span>
+            </div>
             <div style={{fontSize:26,fontWeight:800,color:hcol,fontFamily:"'SF Mono',monospace"}}>{health.total}<span style={{fontSize:14,color:"#8892a8"}}>/100</span></div>
           </div>
-          <div style={{textAlign:"right"}}>
+          <div style={{textAlign:"right",display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
             <svg viewBox="0 0 50 50" width="48" height="48">
               <circle cx="25" cy="25" r="20" fill="none" stroke="#161c2a" strokeWidth="4"/>
               <circle cx="25" cy="25" r="20" fill="none" stroke={hcol} strokeWidth="4"
@@ -659,18 +725,42 @@ function PositionsView({ port, m, eurusd, onSelect, onTabChange }) {
                 strokeDashoffset={125.7*(1-health.total/100)}
                 transform="rotate(-90 25 25)"/>
             </svg>
-            <div style={{fontSize:9,color:"#3a4560",marginTop:2}}>{showHealth?"▲ masquer":"▼ détail"}</div>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <button className="bn bn-b ic-only" style={{fontSize:12,padding:"3px 7px"}}
+                onClick={e=>{e.stopPropagation();if(onRefresh)onRefresh();}}
+                title="Recalculer avec les derniers prix">↻</button>
+              <div style={{fontSize:9,color:"#3a4560"}}>{showHealth?"▲":"▼"}</div>
+            </div>
           </div>
         </div>
         {showHealth && (
-          <div className="g2" style={{marginTop:10,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.06)"}}>
-            {[["Diversif.",health.div,"#4f83f5"],["Résilience",health.res,"#2ecc8f"],["Momentum",health.mom,"#f0a020"],["Conviction",health.conv,"#8b7cf5"]].map(([l,v,c])=>(
-              <div key={l}>
-                <div className="lbl">{l}</div>
-                <div className="bar"><span style={{width:v*4+"%",background:c}}/></div>
-                <div className="num" style={{fontSize:10,color:c,marginTop:2}}>{v}/25</div>
-              </div>
-            ))}
+          <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.06)"}}>
+            {[
+              {key:"div", label:"Diversification",  col:"#4f83f5", score:health.div},
+              {key:"res", label:"Résilience",        col:"#2ecc8f", score:health.res},
+              {key:"mom", label:"Momentum",          col:"#f0a020", score:health.mom},
+              {key:"conv",label:"Conviction",        col:"#8b7cf5", score:health.conv}
+            ].map(({key,label,col,score})=>{
+              const d = health.diag[key];
+              const pct = score/25;
+              const stCol = pct >= 0.75 ? "#2ecc8f" : pct >= 0.5 ? "#f0a020" : "#e85d5d";
+              return (
+                <div key={key} style={{marginBottom:13,paddingBottom:13,borderBottom:"1px solid rgba(255,255,255,.04)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                    <span style={{fontSize:12,fontWeight:700,color:"#dde3f0"}}>{label}</span>
+                    <span style={{fontFamily:"monospace",fontSize:13,color:col,fontWeight:800}}>{score}/25</span>
+                  </div>
+                  <div className="bar" style={{marginBottom:6}}>
+                    <span style={{width:score*4+"%",background:col,transition:"width .4s"}}/>
+                  </div>
+                  <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:4}}>{d.detail}</div>
+                  <div style={{fontSize:10,color:stCol,marginBottom:3}}>
+                    {pct < 0.5 ? "⚠ " : pct < 0.75 ? "→ " : "✓ "}{d.issue}
+                  </div>
+                  <div style={{fontSize:10,color:"#4f83f5",fontStyle:"italic"}}>💡 {d.tip}</div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -1280,9 +1370,73 @@ function ScenariosView({ port, m }) {
 }
 
 /* CfgView — DÉCLARÉE HORS de App */
+/* ============== CODE DE VERROUILLAGE ============== */
+const PIN_KEY = "fab-pin";
+function getPinHash() { try { return localStorage.getItem(PIN_KEY)||""; } catch(e){ return ""; } }
+function setPinHash(h) { try { if(h) localStorage.setItem(PIN_KEY,h); else localStorage.removeItem(PIN_KEY); } catch(e){} }
+function hashPin(p) {
+  let h = 0;
+  for(let i=0;i<p.length;i++){ h=((h<<5)-h)+p.charCodeAt(i); h|=0; }
+  return btoa(Math.abs(h).toString(36)+"pfv2026");
+}
+
+function LockScreen({ onUnlock }) {
+  const [input, setInput] = useState("");
+  const [error, setError] = useState(false);
+
+  const press = (d) => { if(input.length>=4||error) return; setInput(p=>p+d); };
+  const del = () => { if(!error) setInput(p=>p.slice(0,-1)); };
+
+  useEffect(() => {
+    if(input.length===4) {
+      if(hashPin(input)===getPinHash()) { onUnlock(); }
+      else {
+        setError(true);
+        setTimeout(()=>{ setInput(""); setError(false); }, 700);
+      }
+    }
+  }, [input]);
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"#080b11",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:9999,userSelect:"none"}}>
+      <div style={{marginBottom:36,textAlign:"center"}}>
+        <div style={{fontSize:30,fontWeight:800,letterSpacing:"-.02em",marginBottom:6}}>
+          port<span style={{color:"#4f83f5"}}>.</span>folio
+        </div>
+        <div style={{fontSize:12,color:"#3a4560",letterSpacing:".05em"}}>CODE DE DÉVERROUILLAGE</div>
+      </div>
+      {/* Indicateurs */}
+      <div style={{display:"flex",gap:18,marginBottom:44}}>
+        {[0,1,2,3].map(i=>(
+          <div key={i} style={{
+            width:15,height:15,borderRadius:"50%",transition:"background .15s, transform .12s",
+            background: error?"#e85d5d":input.length>i?"#4f83f5":"rgba(255,255,255,.12)",
+            transform: input.length>i?"scale(1.2)":"scale(1)"
+          }}/>
+        ))}
+      </div>
+      {/* Clavier */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,72px)",gap:14}}>
+        {[1,2,3,4,5,6,7,8,9,null,0,"⌫"].map((k,i)=> k===null ? <div key={i}/> : (
+          <button key={i} onClick={()=>k==="⌫"?del():press(String(k))}
+            style={{width:72,height:72,borderRadius:36,border:"1px solid rgba(255,255,255,.1)",background:"rgba(255,255,255,.05)",color:"#dde3f0",fontSize:k==="⌫"?22:26,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",WebkitTapHighlightColor:"transparent"}}
+            onMouseDown={e=>e.currentTarget.style.background="rgba(79,131,245,.2)"}
+            onMouseUp={e=>e.currentTarget.style.background="rgba(255,255,255,.05)"}
+          >{k}</button>
+        ))}
+      </div>
+      {error && <div style={{marginTop:22,fontSize:12,color:"#e85d5d"}}>Code incorrect</div>}
+    </div>
+  );
+}
+
 function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onAskNotif, notifPerm, prices, eurusd, lastTs, fetchCount }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ t:"", n:"", q:"", b:"", s:"Tech", sig:"hold", v:25 });
+  const [pinActive, setPinActive] = useState(()=>Boolean(getPinHash()));
+  const [pinA, setPinA] = useState("");
+  const [pinB, setPinB] = useState("");
+  const [pinMsg, setPinMsg] = useState("");
 
   const removePos = (t) => {
     if (!confirm(`Supprimer ${t} du portefeuille ?`)) return;
@@ -1298,6 +1452,35 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
 
   return (
     <>
+      <div className="card">
+        <div className="cd-ti"><h3>Code de déverrouillage</h3></div>
+        {pinActive ? (
+          <>
+            <div style={{fontSize:11,color:"#2ecc8f",marginBottom:8}}>✓ Code activé — l'app se verrouille à chaque ouverture</div>
+            <button className="bn bn-r" style={{width:"100%"}} onClick={()=>{ setPinHash(""); setPinActive(false); setPinMsg(""); }}>Supprimer le code</button>
+          </>
+        ) : (
+          <>
+            <div style={{fontSize:11,color:"#8892a8",marginBottom:10,lineHeight:1.5}}>Code à 4 chiffres — protège l'accès à tes données de portefeuille.</div>
+            <div className="g2" style={{marginBottom:8}}>
+              <div><div className="lbl">Code</div>
+                <input type="password" inputMode="numeric" maxLength={4} placeholder="4 chiffres" value={pinA}
+                  onChange={e=>{ setPinA(e.target.value.replace(/\D/g,"").slice(0,4)); setPinMsg(""); }}/></div>
+              <div><div className="lbl">Confirmer</div>
+                <input type="password" inputMode="numeric" maxLength={4} placeholder="4 chiffres" value={pinB}
+                  onChange={e=>{ setPinB(e.target.value.replace(/\D/g,"").slice(0,4)); setPinMsg(""); }}/></div>
+            </div>
+            {pinMsg && <div style={{fontSize:11,color:pinMsg==="ok"?"#2ecc8f":"#e85d5d",marginBottom:6}}>
+              {pinMsg==="ok"?"✓ Code activé — l'app se verrouillera à la prochaine ouverture":pinMsg}
+            </div>}
+            <button className="bn bn-b" style={{width:"100%"}} onClick={()=>{
+              if(pinA.length<4){ setPinMsg("Code trop court (4 chiffres minimum)"); return; }
+              if(pinA!==pinB){ setPinMsg("Les codes ne correspondent pas"); return; }
+              setPinHash(hashPin(pinA)); setPinActive(true); setPinA(""); setPinB(""); setPinMsg("ok");
+            }}>Activer le code</button>
+          </>
+        )}
+      </div>
       <div className="card">
         <div className="cd-ti"><h3>État système</h3></div>
         <div className="row"><span>Build</span><span className="mono">{BUILD}</span></div>
@@ -1397,6 +1580,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   const p = port.find(x => x.t === ticker); if (!p) return null;
   const a = AN[ticker] || {};
   const [history, setHistory] = useState(null);
+  const [qHist, setQHist] = useState(null); // historique trimestriel 3A
 
   useEffect(() => {
     snapshotsRange(Date.now() - 90*86400000).then(arr => {
@@ -1408,23 +1592,52 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     });
   }, [ticker]);
 
+  useEffect(() => {
+    const sym = YF[ticker] ? (typeof YF[ticker]==="string" ? YF[ticker] : (YF[ticker].y||ticker)) : ticker;
+    fetchQuarterlyHistory(sym).then(setQHist);
+  }, [ticker]);
+
   const f = forecast(p, MACRO);
   const al = alerts[ticker];
 
-  // Données combinées : historique 90j + projection P10/P50/P90 12M
+  // Données combinées : historique 3A trimestriel + snapshots 90j + prévisions 12M
+  // Tout normalisé en % par rapport au cours actuel (0% = prix d'aujourd'hui)
   const chartData = useMemo(() => {
-    const last = history && history.length > 0 ? history[history.length-1] : null;
-    const base = last?.px || p.pxE || 1;
-    const fPts = [1,3,6,12].map(m=>({
-      date:`+${m}M`, px:null,
-      p10:+(base*(1+f.p10*m/12)).toFixed(4),
-      p50:+(base*(1+f.p50*m/12)).toFixed(4),
-      p90:+(base*(1+f.p90*m/12)).toFixed(4)
+    const yfSym = YF[ticker] ? (typeof YF[ticker]==="string" ? YF[ticker] : (YF[ticker].y||ticker)) : ticker;
+    const isEUR = yfSym.endsWith(".PA");
+    const baseEUR = p.pxE || 1;
+    const baseNative = isEUR ? baseEUR : baseEUR * (eurusd || 1.174); // prix actuel en devise native
+    const normNative = (px) => baseNative > 0 ? +((px-baseNative)/baseNative*100).toFixed(2) : null;
+    const normEUR    = (px) => baseEUR    > 0 ? +((px-baseEUR   )/baseEUR   *100).toFixed(2) : null;
+
+    // 1. Trimestriel 3A (devise native Yahoo Finance → % vs aujourd'hui)
+    const histPts = (qHist||[]).map(d=>({
+      date:d.date, seg:"hist",
+      pxHist:normNative(d.px), px:null, p10:null, p50:null, p90:null
     }));
-    if(!history||history.length===0) return base>0?[{date:"Auj.",px:base,p10:base,p50:base,p90:base},...fPts]:[];
-    const trans = {...last, p10:base, p50:base, p90:base};
-    return [...history.slice(0,-1).map(d=>({...d,p10:null,p50:null,p90:null})), trans, ...fPts];
-  }, [history, p.pxE, f.p10, f.p50, f.p90]);
+
+    // 2. Snapshots 90j (EUR → % vs cours actuel EUR)
+    const recentPts = (history||[]).map(d=>({
+      date:d.date, seg:"recent",
+      pxHist:null, px:normEUR(d.px), p10:null, p50:null, p90:null
+    }));
+
+    // 3. Transition : aujourd'hui = 0%
+    const lastDate = history&&history.length>0 ? history[history.length-1].date : "Auj.";
+    const trans = {date:lastDate, seg:"trans", pxHist:null, px:0, p10:0, p50:0, p90:0};
+
+    // 4. Prévisions 12M (% projeté)
+    const fPts = [1,3,6,12].map(m=>({
+      date:`+${m}M`, seg:"forecast", pxHist:null, px:null,
+      p10:+(f.p10*m/12*100).toFixed(2),
+      p50:+(f.p50*m/12*100).toFixed(2),
+      p90:+(f.p90*m/12*100).toFixed(2)
+    }));
+
+    const snap = recentPts.length>0 ? recentPts.slice(0,-1) : [];
+    if(!histPts.length&&!snap.length) return [trans,...fPts];
+    return [...histPts,...snap,trans,...fPts];
+  }, [qHist, history, p.pxE, eurusd, ticker, f.p10, f.p50, f.p90]);
 
   return (
     <div className="dt-ovr">
@@ -1459,38 +1672,50 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 
       {chartData.length > 0 && (
         <div className="card">
-          <div className="cd-ti"><h3>Cours 90j + prévisions 12M</h3></div>
-          <div style={{display:"flex",gap:10,marginBottom:6,flexWrap:"wrap"}}>
-            {[["─","#4f83f5","historique"],["╌","#4f83f5","P50 médian"],["╌","#2ecc8f","P90 optimiste"],["╌","#e85d5d","P10 pessimiste"]].map(([sym,col,lbl])=>(
-              <span key={lbl} style={{fontSize:9,color:col,display:"flex",alignItems:"center",gap:3}}>
+          <div className="cd-ti">
+            <h3>3 ans · 90j · Prévisions 12M</h3>
+            <span className="dim" style={{fontSize:9}}>% vs cours actuel</span>
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:6,flexWrap:"wrap"}}>
+            {[["─","rgba(79,131,245,.5)","3 ans (trimestriel)"],["─","#4f83f5","90j récent"],["╌","#4f83f5","P50"],["╌","#2ecc8f","P90"],["╌","#e85d5d","P10"]].map(([sym,col,lbl])=>(
+              <span key={lbl} style={{fontSize:9,color:col,display:"flex",alignItems:"center",gap:2}}>
                 <span style={{fontFamily:"monospace"}}>{sym}</span>{lbl}
               </span>
             ))}
           </div>
-          <div style={{height:220}}>
+          <div style={{height:230}}>
             <ResponsiveContainer>
               <LineChart data={chartData} margin={{top:5,right:5,left:0,bottom:0}}>
                 <CartesianGrid stroke="rgba(255,255,255,.04)" vertical={false}/>
-                <XAxis dataKey="date" stroke="#3a4560" fontSize={9} tickLine={false}/>
+                <XAxis dataKey="date" stroke="#3a4560" fontSize={8} tickLine={false} interval={4}/>
                 <YAxis stroke="#3a4560" fontSize={9} tickLine={false} axisLine={false}
-                  tickFormatter={v=>fe(v,0)} width={52}/>
+                  tickFormatter={v=>v!=null?(v>=0?"+":"")+v.toFixed(0)+"%":""} width={46}/>
                 <Tooltip contentStyle={{background:"#0f1420",border:"1px solid rgba(255,255,255,.1)",borderRadius:6,fontSize:11}}
-                  formatter={(v,name)=>v!=null?[fe(v),{px:"Cours",p50:"P50 médian",p90:"P90 optimiste",p10:"P10 pessimiste"}[name]||name]:null}/>
-                <ReferenceLine y={p.b} stroke="#8892a8" strokeDasharray="3 3"
-                  label={{value:"PRU",fill:"#8892a8",fontSize:8,position:"insideTopLeft"}}/>
-                {history&&history.length>0&&<ReferenceLine x={history[history.length-1].date}
-                  stroke="rgba(255,255,255,.12)" strokeDasharray="2 4"/>}
-                <Line type="monotone" dataKey="px"  stroke="#4f83f5" strokeWidth={2}   dot={false} connectNulls={false}/>
-                <Line type="monotone" dataKey="p50" stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3" strokeOpacity={0.75}/>
-                <Line type="monotone" dataKey="p90" stroke="#2ecc8f" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>
-                <Line type="monotone" dataKey="p10" stroke="#e85d5d" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>
+                  formatter={(v,name)=>v!=null?[(v>=0?"+":"")+v.toFixed(1)+"%",{pxHist:"3A trimestriel",px:"90j récent",p50:"P50 médian",p90:"P90 optimiste",p10:"P10 pessimiste"}[name]||name]:null}/>
+                <ReferenceLine y={0} stroke="rgba(255,255,255,.2)" strokeWidth={1.5} label={{value:"auj.",fill:"#8892a8",fontSize:8,position:"right"}}/>
+                {p.pxE > 0 && <ReferenceLine y={+((p.b-p.pxE)/p.pxE*100).toFixed(2)}
+                  stroke="#8892a8" strokeDasharray="3 3"
+                  label={{value:"PRU",fill:"#8892a8",fontSize:8,position:"insideTopLeft"}}/>}
+                {qHist && qHist.length > 0 && history && history.length > 0 &&
+                  <ReferenceLine x={history[history.length-1].date}
+                    stroke="rgba(255,255,255,.1)" strokeDasharray="2 4"/>}
+                <Line type="monotone" dataKey="pxHist" stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeOpacity={0.5}/>
+                <Line type="monotone" dataKey="px"     stroke="#4f83f5" strokeWidth={2.5} dot={false} connectNulls={false}/>
+                <Line type="monotone" dataKey="p50"    stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3" strokeOpacity={0.75}/>
+                <Line type="monotone" dataKey="p90"    stroke="#2ecc8f" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>
+                <Line type="monotone" dataKey="p10"    stroke="#e85d5d" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>
               </LineChart>
             </ResponsiveContainer>
           </div>
           <div style={{display:"flex",justifyContent:"space-around",fontSize:9,marginTop:4,color:"#8892a8"}}>
-            <span>P10 12M : <strong style={{color:"#e85d5d"}}>{fp(f.p10*100,0)}</strong></span>
-            <span>P50 12M : <strong style={{color:"#4f83f5"}}>{fp(f.p50*100,0)}</strong></span>
-            <span>P90 12M : <strong style={{color:"#2ecc8f"}}>{fp(f.p90*100,0)}</strong></span>
+            {qHist && qHist.length > 0 && (
+              <span>3A: <strong style={{color:qHist[qHist.length-1].px > qHist[0].px ? "#2ecc8f" : "#e85d5d"}}>
+                {fp((qHist[qHist.length-1].px/qHist[0].px-1)*100,0)}
+              </strong></span>
+            )}
+            <span>P10: <strong style={{color:"#e85d5d"}}>{fp(f.p10*100,0)}</strong></span>
+            <span>P50: <strong style={{color:"#4f83f5"}}>{fp(f.p50*100,0)}</strong></span>
+            <span>P90: <strong style={{color:"#2ecc8f"}}>{fp(f.p90*100,0)}</strong></span>
           </div>
         </div>
       )}
@@ -1549,6 +1774,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 
 /* ============== APP PRINCIPALE ============== */
 function App() {
+  const [locked, setLocked] = useState(() => Boolean(getPinHash()));
   const [port, setPort] = useState(() => {
     const s = loadStore(); return s?.port || PORT_DEF;
   });
@@ -1693,6 +1919,8 @@ function App() {
   // Détail
   const detailPort = detail ? enriched.find(p => p.t === detail) : null;
 
+  if(locked) return <LockScreen onUnlock={()=>setLocked(false)}/>;
+
   return (
     <div className="app">
       <Header
@@ -1704,7 +1932,7 @@ function App() {
 
       <Strip m={m} alertCount={sells}/>
 
-      {tab === "pos" && <PositionsView port={enriched} m={m} eurusd={eurusd} onSelect={setDetail} onTabChange={setTab}/>}
+      {tab === "pos" && <PositionsView port={enriched} m={m} eurusd={eurusd} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)} lastTs={lastTs}/>}
       {tab === "his" && <HistoryView snapshots={snapshots} port={enriched}/>}
       {tab === "macro" && <MacroView/>}
       {tab === "adv" && <AdvisorView port={enriched} m={m} onSelect={setDetail}/>}
