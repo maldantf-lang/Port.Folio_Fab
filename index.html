@@ -108,7 +108,7 @@ window.addEventListener("unhandledrejection",function(e){
 <script type="text/babel" data-presets="react" data-type="module">
 /* ===== port.folio Fab v6.0 — Standalone PWA ===== */
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
-const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart } = Recharts;
+const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
 const BUILD = "v13.8-2026-07-08-001";
@@ -255,18 +255,49 @@ const SECS = [
 /* ============== STRESS-TESTS ============== */
 const STRESS_SCENARIOS = [
   { id:"fed100", label:"Fed coupe 100pb", emoji:"🏦",
-    desc:"La Fed abaisse ses taux de 100pb. Boost Tech/Luxe/Biotech, pression Énergie.",
+    desc:"La Fed abaisse ses taux directeurs de 100 points de base (1 %).",
+    chain:[
+      "La banque centrale américaine réduit ses taux : emprunter coûte moins cher.",
+      "Les entreprises investissent plus, et les bénéfices futurs « valent » davantage aujourd'hui.",
+      "Les valeurs de croissance (Tech, Luxe, Biotech) montent le plus : leurs profits sont lointains, donc très sensibles aux taux.",
+      "Le dollar s'affaiblit (moins rémunérateur) → l'euro monte face au dollar."
+    ],
+    pf:"Plutôt favorable à ton portefeuille : ta poche Tech (NVDA, AMZN, MSFT) et Luxe (LVMH) est dopée. Attention, un dollar plus faible réduit un peu la valeur en euros de tes lignes en USD.",
     shocks:{ Tech:+0.14, Luxe:+0.10, Biotech:+0.08, Défense:+0.03, Énergie:-0.04 },
     fxShock: +0.04 }, // USD s'affaiblit, EUR/USD monte → pénalise les positions USD en EUR
   { id:"tech30", label:"Récession Tech −30%", emoji:"💻",
-    desc:"Choc sectoriel Tech : correction violente, rotation défensive.",
+    desc:"Choc de confiance sur la tech : correction brutale d'environ 30 %.",
+    chain:[
+      "Un déclencheur (résultats décevants, doute sur le retour sur investissement de l'IA…) fait chuter la tech.",
+      "Panique : les investisseurs vendent le risque et se réfugient vers la défense et l'énergie.",
+      "Le luxe est entraîné à la baisse, car sensible au climat de confiance et à la Chine.",
+      "Fuite vers le dollar refuge → l'euro baisse face au dollar, ce qui amortit un peu le choc en euros."
+    ],
+    pf:"Défavorable : tes 3 valeurs Tech pèsent lourd et souffrent. Tes ETF défense (GAD, NATO) jouent leur rôle d'amortisseur.",
     shocks:{ Tech:-0.30, Luxe:-0.10, Biotech:-0.08, Défense:+0.08, Énergie:+0.04 },
     fxShock: -0.03 }, // fuite vers le USD refuge, EUR/USD baisse → amortit légèrement le choc en EUR
   { id:"taiwan", label:"Choc Taiwan", emoji:"⚡",
-    desc:"Tensions militaires Taiwan : semi-conducteurs choqués, défense explose.",
+    desc:"Tensions militaires majeures autour de Taïwan.",
+    chain:[
+      "Taïwan concentre la fabrication mondiale de puces avancées (TSMC).",
+      "Une crise coupe l'approvisionnement → choc violent sur toute la tech, semi-conducteurs en tête.",
+      "Les budgets militaires mondiaux explosent → la défense s'envole.",
+      "Fuite vers le dollar refuge → l'euro baisse face au dollar."
+    ],
+    pf:"Contrasté : ta défense (GAD, NATO) s'envole, ta tech (NVDA en première ligne car exposée aux puces) plonge. Le résultat net dépend de ton équilibre tech / défense.",
     shocks:{ Tech:-0.20, Luxe:-0.12, Biotech:-0.05, Défense:+0.28, Énergie:+0.06 },
     fxShock: -0.04 } // fuite vers le USD refuge
 ];
+
+// Position d'un cours dans sa propre fourchette 3 ans (0=plus bas · 1=plus haut).
+// Base AUTO-CALIBRÉE : remplace les seuils fixes qui vieillissaient. Si le marché monte,
+// l'historique monte aussi → « cher » reste jugé par rapport à la tendance récente de l'actif.
+function pctRank(hist, cur) {
+  const vals = (hist||[]).map(d=>d.px).filter(v=>v>0);
+  if(vals.length < 10 || !(cur>0)) return null;
+  const below = vals.filter(v=>v <= cur).length;
+  return +(below / vals.length).toFixed(3);
+}
 
 /* ============== STORAGE ============== */
 function loadStore() {
@@ -356,7 +387,12 @@ async function fetchMacroCtx() {
   const pairs = [["qqq","QQQ"],["tlt","TLT"],["ita","ITA"],["gld","GLD"]];
   const ctx = {};
   await Promise.all(pairs.map(async ([k,sym]) => {
-    try { ctx[k] = await fetchSymbol(sym); } catch(e) {}
+    try {
+      const spot = await fetchSymbol(sym);
+      ctx[k] = spot;
+      // Percentile vs 3 ans (historique hebdo Yahoo, déjà mis en cache 24h) → seuil auto-calibré
+      try { const h = await fetchQuarterlyHistory(sym); const pr = pctRank(h, spot); if(pr!=null) ctx[k+"Pct"] = pr; } catch(e) {}
+    } catch(e) {}
   }));
   if(Object.keys(ctx).length > 0) saveMacroCtx(ctx);
   return ctx;
@@ -368,47 +404,70 @@ function computeDynShocks(scenarioId, ctx) {
   const shocks = Object.assign({}, base.shocks);
   const notes = [];
   const hasCtx = ctx && Object.keys(ctx).length > 0;
+  // Seuils désormais en PERCENTILES (position dans la fourchette 3 ans) → auto-calibrés, jamais périmés.
+  const C = pct => Math.round(pct*100); // centile lisible
+  // Note pédagogique complète : niveau observé + interprétation + effet sur la simulation
+  const pctNote = (sym, pct, high, low, hiTxt, loTxt, midTxt) =>
+    "📊 " + sym + " au " + C(pct) + "ᵉ centile de ses 3 ans → " +
+    (pct >= high ? hiTxt : pct <= low ? loTxt : midTxt);
 
-  if(scenarioId === "fed100" && hasCtx) {
-    // TLT < 88 → taux très élevés → coupe impacte davantage croissance
-    const m = ctx.tlt ? (ctx.tlt < 88 ? 1.35 : ctx.tlt < 96 ? 1.10 : 0.90) : 1;
+  if(scenarioId === "fed100" && hasCtx && ctx.tltPct != null) {
+    // TLT bas dans sa fourchette = taux longs élevés = plus de marge pour qu'une baisse dope la croissance
+    const p = ctx.tltPct;
+    const m = p < 0.35 ? 1.35 : p < 0.65 ? 1.10 : 0.90;
     shocks.Tech = +(base.shocks.Tech * m).toFixed(3);
     shocks.Luxe = +(base.shocks.Luxe * m).toFixed(3);
     shocks.Biotech = +(base.shocks.Biotech * m).toFixed(3);
-    if(ctx.tlt) notes.push("TLT " + ctx.tlt.toFixed(0) + " → taux " + (ctx.tlt < 90 ? "très élevés : coupe = boost fort growth ↑" : ctx.tlt < 96 ? "élevés : coupe = boost modéré" : "normaux : coupe = impact limité"));
+    notes.push(pctNote("Obligations longues (TLT)", p, 0.65, 0.35,
+      "taux déjà bas : une baisse ajoute peu, effet atténué.",
+      "taux longs élevés : une baisse ferait beaucoup de bien à la croissance, effet AMPLIFIÉ (+" + Math.round((m-1)*100) + "%).",
+      "taux dans la moyenne : effet modéré."));
   }
 
-  if(scenarioId === "tech30" && hasCtx) {
-    // QQQ élevé → valorisation étendue → correction plus sévère
-    const m = ctx.qqq ? (ctx.qqq > 490 ? 1.25 : ctx.qqq > 420 ? 1.00 : 0.70) : 1;
+  if(scenarioId === "tech30" && hasCtx && ctx.qqqPct != null) {
+    // QQQ haut dans sa fourchette = Nasdaq cher = une chute fait plus mal
+    const p = ctx.qqqPct;
+    const m = p > 0.75 ? 1.25 : p > 0.40 ? 1.00 : 0.70;
     shocks.Tech = +(base.shocks.Tech * m).toFixed(3);
-    shocks.Luxe = +(base.shocks.Luxe * Math.min(1.2, m * 0.8)).toFixed(3);
-    if(ctx.qqq) notes.push("QQQ " + ctx.qqq.toFixed(0) + " → Tech " + (ctx.qqq > 490 ? "valorisation étendue : correction amplifiée ↑" : ctx.qqq > 420 ? "valorisation normale" : "déjà corrigée : choc atténué ↓"));
+    shocks.Luxe = +(base.shocks.Luxe * Math.min(1.2, m * 0.9)).toFixed(3);
+    notes.push(pctNote("Nasdaq (QQQ)", p, 0.75, 0.40,
+      "cher, haut dans sa fourchette : une correction ferait plus mal, choc AMPLIFIÉ.",
+      "déjà corrigé, bas dans sa fourchette : marge de baisse réduite, choc ATTÉNUÉ.",
+      "valorisation normale : choc conforme au scénario."));
   }
 
   if(scenarioId === "taiwan" && hasCtx) {
-    // ITA élevé → défense déjà pricée → upside plus limité
-    const dm = ctx.ita ? (ctx.ita > 160 ? 0.75 : ctx.ita > 130 ? 1.00 : 1.25) : 1;
-    shocks.Défense = +(base.shocks.Défense * dm).toFixed(3);
-    const tm = ctx.qqq ? (ctx.qqq > 480 ? 1.20 : 0.90) : 1;
-    shocks.Tech = +(base.shocks.Tech * tm).toFixed(3);
-    if(ctx.ita) notes.push("ITA " + ctx.ita.toFixed(0) + " → Défense " + (ctx.ita > 155 ? "déjà valorisée, upside limité" : "upside disponible"));
-    if(ctx.qqq) notes.push("QQQ " + ctx.qqq.toFixed(0) + " → impact semi-conducteurs " + (ctx.qqq > 480 ? "amplifié" : "modéré"));
+    if(ctx.itaPct != null) {
+      const p = ctx.itaPct;
+      const dm = p > 0.70 ? 0.75 : p > 0.40 ? 1.00 : 1.25;
+      shocks.Défense = +(base.shocks.Défense * dm).toFixed(3);
+      notes.push(pctNote("Défense (ITA)", p, 0.70, 0.40,
+        "déjà bien valorisée : le bond de la défense serait plus limité.",
+        "peu valorisée : fort potentiel de hausse en cas de crise.",
+        "valorisation moyenne : bond de la défense conforme."));
+    }
+    if(ctx.qqqPct != null) {
+      const p = ctx.qqqPct;
+      const tm = p > 0.65 ? 1.20 : 0.90;
+      shocks.Tech = +(base.shocks.Tech * tm).toFixed(3);
+      notes.push("📊 Nasdaq (QQQ) au " + C(p) + "ᵉ centile → impact semi-conducteurs " + (p > 0.65 ? "AMPLIFIÉ (tech chère et exposée)." : "modéré."));
+    }
   }
 
-  // Contexte général : GLD élevé = stress marché → amplifie chocs négatifs
-  if(hasCtx && ctx.gld && ctx.gld > 2500) {
-    const stressMult = Math.min(1.2, 1 + (ctx.gld - 2500) / 5000);
+  // Contexte général : or haut dans sa fourchette = stress/peur sur les marchés → amplifie les chocs négatifs
+  if(hasCtx && ctx.gldPct != null && ctx.gldPct > 0.70) {
+    const stressMult = 1 + Math.min(0.2, (ctx.gldPct - 0.70) / 1.5);
     Object.keys(shocks).forEach(k => { if(shocks[k] < 0) shocks[k] = +(shocks[k] * stressMult).toFixed(3); });
-    notes.push("Or " + ctx.gld.toFixed(0) + " $ → stress marché élevé, chocs négatifs amplifiés");
+    notes.push("📊 Or (GLD) au " + C(ctx.gldPct) + "ᵉ centile → les investisseurs cherchent un refuge : stress de marché élevé, pertes amplifiées (×" + stressMult.toFixed(2) + ").");
   }
 
   if(base.fxShock) {
-    const dir = base.fxShock>0 ? "EUR/USD ↑ (USD s'affaiblit)" : "EUR/USD ↓ (USD refuge)";
-    notes.push("Choc devise estimé : " + (base.fxShock>=0?"+":"") + (base.fxShock*100).toFixed(0) + "% — " + dir + " — pénalise/amortit les positions USD en EUR");
+    const dir = base.fxShock>0 ? "l'euro monte face au dollar (USD moins rémunérateur)" : "l'euro baisse face au dollar (fuite vers le dollar refuge)";
+    const eff = base.fxShock>0 ? "réduit légèrement la valeur en euros de tes lignes en USD" : "amortit un peu le choc sur tes lignes en USD converties en euros";
+    notes.push("💱 Effet devise estimé " + (base.fxShock>=0?"+":"") + (base.fxShock*100).toFixed(0) + "% : " + dir + " — " + eff + ".");
   }
 
-  return { sc: base, shocks, desc: base.desc, notes, ctx: ctx||{}, dynamic: hasCtx, fxShock: base.fxShock||0 };
+  return { sc: base, shocks, desc: base.desc, chain: base.chain||[], pf: base.pf||"", notes, ctx: ctx||{}, dynamic: hasCtx, fxShock: base.fxShock||0 };
 }
 function openDB() {
   return new Promise((res, rej) => {
@@ -2012,12 +2071,24 @@ function ScenariosView({ port, m }) {
         </div>
         {/* Contexte marché */}
         {Object.keys(macroCtx).length > 0 ? (
-          <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-            {macroCtx.qqq && <span style={{background:"rgba(79,131,245,.1)",border:"1px solid rgba(79,131,245,.2)",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#8892a8"}}>QQQ <strong style={{color:"#dde3f0"}}>${macroCtx.qqq.toFixed(0)}</strong></span>}
-            {macroCtx.tlt && <span style={{background:"rgba(79,131,245,.1)",border:"1px solid rgba(79,131,245,.2)",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#8892a8"}}>TLT <strong style={{color:"#dde3f0"}}>${macroCtx.tlt.toFixed(0)}</strong></span>}
-            {macroCtx.ita && <span style={{background:"rgba(79,131,245,.1)",border:"1px solid rgba(79,131,245,.2)",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#8892a8"}}>ITA <strong style={{color:"#dde3f0"}}>${macroCtx.ita.toFixed(0)}</strong></span>}
-            {macroCtx.gld && <span style={{background:"rgba(79,131,245,.1)",border:"1px solid rgba(79,131,245,.2)",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#8892a8"}}>GLD <strong style={{color:macroCtx.gld>2500?"#e85d5d":"#dde3f0"}}>${macroCtx.gld.toFixed(0)}</strong></span>}
+          <>
+          <div style={{display:"flex",gap:8,marginBottom:6,flexWrap:"wrap"}}>
+            {[["QQQ","qqq","qqqPct"],["TLT","tlt","tltPct"],["ITA","ita","itaPct"],["GLD","gld","gldPct"]].map(([lbl,k,pk])=>{
+              if(!macroCtx[k]) return null;
+              const pct = macroCtx[pk];
+              const hot = pct!=null && pct>0.70;
+              return (
+                <span key={k} style={{background:"rgba(79,131,245,.1)",border:"1px solid rgba(79,131,245,.2)",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#8892a8"}}>
+                  {lbl} <strong style={{color:hot?"#f0a020":"#dde3f0"}}>${macroCtx[k].toFixed(0)}</strong>
+                  {pct!=null && <span style={{color:hot?"#f0a020":"#3a4560",marginLeft:4}}>{Math.round(pct*100)}ᵉ centile</span>}
+                </span>
+              );
+            })}
           </div>
+          <div style={{fontSize:9,color:"#3a4560",marginBottom:10,lineHeight:1.4}}>
+            « ᵉ centile » = position du cours dans sa fourchette des 3 dernières années (100 = plus haut, 0 = plus bas). C'est cette position, et non un seuil fixe, qui calibre l'intensité des scénarios — elle s'actualise donc toute seule avec le marché.
+          </div>
+          </>
         ) : (
           <div className="dim" style={{fontSize:10,marginBottom:8}}>{ctxLoading ? "⌛ Chargement contexte marché…" : "Contexte non chargé — appuie sur ↻"}</div>
         )}
@@ -2035,12 +2106,32 @@ function ScenariosView({ port, m }) {
         {stressResult && stressImpact && (
           <>
             <div style={{fontSize:11,color:"#8892a8",marginBottom:8,lineHeight:1.4}}>{stressResult.desc}</div>
-            {/* Notes (sectoriel dynamique + change EUR/USD, toujours affiché) */}
-            {stressResult.notes.length > 0 && (
-              <div style={{background:"rgba(79,131,245,.06)",borderRadius:6,padding:"8px 10px",marginBottom:10}}>
-                {stressResult.notes.map((n,i)=>(
-                  <div key={i} style={{fontSize:10,color:"#4f83f5",marginBottom:i<stressResult.notes.length-1?4:0}}>📊 {n}</div>
+            {/* PÉDAGOGIE — la chaîne économique, étape par étape */}
+            {stressResult.chain && stressResult.chain.length > 0 && (
+              <div style={{background:"rgba(255,255,255,.02)",border:"1px solid rgba(255,255,255,.05)",borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+                <div className="lbl" style={{marginBottom:6}}>Pourquoi · le raisonnement économique</div>
+                {stressResult.chain.map((step,i)=>(
+                  <div key={i} style={{display:"flex",gap:8,marginBottom:i<stressResult.chain.length-1?7:0}}>
+                    <div style={{flex:"0 0 18px",height:18,borderRadius:9,background:"rgba(79,131,245,.15)",color:"#4f83f5",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{i+1}</div>
+                    <div style={{flex:1,fontSize:11,color:"#dde3f0",lineHeight:1.45}}>{step}</div>
+                  </div>
                 ))}
+              </div>
+            )}
+            {/* Calibrage marché en direct (percentiles) + effet devise */}
+            {stressResult.notes.length > 0 && (
+              <div style={{background:"rgba(79,131,245,.06)",borderRadius:6,padding:"8px 10px",marginBottom:8}}>
+                <div className="lbl" style={{marginBottom:5,color:"#4f83f5"}}>Calibrage selon le marché actuel</div>
+                {stressResult.notes.map((n,i)=>(
+                  <div key={i} style={{fontSize:10,color:"#8892a8",marginBottom:i<stressResult.notes.length-1?5:0,lineHeight:1.4}}>{n}</div>
+                ))}
+              </div>
+            )}
+            {/* Impact concret sur TON portefeuille */}
+            {stressResult.pf && (
+              <div style={{background:"rgba(240,160,32,.06)",border:"1px solid rgba(240,160,32,.2)",borderRadius:8,padding:"9px 12px",marginBottom:10}}>
+                <div className="lbl" style={{marginBottom:4,color:"#f0a020"}}>Ce que ça change pour toi</div>
+                <div style={{fontSize:11,color:"#dde3f0",lineHeight:1.5}}>{stressResult.pf}</div>
               </div>
             )}
             <div className="g2" style={{marginBottom:8}}>
@@ -2093,6 +2184,48 @@ function ScenariosView({ port, m }) {
           <div className="lbl">P90 (optimiste)</div>
           <div className="mono" style={{fontSize:18,color:"#2ecc8f"}}>{fe(tot90)}</div>
           <div className="num" style={{fontSize:11,color:"#2ecc8f"}}>{fp((tot90/m.tot-1)*100,0)}</div>
+        </div>
+      </div>
+      {/* PÉDAGOGIE — comprendre les 3 scénarios futurs */}
+      <div className="card">
+        <div className="cd-ti"><h3>Comment lire ces 3 scénarios ?</h3></div>
+        <div style={{fontSize:11,color:"#dde3f0",lineHeight:1.55,marginBottom:10}}>
+          Plutôt qu'un seul chiffre faussement précis, le moteur dessine <strong>trois avenirs possibles</strong> à {horizon} mois. La réalité tombera presque toujours entre les deux extrêmes.
+        </div>
+        <div style={{marginBottom:8}}>
+          <div style={{display:"flex",gap:8,marginBottom:8}}>
+            <div style={{flex:"0 0 4px",background:"#e85d5d",borderRadius:2}}/>
+            <div style={{flex:1}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#e85d5d"}}>P10 · le scénario pessimiste</div>
+              <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45}}>Si les vents tournent mal (récession, choc géopolitique, dégonflement des valorisations). Il n'y a qu'environ 1 chance sur 10 de faire pire. C'est ta zone de résistance à surveiller.</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:8}}>
+            <div style={{flex:"0 0 4px",background:"#4f83f5",borderRadius:2}}/>
+            <div style={{flex:1}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#4f83f5"}}>P50 · le scénario central</div>
+              <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45}}>La trajectoire la plus probable si l'économie suit son cours attendu : croissance modérée, IA et défense qui portent le marché. Autant de chances de faire mieux que moins bien.</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <div style={{flex:"0 0 4px",background:"#2ecc8f",borderRadius:2}}/>
+            <div style={{flex:1}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#2ecc8f"}}>P90 · le scénario optimiste</div>
+              <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45}}>Si tout s'aligne (baisses de taux, cycle IA qui s'accélère, réarmement soutenu). Environ 1 chance sur 10 de faire encore mieux.</div>
+            </div>
+          </div>
+        </div>
+        <div style={{background:"rgba(255,255,255,.02)",border:"1px solid rgba(255,255,255,.05)",borderRadius:8,padding:"9px 12px",marginBottom:8}}>
+          <div className="lbl" style={{marginBottom:4}}>Le raisonnement du moteur</div>
+          <div style={{fontSize:10,color:"#8892a8",lineHeight:1.5}}>
+            Chaque scénario part de la <strong>conviction des analystes</strong> (le cap de fond), ajustée par le <strong>momentum</strong> récent (le vent réel des 6 derniers horizons) et la <strong>volatilité</strong> (l'agitation). Plus une position est agitée, plus l'éventail P10↔P90 s'élargit : l'écart n'est pas un défaut, c'est la mesure honnête de l'incertitude.
+          </div>
+        </div>
+        <div style={{background:"rgba(240,160,32,.06)",border:"1px solid rgba(240,160,32,.2)",borderRadius:8,padding:"9px 12px"}}>
+          <div className="lbl" style={{marginBottom:4,color:"#f0a020"}}>Pour ton portefeuille</div>
+          <div style={{fontSize:10,color:"#dde3f0",lineHeight:1.5}}>
+            Écart entre le pire et le meilleur cas : <strong>{fp((tot90/m.tot-1)*100,0)}</strong> à <strong>{fp((tot10/m.tot-1)*100,0)}</strong>, soit une fourchette de <strong>{((tot90-tot10)/m.tot*100).toFixed(0)} points</strong>. {((tot90-tot10)/m.tot*100) > 40 ? "Large : ton portefeuille est concentré sur des secteurs à fort potentiel mais volatils (Tech, IA)." : "Modérée : ton allocation est relativement équilibrée."} Le P50 reste ta boussole ; le P10 dit combien tu peux encaisser sans paniquer.
+          </div>
         </div>
       </div>
       <div className="card">
@@ -2706,22 +2839,38 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
       pxHist:null, px:normEUR(d.px), p10:null, p50:null, p90:null
     }));
 
-    // 3. Transition : aujourd'hui = 0%
+    // 3. Transition : aujourd'hui = 0% (départ du cône)
     const lastDate = history&&history.length>0 ? history[history.length-1].date : "Auj.";
-    const trans = {date:lastDate, seg:"trans", pxHist:null, px:0, p10:0, p50:0, p90:0};
+    const trans = {date:lastDate, seg:"trans", pxHist:null, px:0, p10:0, p50:0, p90:0, coneBase:0, coneSpan:0};
 
-    // 4. Prévisions — points dynamiques selon horizon sélectionné
-    const steps = horizon<=3 ? [1,2,3] : horizon<=6 ? [1,3,6] : horizon<=9 ? [2,5,9] : [1,3,6,12];
-    const fPts = steps.map(mo=>({
-      date:`+${mo}M`, seg:"forecast", pxHist:null, px:null,
-      p10:+(f.p10*mo/12*100).toFixed(2),
-      p50:+(f.p50*mo/12*100).toFixed(2),
-      p90:+(f.p90*mo/12*100).toFixed(2)
-    }));
-
+    // 4. Côté passé = historique 3A + snapshots 90j, rééchantillonné pour occuper 3/4 de la largeur
     const snap = recentPts.length>0 ? recentPts.slice(0,-1) : [];
-    if(!histPts.length&&!snap.length) return [trans,...fPts];
-    return [...histPts,...snap,trans,...fPts];
+    const past = [...histPts, ...snap];
+    // Rééchantillonnage régulier en gardant début et fin (courbe lisse, sans écraser la prévision)
+    const downsample = (arr, n) => {
+      if(arr.length <= n) return arr;
+      const step = (arr.length-1)/(n-1), out = [];
+      for(let i=0;i<n;i++) out.push(arr[Math.round(i*step)]);
+      return out;
+    };
+    const TARGET_PAST = 45;
+    const pastDS = downsample(past, TARGET_PAST);
+
+    // 5. Prévisions — nombre de points calé sur 1/4 de la largeur (ratio 3:1), étalées sur l'horizon
+    const Fn = Math.max(6, Math.round(pastDS.length/3));
+    const fPts = Array.from({length:Fn}, (_,i) => {
+      const mo = horizon*(i+1)/Fn;               // mois fractionnaires jusqu'à l'horizon
+      const p10 = +(f.p10*mo/12*100).toFixed(2);
+      const p90 = +(f.p90*mo/12*100).toFixed(2);
+      return {
+        date:`+${Number.isInteger(mo)?mo:mo.toFixed(1)}M`, seg:"forecast", pxHist:null, px:null,
+        p10, p90, p50:+(f.p50*mo/12*100).toFixed(2),
+        coneBase:p10, coneSpan:+(p90-p10).toFixed(2)  // bande ombrée P10→P90
+      };
+    });
+
+    if(!pastDS.length) return [trans,...fPts];
+    return [...pastDS,trans,...fPts];
   }, [qHist, history, p.pxE, eurusd, ticker, f.p10, f.p50, f.p90, horizon]);
 
   const hcol = risk.total>=65?"#e85d5d":risk.total>=40?"#f0a020":"#2ecc8f";
@@ -2812,7 +2961,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
       {chartData.length > 0 && (
         <div className="card">
           <div className="cd-ti">
-            <h3>3 ans · 90j · Prévisions</h3>
+            <h3>Historique &amp; prévisions</h3>
             <span className="dim" style={{fontSize:9}}>% vs cours actuel</span>
           </div>
           <div className="seg" style={{marginBottom:8}}>
@@ -2820,8 +2969,15 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
               <div key={hz} className={"it"+(horizon===hz?" ac":"")} onClick={()=>setHorizon(hz)}>{hz}M</div>
             )}
           </div>
+          <div style={{fontSize:9,color:"#8892a8",marginBottom:6,display:"flex",alignItems:"center",gap:4}}>
+            <span style={{display:"inline-block",width:24,height:2,background:"rgba(255,255,255,.2)",flex:"0 0 auto"}}/>
+            <span>← 3/4 passé (3 ans + 90j)</span>
+            <span style={{margin:"0 2px"}}>|</span>
+            <span style={{display:"inline-block",width:14,height:8,background:"rgba(79,131,245,.18)",borderRadius:2,flex:"0 0 auto"}}/>
+            <span>1/4 prévisions ({horizon}M) →</span>
+          </div>
           <div style={{display:"flex",gap:8,marginBottom:6,flexWrap:"wrap"}}>
-            {[["─","rgba(79,131,245,.5)","3 ans (trimestriel)"],["─","#4f83f5","90j récent"],["╌","#4f83f5","P50"],["╌","#2ecc8f","P90"],["╌","#e85d5d","P10"]].map(([sym,col,lbl])=>(
+            {[["─","#4f83f5","Cours"],["▬","rgba(79,131,245,.2)","Cône P10–P90"],["╌","#4f83f5","P50 médian"],["╌","#2ecc8f","P90 haut"],["╌","#e85d5d","P10 bas"]].map(([sym,col,lbl])=>(
               <span key={lbl} style={{fontSize:9,color:col,display:"flex",alignItems:"center",gap:2}}>
                 <span style={{fontFamily:"monospace"}}>{sym}</span>{lbl}
               </span>
@@ -2829,13 +2985,16 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
           </div>
           <div style={{height:230}}>
             <ResponsiveContainer>
-              <LineChart data={chartData} margin={{top:5,right:5,left:0,bottom:0}}>
+              <ComposedChart data={chartData} margin={{top:5,right:5,left:0,bottom:0}}>
                 <CartesianGrid stroke="rgba(255,255,255,.04)" vertical={false}/>
                 <XAxis dataKey="date" stroke="#3a4560" fontSize={8} tickLine={false} interval="preserveStartEnd" minTickGap={40}/>
                 <YAxis stroke="#3a4560" fontSize={9} tickLine={false} axisLine={false}
                   tickFormatter={v=>v!=null?(v>=0?"+":"")+v.toFixed(0)+"%":""} width={46}/>
                 <Tooltip contentStyle={{background:"#0f1420",border:"1px solid rgba(255,255,255,.1)",borderRadius:6,fontSize:11}}
-                  formatter={(v,name)=>v!=null?[(v>=0?"+":"")+v.toFixed(1)+"%",{pxHist:"3A trimestriel",px:"90j récent",p50:"P50 médian",p90:"P90 optimiste",p10:"P10 pessimiste"}[name]||name]:null}/>
+                  formatter={(v,name)=>{
+                    if(name==="coneBase"||name==="coneSpan") return null;
+                    return v!=null?[(v>=0?"+":"")+v.toFixed(1)+"%",{pxHist:"3A",px:"90j récent",p50:"P50 médian",p90:"P90 optimiste",p10:"P10 pessimiste"}[name]||name]:null;
+                  }}/>
                 <ReferenceLine y={0} stroke="rgba(255,255,255,.2)" strokeWidth={1.5} label={{value:"auj.",fill:"#8892a8",fontSize:8,position:"right"}}/>
                 {p.pxE > 0 && <ReferenceLine y={+((p.b-p.pxE)/p.pxE*100).toFixed(2)}
                   stroke="#8892a8" strokeDasharray="3 3"
@@ -2843,12 +3002,15 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
                 {qHist && qHist.length > 0 && history && history.length > 0 &&
                   <ReferenceLine x={history[history.length-1].date}
                     stroke="rgba(255,255,255,.1)" strokeDasharray="2 4"/>}
+                {/* Bande ombrée du cône P10→P90 (empilement : base transparente + envergure colorée) */}
+                <Area type="monotone" dataKey="coneBase" stackId="cone" stroke="none" fill="transparent" isAnimationActive={false} connectNulls={false}/>
+                <Area type="monotone" dataKey="coneSpan" stackId="cone" stroke="none" fill="rgba(79,131,245,.18)" isAnimationActive={false} connectNulls={false}/>
                 <Line type="monotone" dataKey="pxHist" stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeOpacity={0.5}/>
                 <Line type="monotone" dataKey="px"     stroke="#4f83f5" strokeWidth={2.5} dot={false} connectNulls={false}/>
                 <Line type="monotone" dataKey="p50"    stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3" strokeOpacity={0.75}/>
                 <Line type="monotone" dataKey="p90"    stroke="#2ecc8f" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>
                 <Line type="monotone" dataKey="p10"    stroke="#e85d5d" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>
-              </LineChart>
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
           <div style={{display:"flex",justifyContent:"space-around",fontSize:9,marginTop:4,color:"#8892a8"}}>
