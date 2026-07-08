@@ -108,7 +108,7 @@ window.addEventListener("unhandledrejection",function(e){
 <script type="text/babel" data-presets="react" data-type="module">
 /* ===== port.folio Fab v6.0 — Standalone PWA ===== */
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
-const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart, ComposedChart } = Recharts;
+const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
 const BUILD = "v13.8-2026-07-08-001";
@@ -2492,6 +2492,40 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
     setForm({ t:"", n:"", q:"", b:"", s:"Tech", sig:"hold", v:25 });
   };
 
+  // ===== Sauvegarde / restauration (confidentialité : données hors du code source) =====
+  const fileRef = useRef(null);
+  const exportPortfolio = () => {
+    const data = { app:"port.folio Fab", type:"portfolio-backup", version:1,
+      exportedAt:new Date().toISOString().slice(0,10), port };
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "portfolio-fab-sauvegarde.json"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  };
+  const importPortfolio = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result);
+        const arr = Array.isArray(parsed) ? parsed : parsed.port;
+        if(!Array.isArray(arr)) { alert("Fichier invalide : aucune liste de positions trouvée."); return; }
+        const clean = arr.filter(p => p && p.t && p.q!=null && p.b!=null).map(p => ({
+          t:String(p.t).toUpperCase(), n:p.n||p.t, q:+p.q, b:+p.b,
+          s:p.s||"Autre", sig:p.sig||"hold", v:+p.v||25, acct:p.acct||"CTO"
+        }));
+        if(!clean.length) { alert("Aucune position valide dans le fichier."); return; }
+        if(!confirm("Importer "+clean.length+" positions ? Cela remplace le portefeuille actuel.")) return;
+        onPortChange(clean);
+        alert("✅ "+clean.length+" positions importées et sauvegardées.");
+      } catch(err) { alert("Fichier illisible : "+err.message); }
+    };
+    reader.readAsText(file);
+    e.target.value = ""; // permet de ré-importer le même fichier
+  };
+
   return (
     <>
       <div className="card">
@@ -2732,6 +2766,19 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
       </div>
 
       <div className="card">
+        <div className="cd-ti"><h3>Sauvegarde &amp; confidentialité</h3></div>
+        <div style={{fontSize:10,color:"#8892a8",lineHeight:1.5,marginBottom:10}}>
+          Tes positions vivent uniquement dans ce navigateur (privé). Exporte une sauvegarde pour la restaurer sur un autre appareil ou après un vidage de cache — pas besoin d'importer à chaque ouverture, le rechargement est automatique.
+        </div>
+        <div className="g2" style={{marginBottom:6}}>
+          <button className="bn bn-b" onClick={exportPortfolio}>⬇ Exporter</button>
+          <button className="bn bn-g" onClick={()=>fileRef.current && fileRef.current.click()}>⬆ Importer</button>
+        </div>
+        <input ref={fileRef} type="file" accept="application/json,.json" onChange={importPortfolio} style={{display:"none"}}/>
+        <div className="dim" style={{fontSize:9,textAlign:"center"}}>Le fichier de sauvegarde contient tes avoirs : garde-le en privé (notes, gestionnaire de mots de passe).</div>
+      </div>
+
+      <div className="card">
         <div className="cd-ti"><h3>Maintenance</h3></div>
         <button className="bn bn-w" style={{width:"100%",marginBottom:6}} onClick={onClearCache}>🗑 Vider le cache prix</button>
         <div className="dim" style={{fontSize:10,textAlign:"center",marginTop:6}}>
@@ -2876,6 +2923,9 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   const hcol = risk.total>=65?"#e85d5d":risk.total>=40?"#f0a020":"#2ecc8f";
   const sigCol = {buy:"#2ecc8f",sell:"#e85d5d",hold:"#f0a020",spec:"#8b7cf5"}[p.sig]||"#8892a8";
   const fAtH = (k) => f[k]*horizon/12*100; // prévision recalée sur l'horizon sélectionné
+  // Bornes de la zone de prévision (pour l'ombrage + le séparateur "aujourd'hui")
+  const fcStart = (chartData.find(d=>d.seg==="trans")||{}).date || null;
+  const fcEnd = chartData.length ? chartData[chartData.length-1].date : null;
 
   return (
     <div className="dt-ovr">
@@ -2985,7 +3035,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
           </div>
           <div style={{height:230}}>
             <ResponsiveContainer>
-              <ComposedChart data={chartData} margin={{top:5,right:5,left:0,bottom:0}}>
+              <ComposedChart data={chartData} margin={{top:5,right:46,left:0,bottom:0}}>
                 <CartesianGrid stroke="rgba(255,255,255,.04)" vertical={false}/>
                 <XAxis dataKey="date" stroke="#3a4560" fontSize={8} tickLine={false} interval="preserveStartEnd" minTickGap={40}/>
                 <YAxis stroke="#3a4560" fontSize={9} tickLine={false} axisLine={false}
@@ -2995,21 +3045,31 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
                     if(name==="coneBase"||name==="coneSpan") return null;
                     return v!=null?[(v>=0?"+":"")+v.toFixed(1)+"%",{pxHist:"3A",px:"90j récent",p50:"P50 médian",p90:"P90 optimiste",p10:"P10 pessimiste"}[name]||name]:null;
                   }}/>
+                {/* Zone de prévision (1/4 droite) ombrée pour séparer nettement passé et futur */}
+                {fcStart && <ReferenceArea x1={fcStart} x2={fcEnd} fill="rgba(79,131,245,.06)" stroke="none"
+                  label={{value:"PRÉVISIONS", fill:"#3a4560", fontSize:8, position:"insideTop"}}/>}
                 <ReferenceLine y={0} stroke="rgba(255,255,255,.2)" strokeWidth={1.5} label={{value:"auj.",fill:"#8892a8",fontSize:8,position:"right"}}/>
                 {p.pxE > 0 && <ReferenceLine y={+((p.b-p.pxE)/p.pxE*100).toFixed(2)}
                   stroke="#8892a8" strokeDasharray="3 3"
                   label={{value:"PRU",fill:"#8892a8",fontSize:8,position:"insideTopLeft"}}/>}
-                {qHist && qHist.length > 0 && history && history.length > 0 &&
-                  <ReferenceLine x={history[history.length-1].date}
-                    stroke="rgba(255,255,255,.1)" strokeDasharray="2 4"/>}
+                {/* Séparateur vertical AUJOURD'HUI — renforcé */}
+                {fcStart && <ReferenceLine x={fcStart} stroke="rgba(255,255,255,.28)" strokeWidth={1.5}
+                  label={{value:"aujourd'hui", fill:"#8892a8", fontSize:8, position:"insideTopRight", angle:-90, offset:12}}/>}
                 {/* Bande ombrée du cône P10→P90 (empilement : base transparente + envergure colorée) */}
                 <Area type="monotone" dataKey="coneBase" stackId="cone" stroke="none" fill="transparent" isAnimationActive={false} connectNulls={false}/>
-                <Area type="monotone" dataKey="coneSpan" stackId="cone" stroke="none" fill="rgba(79,131,245,.18)" isAnimationActive={false} connectNulls={false}/>
+                <Area type="monotone" dataKey="coneSpan" stackId="cone" stroke="none" fill="rgba(79,131,245,.2)" isAnimationActive={false} connectNulls={false}/>
                 <Line type="monotone" dataKey="pxHist" stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeOpacity={0.5}/>
                 <Line type="monotone" dataKey="px"     stroke="#4f83f5" strokeWidth={2.5} dot={false} connectNulls={false}/>
-                <Line type="monotone" dataKey="p50"    stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3" strokeOpacity={0.75}/>
+                <Line type="monotone" dataKey="p50"    stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3" strokeOpacity={0.85}/>
                 <Line type="monotone" dataKey="p90"    stroke="#2ecc8f" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>
                 <Line type="monotone" dataKey="p10"    stroke="#e85d5d" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>
+                {/* Valeurs P10/P50/P90 chiffrées à la pointe du cône */}
+                {fcEnd && <ReferenceDot x={fcEnd} y={fAtH("p90")} r={2.5} fill="#2ecc8f" stroke="none"
+                  label={{value:"P90 "+fp(fAtH("p90"),0), fill:"#2ecc8f", fontSize:8, position:"right"}}/>}
+                {fcEnd && <ReferenceDot x={fcEnd} y={fAtH("p50")} r={2.5} fill="#4f83f5" stroke="none"
+                  label={{value:"P50 "+fp(fAtH("p50"),0), fill:"#4f83f5", fontSize:8, position:"right"}}/>}
+                {fcEnd && <ReferenceDot x={fcEnd} y={fAtH("p10")} r={2.5} fill="#e85d5d" stroke="none"
+                  label={{value:"P10 "+fp(fAtH("p10"),0), fill:"#e85d5d", fontSize:8, position:"right"}}/>}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
