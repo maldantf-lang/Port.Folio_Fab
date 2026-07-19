@@ -1265,15 +1265,13 @@ function AnticipatoryAlerts({ port, onSelect }) {
           <span style={{fontSize:11,color:colors[a.level],flex:1}}>{a.msg}</span>
         </div>
       ))}
-      <div className="dim" style={{fontSize:8,marginTop:6}}>Prochains résultats : voir l'onglet Demain.</div>
+      <div className="dim" style={{fontSize:8,marginTop:6}}>Prochains résultats : voir l'onglet Forecast.</div>
     </div>
   );
 }
 
-// Carte AIDE À LA DÉCISION : boussole contrarian, timing, simulateur, rééquilibrage, clusters cachés
+// Carte AIDE À LA DÉCISION : boussole contrarian, timing, rééquilibrage, clusters cachés
 function DecisionSupport({ port, qHistMap, onSelect }) {
-  const [simT, setSimT] = useState(port[0] ? port[0].t : "");
-  const [simEur, setSimEur] = useState("");
   const [cash, setCash] = useState("");
   const clusters = useMemo(() => {
     const hc = calcHistCorrelations(port, qHistMap);
@@ -1281,7 +1279,6 @@ function DecisionSupport({ port, qHistMap, onSelect }) {
   }, [port, qHistMap]);
   const compass = port.filter(p=>p.val!=null).map(p=>({p, c:crowdCompass(p), t:timingScore(p)}))
     .sort((a,b)=> Math.abs(b.c.score) - Math.abs(a.c.score));
-  const sim = simEur ? simulateBuy(port, simT, +simEur) : null;
   const plan = cash ? rebalancePlan(port, +cash) : null;
   const moodCol = s => s>=15 ? "#2ecc8f" : s<=-15 ? "#e85d5d" : "#8892a8";
   return (
@@ -1314,23 +1311,6 @@ function DecisionSupport({ port, qHistMap, onSelect }) {
         </div>
       )}
 
-      {/* Simulateur d'achat */}
-      <div style={{fontSize:9,color:"#3a4560",fontWeight:700,letterSpacing:".04em",marginBottom:6}}>SIMULATEUR « ET SI J'ACHÈTE »</div>
-      <div style={{display:"flex",gap:6,marginBottom:6}}>
-        <select value={simT} onChange={e=>setSimT(e.target.value)} style={{flex:1,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",padding:"7px",fontSize:12}}>
-          {port.map(p=><option key={p.t} value={p.t}>{p.t} — {p.n}</option>)}
-        </select>
-        <input type="number" inputMode="decimal" placeholder="€" value={simEur} onChange={e=>setSimEur(e.target.value)}
-          style={{width:70,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",padding:"7px",fontSize:12}}/>
-      </div>
-      {sim && (
-        <div style={{background:"#161c2a",borderRadius:7,padding:"8px 10px",marginBottom:10,fontSize:11}}>
-          <div>Poids {simT} : <strong>{sim.wtBefore.toFixed(1)}% → <span style={{color:"#4f83f5"}}>{sim.wtAfter.toFixed(1)}%</span></strong></div>
-          <div>Secteur {sim.sector} : {sim.secBefore.toFixed(1)}% → {sim.secAfter.toFixed(1)}%</div>
-          {sim.concentrationFlag && <div style={{color:"#e85d5d",marginTop:3}}>⚠️ dépasserait 35% — concentration critique</div>}
-        </div>
-      )}
-
       {/* Rééquilibrage chiffré */}
       <div style={{fontSize:9,color:"#3a4560",fontWeight:700,letterSpacing:".04em",marginBottom:6}}>RÉÉQUILIBRAGE — MONTANT À INVESTIR</div>
       <input type="number" inputMode="decimal" placeholder="Montant en €" value={cash} onChange={e=>setCash(e.target.value)}
@@ -1343,6 +1323,39 @@ function DecisionSupport({ port, qHistMap, onSelect }) {
         </div>
       )) : cash ? <div className="dim" style={{fontSize:10}}>Aucune position en signal « achat » actuellement.</div> : null}
       <div className="dim" style={{fontSize:8,marginTop:6}}>Réparti sur les positions en signal achat, au prorata de la conviction. Simulation, pas un ordre.</div>
+    </div>
+  );
+}
+
+// Carte SIMULATEUR « ET SI J'ACHÈTE » — autonome, placée en bas de l'onglet Actual
+function BuySimulatorCard({ port, onSelect }) {
+  const [simT, setSimT] = useState(port[0] ? port[0].t : "");
+  const [simEur, setSimEur] = useState("");
+  const sim = simEur ? simulateBuy(port, simT, +simEur) : null;
+  if(!port.length) return null;
+  return (
+    <div className="card">
+      <div className="cd-ti">
+        <h3>Simulateur « et si j'achète »</h3>
+        <span className="dim" style={{fontSize:9}}>impact immédiat</span>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:6}}>
+        <select value={simT} onChange={e=>setSimT(e.target.value)} style={{flex:1,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",padding:"7px",fontSize:12}}>
+          {port.map(p=><option key={p.t} value={p.t}>{p.t} — {p.n}</option>)}
+        </select>
+        <input type="number" inputMode="decimal" placeholder="€" value={simEur} onChange={e=>setSimEur(e.target.value)}
+          style={{width:70,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",padding:"7px",fontSize:12}}/>
+      </div>
+      {sim ? (
+        <div style={{background:"#161c2a",borderRadius:7,padding:"8px 10px",fontSize:11}}>
+          <div>Poids {simT} : <strong>{sim.wtBefore.toFixed(1)}% → <span style={{color:"#4f83f5"}}>{sim.wtAfter.toFixed(1)}%</span></strong></div>
+          <div>Secteur {sim.sector} : {sim.secBefore.toFixed(1)}% → {sim.secAfter.toFixed(1)}%</div>
+          {sim.concentrationFlag && <div style={{color:"#e85d5d",marginTop:3}}>⚠️ dépasserait 35% — concentration critique</div>}
+        </div>
+      ) : (
+        <div className="dim" style={{fontSize:10}}>Choisis une position et un montant en € pour voir l'effet sur ton allocation.</div>
+      )}
+      <div className="dim" style={{fontSize:8,marginTop:6}}>Simulation d'allocation, pas un ordre. Projection de cours : onglet Forecast.</div>
     </div>
   );
 }
@@ -1591,6 +1604,7 @@ function PositionsView({ port, m, eurusd, onSelect, onTabChange, onRefresh, last
           </div>
         ))}
       </div>
+      <BuySimulatorCard port={port} onSelect={onSelect}/>
       <div className="card">
         <div className="cd-ti"><h3>Exposition sectorielle</h3></div>
         {sectors.map(([s,v]) => (
@@ -1858,6 +1872,7 @@ function WatchlistView({ port, m }) {
   const [simTk, setSimTk] = useState(OPPS[0] ? OPPS[0].t : "");
   const [simQty, setSimQty] = useState("");
   const [simPx, setSimPx] = useState("");
+  const [simHz, setSimHz] = useState(12);
   const [simRes, setSimRes] = useState(null);
 
   const fetchWatchPrices = async () => {
@@ -1878,13 +1893,20 @@ function WatchlistView({ port, m }) {
   const simulate = () => {
     const qty=parseFloat(simQty), px=parseFloat(simPx);
     if(!simTk||!qty||!(px>0)) return;
+    const T=simTk.toUpperCase();
     const newVal=qty*px, newTot=m.tot+newVal;
     const curHHI=port.filter(p=>p.val).reduce((s,p)=>s+Math.pow(p.val/m.tot,2),0);
     const newHHI=[...port.filter(p=>p.val).map(p=>p.val),newVal].reduce((s,v)=>s+Math.pow(v/newTot,2),0);
-    const opp=OPPS.find(o=>o.t===simTk.toUpperCase())||{s:"Autre"};
+    const opp=OPPS.find(o=>o.t===T)||{s:"Autre"};
     const curSec=port.filter(p=>p.s===opp.s).reduce((s,p)=>s+(p.val||0),0);
     const newVolEst=Math.sqrt(Math.pow(m.wv*m.tot/newTot,2)+Math.pow(35*newVal/newTot,2));
-    setSimRes({newVal,newTot,curHHI,newHHI,sec:opp.s,newSecPct:(curSec+newVal)/newTot*100,newWt:newVal/newTot*100,curVol:m.wv,newVolEst});
+    // Base pour la projection future du cours simulé (le détail du cône est recalculé selon l'horizon dans le rendu)
+    const proj12 = opp.p!=null ? opp.p : null;           // rendement 12M attendu (%) de l'opportunité
+    const conv = opp.c!=null ? opp.c : 60;               // conviction → resserre le cône
+    setSimRes({ newVal, newTot, curHHI, newHHI, sec:opp.s, newSecPct:(curSec+newVal)/newTot*100,
+      newWt:newVal/newTot*100, curVol:m.wv, newVolEst,
+      ticker:T, px, qty, proj12, conv, tgt:opp.tgt, name:opp.n||T, hasProj:proj12!=null,
+      totBefore:m.tot });
   };
 
   return (
@@ -1949,20 +1971,70 @@ function WatchlistView({ port, m }) {
           <div><div className="lbl">Prix (€/$)</div><input type="number" step="0.01" value={simPx} onChange={e=>setSimPx(e.target.value)}/></div>
         </div>
         <button className="bn bn-b" style={{width:"100%"}} onClick={simulate}>Simuler l'impact</button>
-        {simRes && (
-          <div style={{marginTop:10,background:"rgba(79,131,245,.06)",borderRadius:8,padding:10}}>
-            <div className="row"><span>Montant investi</span><span className="mono" style={{color:"#4f83f5",fontWeight:700}}>{fe(simRes.newVal)}</span></div>
-            <div className="row"><span>Poids portefeuille</span><span className="mono">{fp(simRes.newWt,1)}</span></div>
-            <div className="row"><span>Secteur {simRes.sec}</span><span className="mono">{fp(simRes.newSecPct,1)}</span></div>
-            <div className="row"><span>HHI (concentration)</span>
-              <span className="mono">{simRes.curHHI.toFixed(3)} → <strong style={{color:simRes.newHHI<simRes.curHHI?"#2ecc8f":"#e85d5d"}}>{simRes.newHHI.toFixed(3)}</strong></span>
+        {simRes && (() => {
+          // Projection du cours simulé recalculée selon l'horizon choisi
+          const hf = simHz/12;
+          const annVol = Math.max(0.18, 0.50 - 0.25*(simRes.conv/100)); // + de conviction = cône + resserré
+          const sigH = annVol*Math.sqrt(hf);
+          const muH = simRes.hasProj ? (simRes.proj12/100)*hf : null;
+          const cone = muH!=null ? { p10:(muH-1.28*sigH), p50:muH, p90:(muH+1.28*sigH) } : null;
+          const A = simRes.newVal;
+          const projMax = cone ? Math.max(Math.abs(cone.p10),Math.abs(cone.p90)) : 1;
+          return (
+          <div style={{marginTop:10}}>
+            {/* Impact immédiat sur le portefeuille */}
+            <div style={{background:"rgba(79,131,245,.06)",borderRadius:8,padding:10,marginBottom:8}}>
+              <div className="lbl" style={{marginBottom:6,color:"#4f83f5"}}>Impact aujourd'hui sur ton portefeuille</div>
+              <div className="row"><span>Valeur du portefeuille</span>
+                <span className="mono">{fe(simRes.totBefore)} → <strong style={{color:"#4f83f5"}}>{fe(simRes.newTot)}</strong></span>
+              </div>
+              <div className="row"><span>Montant investi</span><span className="mono" style={{color:"#4f83f5",fontWeight:700}}>{fe(simRes.newVal)}</span></div>
+              <div className="row"><span>Poids de la position</span><span className="mono">{fp(simRes.newWt,1)}</span></div>
+              <div className="row"><span>Secteur {simRes.sec}</span><span className="mono">{fp(simRes.newSecPct,1)}</span></div>
+              <div className="row"><span>Concentration (HHI)</span>
+                <span className="mono">{simRes.curHHI.toFixed(3)} → <strong style={{color:simRes.newHHI<simRes.curHHI?"#2ecc8f":"#e85d5d"}}>{simRes.newHHI.toFixed(3)}</strong> {simRes.newHHI<simRes.curHHI?"↓ mieux":"↑"}</span>
+              </div>
+              <div className="row"><span>Volatilité portef.</span>
+                <span className="mono">{simRes.curVol.toFixed(1)}% → <strong style={{color:simRes.newVolEst<simRes.curVol?"#2ecc8f":"#e85d5d"}}>{simRes.newVolEst.toFixed(1)}%</strong></span>
+              </div>
+              <div style={{fontSize:9,color:"#3a4560",marginTop:4}}>↓ HHI = mieux diversifié • idéal pour {port.length+1} positions ≈ {(1/(port.length+1)).toFixed(3)}</div>
             </div>
-            <div className="row"><span>Volatilité portef.</span>
-              <span className="mono">{simRes.curVol.toFixed(1)}% → <strong style={{color:simRes.newVolEst<simRes.curVol?"#2ecc8f":"#e85d5d"}}>{simRes.newVolEst.toFixed(1)}%</strong></span>
-            </div>
-            <div style={{fontSize:9,color:"#3a4560",marginTop:4}}>↓ HHI = mieux diversifié • HHI 1/n = parfait pour {port.length+1} positions = {(1/(port.length+1)).toFixed(3)}</div>
+
+            {/* Projection future du cours simulé */}
+            {cone ? (
+              <div style={{background:"rgba(46,204,143,.05)",border:"1px solid rgba(46,204,143,.15)",borderRadius:8,padding:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div className="lbl" style={{color:"#2ecc8f"}}>Projection du cours · {simRes.ticker}</div>
+                  <div className="seg" style={{margin:0}}>
+                    {[3,6,12].map(hz=><div key={hz} className={"it"+(simHz===hz?" ac":"")} onClick={()=>setSimHz(hz)}>{hz}M</div>)}
+                  </div>
+                </div>
+                <div style={{fontSize:10,color:"#8892a8",marginBottom:8,lineHeight:1.4}}>
+                  Ce que deviendraient tes <strong>{fe(A)}</strong> investis dans {simRes.ticker} à {simHz} mois, selon 3 scénarios :
+                </div>
+                {[["P90 · optimiste",cone.p90,"#2ecc8f"],["P50 · médian",cone.p50,"#4f83f5"],["P10 · pessimiste",cone.p10,"#e85d5d"]].map(([lbl,r,col])=>(
+                  <div key={lbl} style={{marginBottom:7}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:2}}>
+                      <span style={{color:col}}>{lbl}</span>
+                      <span className="mono"><strong style={{color:col}}>{fe(A*(1+r))}</strong> <span style={{color:"#8892a8"}}>({fp(r*100,0)})</span></span>
+                    </div>
+                    <div style={{height:5,background:"rgba(255,255,255,.05)",borderRadius:3,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:(Math.abs(r)/projMax*50+2)+"%",marginLeft:r<0?(50-Math.abs(r)/projMax*50)+"%":"50%",background:col,borderRadius:3}}/>
+                    </div>
+                  </div>
+                ))}
+                <div style={{fontSize:9,color:"#3a4560",marginTop:6,lineHeight:1.4}}>
+                  Ancré sur la conviction analyste ({simRes.conv}/100, cible ${simRes.tgt}). Cône élargi par la volatilité : plus l'horizon est long, plus l'incertitude grandit. Le P50 reste la trajectoire la plus probable.
+                </div>
+              </div>
+            ) : (
+              <div style={{background:"rgba(240,160,32,.06)",border:"1px solid rgba(240,160,32,.2)",borderRadius:8,padding:10,fontSize:10,color:"#8892a8",lineHeight:1.5}}>
+                Projection de cours indisponible pour <strong>{simRes.ticker}</strong> : ce ticker n'est pas dans la liste d'opportunités analyste. L'impact portefeuille ci-dessus reste valable. Ajoute-le à la watchlist pour une projection.
+              </div>
+            )}
           </div>
-        )}
+          );
+        })()}
       </div>
     </>
   );
@@ -2875,20 +2947,23 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     const normEUR    = (px) => baseEUR    > 0 ? +((px-baseEUR   )/baseEUR   *100).toFixed(2) : null;
 
     // 1. Trimestriel 3A (devise native Yahoo Finance → % vs aujourd'hui)
+    const fx = isEUR ? 1 : (eurusd || 1.174);
     const histPts = (qHist||[]).map(d=>({
       date:d.date, seg:"hist",
-      pxHist:normNative(d.px), px:null, p10:null, p50:null, p90:null
+      pxHist:normNative(d.px), px:null, p10:null, p50:null, p90:null,
+      eur: +(d.px / fx).toFixed(2)   // prix réel en € (natif ÷ taux)
     }));
 
     // 2. Snapshots 90j (EUR → % vs cours actuel EUR)
     const recentPts = (history||[]).map(d=>({
       date:d.date, seg:"recent",
-      pxHist:null, px:normEUR(d.px), p10:null, p50:null, p90:null
+      pxHist:null, px:normEUR(d.px), p10:null, p50:null, p90:null,
+      eur: +d.px.toFixed(2)
     }));
 
     // 3. Transition : aujourd'hui = 0% (départ du cône)
     const lastDate = history&&history.length>0 ? history[history.length-1].date : "Auj.";
-    const trans = {date:lastDate, seg:"trans", pxHist:null, px:0, p10:0, p50:0, p90:0, coneBase:0, coneSpan:0};
+    const trans = {date:lastDate, seg:"trans", pxHist:null, px:0, p10:0, p50:0, p90:0, coneBase:0, coneSpan:0, eur:+baseEUR.toFixed(2)};
 
     // 4. Côté passé = historique 3A + snapshots 90j, rééchantillonné pour occuper 3/4 de la largeur
     const snap = recentPts.length>0 ? recentPts.slice(0,-1) : [];
@@ -2909,10 +2984,15 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
       const mo = horizon*(i+1)/Fn;               // mois fractionnaires jusqu'à l'horizon
       const p10 = +(f.p10*mo/12*100).toFixed(2);
       const p90 = +(f.p90*mo/12*100).toFixed(2);
+      const p50 = +(f.p50*mo/12*100).toFixed(2);
       return {
         date:`+${Number.isInteger(mo)?mo:mo.toFixed(1)}M`, seg:"forecast", pxHist:null, px:null,
-        p10, p90, p50:+(f.p50*mo/12*100).toFixed(2),
-        coneBase:p10, coneSpan:+(p90-p10).toFixed(2)  // bande ombrée P10→P90
+        p10, p90, p50,
+        coneBase:p10, coneSpan:+(p90-p10).toFixed(2),  // bande ombrée P10→P90
+        // Prix projetés réels en € (pour l'infobulle)
+        eur10:+(baseEUR*(1+p10/100)).toFixed(2),
+        eur50:+(baseEUR*(1+p50/100)).toFixed(2),
+        eur90:+(baseEUR*(1+p90/100)).toFixed(2)
       };
     });
 
@@ -3012,7 +3092,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
         <div className="card">
           <div className="cd-ti">
             <h3>Historique &amp; prévisions</h3>
-            <span className="dim" style={{fontSize:9}}>% vs cours actuel</span>
+            <span className="dim" style={{fontSize:9}}>👆 clique la courbe → prix</span>
           </div>
           <div className="seg" style={{marginBottom:8}}>
             {[3,6,9,12].map(hz=>
@@ -3033,6 +3113,9 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
               </span>
             ))}
           </div>
+          <div style={{fontSize:9,color:"#3a4560",marginBottom:6,fontStyle:"italic"}}>
+            👆 Touche la courbe pour afficher le prix à cette date (et les prix projetés dans la zone de prévision).
+          </div>
           <div style={{height:230}}>
             <ResponsiveContainer>
               <ComposedChart data={chartData} margin={{top:5,right:46,left:0,bottom:0}}>
@@ -3040,10 +3123,41 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
                 <XAxis dataKey="date" stroke="#3a4560" fontSize={8} tickLine={false} interval="preserveStartEnd" minTickGap={40}/>
                 <YAxis stroke="#3a4560" fontSize={9} tickLine={false} axisLine={false}
                   tickFormatter={v=>v!=null?(v>=0?"+":"")+v.toFixed(0)+"%":""} width={46}/>
-                <Tooltip contentStyle={{background:"#0f1420",border:"1px solid rgba(255,255,255,.1)",borderRadius:6,fontSize:11}}
-                  formatter={(v,name)=>{
-                    if(name==="coneBase"||name==="coneSpan") return null;
-                    return v!=null?[(v>=0?"+":"")+v.toFixed(1)+"%",{pxHist:"3A",px:"90j récent",p50:"P50 médian",p90:"P90 optimiste",p10:"P10 pessimiste"}[name]||name]:null;
+                <Tooltip
+                  trigger="click"
+                  wrapperStyle={{outline:"none"}}
+                  content={({active, payload}) => {
+                    if(!active || !payload || !payload.length) return null;
+                    const d = payload[0].payload;
+                    if(!d) return null;
+                    const box = {background:"#0f1420",border:"1px solid rgba(255,255,255,.14)",borderRadius:8,padding:"9px 11px",boxShadow:"0 4px 14px rgba(0,0,0,.5)"};
+                    if(d.seg === "forecast") {
+                      return (
+                        <div style={box}>
+                          <div style={{fontSize:10,color:"#8892a8",marginBottom:5}}>Prévision {d.date}</div>
+                          {[["P90",d.eur90,d.p90,"#2ecc8f"],["P50",d.eur50,d.p50,"#4f83f5"],["P10",d.eur10,d.p10,"#e85d5d"]].map(([l,e,pc,c])=>(
+                            <div key={l} style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:11,marginBottom:2}}>
+                              <span style={{color:c}}>{l}</span>
+                              <span className="mono"><strong style={{color:c}}>{e!=null?e.toFixed(2)+" €":"—"}</strong>
+                                <span style={{color:"#8892a8",marginLeft:5}}>({pc>=0?"+":""}{pc!=null?pc.toFixed(1):"—"}%)</span>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }
+                    const pc = d.px!=null ? d.px : d.pxHist;
+                    return (
+                      <div style={box}>
+                        <div style={{fontSize:10,color:"#8892a8",marginBottom:3}}>{d.date}{d.seg==="trans"?" · aujourd'hui":""}</div>
+                        <div className="mono" style={{fontSize:16,fontWeight:800,color:"#dde3f0"}}>
+                          {d.eur!=null ? d.eur.toFixed(2)+" €" : "—"}
+                        </div>
+                        {pc!=null && <div style={{fontSize:10,color:pc>=0?"#2ecc8f":"#e85d5d",marginTop:2}}>
+                          {pc>=0?"+":""}{pc.toFixed(1)}% vs aujourd'hui
+                        </div>}
+                      </div>
+                    );
                   }}/>
                 {/* Zone de prévision (1/4 droite) ombrée pour séparer nettement passé et futur */}
                 {fcStart && <ReferenceArea x1={fcStart} x2={fcEnd} fill="rgba(79,131,245,.06)" stroke="none"
@@ -3499,8 +3613,8 @@ function App() {
 
       <nav className="tab">
         {[
-          {k:"today",   ic:"☀",l:"Aujourd'hui"},
-          {k:"forecast",ic:"◔",l:"Demain"},
+          {k:"today",   ic:"●",l:"Actual"},
+          {k:"forecast",ic:"◔",l:"Forecast"},
           {k:"memory",  ic:"◷",l:"Mémoire"}
         ].map(t => (
           <div key={t.k} className={"tb"+(tab===t.k?" ac":"")} onClick={() => { setTab(t.k); setDetail(null); setCfgOpen(false); }}>
