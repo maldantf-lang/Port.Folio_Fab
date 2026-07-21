@@ -1273,6 +1273,7 @@ function AnticipatoryAlerts({ port, onSelect }) {
 // Carte AIDE À LA DÉCISION : boussole contrarian, timing, rééquilibrage, clusters cachés
 function DecisionSupport({ port, qHistMap, onSelect }) {
   const [cash, setCash] = useState("");
+  const [tInfo, setTInfo] = useState(false);
   const clusters = useMemo(() => {
     const hc = calcHistCorrelations(port, qHistMap);
     return hc ? hiddenClusters(port, hc.mat) : [];
@@ -1286,7 +1287,29 @@ function DecisionSupport({ port, qHistMap, onSelect }) {
       <div className="cd-ti"><h3>Aide à la décision</h3><span className="dim" style={{fontSize:9}}>anticiper la foule</span></div>
 
       {/* Boussole contrarian + timing */}
-      <div style={{fontSize:9,color:"#3a4560",fontWeight:700,letterSpacing:".04em",marginBottom:6}}>BOUSSOLE CONTRARIAN & TIMING</div>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+        <span style={{fontSize:9,color:"#3a4560",fontWeight:700,letterSpacing:".04em"}}>BOUSSOLE CONTRARIAN &amp; TIMING</span>
+        <span onClick={()=>setTInfo(v=>!v)} title="Comprendre le score de timing"
+          style={{cursor:"pointer",width:14,height:14,borderRadius:7,border:"1px solid #3a4560",
+            color:tInfo?"#4f83f5":"#8892a8",borderColor:tInfo?"#4f83f5":"#3a4560",
+            fontSize:9,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",fontStyle:"italic",fontFamily:"Georgia,serif"}}>i</span>
+      </div>
+      {tInfo && (
+        <div style={{background:"rgba(79,131,245,.06)",border:"1px solid rgba(79,131,245,.15)",borderRadius:8,padding:"10px 12px",marginBottom:8,fontSize:10,lineHeight:1.5,color:"#8892a8"}}>
+          <div style={{color:"#dde3f0",fontWeight:700,marginBottom:4}}>Le score de timing (0–100)</div>
+          Il ne dit pas <em>quoi</em> acheter (ça, c'est la conviction et la thèse), mais <strong>si c'est un bon moment</strong> pour renforcer cette position aujourd'hui. Il croise deux signaux d'entrée :
+          <div style={{marginTop:6,paddingLeft:4}}>
+            <div style={{marginBottom:5}}><strong style={{color:"#4f83f5"}}>1. Le RSI (force technique).</strong> Sous 30, le titre est « survendu » — souvent un creux, donc le score <strong style={{color:"#2ecc8f"}}>monte</strong>. Au-dessus de 70, il est « suracheté » — souvent un sommet, le score <strong style={{color:"#e85d5d"}}>baisse</strong>.</div>
+            <div><strong style={{color:"#4f83f5"}}>2. La position vs objectifs analystes.</strong> Si le cours est <strong>sous la médiane</strong> des objectifs (bas / médian / haut), il reste du potentiel → score <strong style={{color:"#2ecc8f"}}>monte</strong>. S'il est déjà au-dessus, c'est plus cher → score <strong style={{color:"#e85d5d"}}>baisse</strong>.</div>
+          </div>
+          <div style={{marginTop:6,display:"flex",gap:10,flexWrap:"wrap"}}>
+            <span style={{color:"#2ecc8f"}}>≥ 70 : Bon moment</span>
+            <span style={{color:"#f0a020"}}>45–69 : Neutre</span>
+            <span style={{color:"#8892a8"}}>&lt; 45 : Patienter</span>
+          </div>
+          <div style={{marginTop:6,fontSize:9,color:"#3a4560"}}>Aide à la décision, pas un ordre. Un bon timing sur une thèse faible reste un mauvais achat.</div>
+        </div>
+      )}
       {compass.slice(0,5).map(({p,c,t})=>(
         <div key={p.t} onClick={()=>onSelect&&onSelect(p.t)} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.04)",cursor:"pointer"}}>
           <strong className="tk" style={{minWidth:44}}>{p.t}</strong>
@@ -2074,6 +2097,7 @@ function AnalysisView({ port, onSelect }) {
 
 function ScenariosView({ port, m }) {
   const [horizon, setHorizon] = useState(12);
+  const [sInfo, setSInfo] = useState(false);
   const [activeStress, setActiveStress] = useState(null);
   const [macroCtx, setMacroCtx] = useState(() => loadMacroCtx() || {});
   const [ctxLoading, setCtxLoading] = useState(false);
@@ -2258,10 +2282,16 @@ function ScenariosView({ port, m }) {
           <div className="num" style={{fontSize:11,color:"#2ecc8f"}}>{fp((tot90/m.tot-1)*100,0)}</div>
         </div>
       </div>
-      {/* PÉDAGOGIE — comprendre les 3 scénarios futurs */}
+      {/* PÉDAGOGIE — comprendre les 3 scénarios futurs (replié derrière un i) */}
       <div className="card">
-        <div className="cd-ti"><h3>Comment lire ces 3 scénarios ?</h3></div>
-        <div style={{fontSize:11,color:"#dde3f0",lineHeight:1.55,marginBottom:10}}>
+        <div className="cd-ti" style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}} onClick={()=>setSInfo(v=>!v)}>
+          <h3>Comment lire ces 3 scénarios ?</h3>
+          <span style={{width:16,height:16,borderRadius:8,border:"1px solid",color:sInfo?"#4f83f5":"#8892a8",borderColor:sInfo?"#4f83f5":"#3a4560",
+            fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",fontStyle:"italic",fontFamily:"Georgia,serif",flex:"0 0 auto"}}>{sInfo?"×":"i"}</span>
+        </div>
+        {!sInfo && <div style={{fontSize:10,color:"#3a4560",marginTop:2}}>Touche le « i » pour l'explication (P10 / P50 / P90, raisonnement, impact portefeuille).</div>}
+        {sInfo && <>
+        <div style={{fontSize:11,color:"#dde3f0",lineHeight:1.55,margin:"8px 0 10px"}}>
           Plutôt qu'un seul chiffre faussement précis, le moteur dessine <strong>trois avenirs possibles</strong> à {horizon} mois. La réalité tombera presque toujours entre les deux extrêmes.
         </div>
         <div style={{marginBottom:8}}>
@@ -2299,6 +2329,7 @@ function ScenariosView({ port, m }) {
             Écart entre le pire et le meilleur cas : <strong>{fp((tot90/m.tot-1)*100,0)}</strong> à <strong>{fp((tot10/m.tot-1)*100,0)}</strong>, soit une fourchette de <strong>{((tot90-tot10)/m.tot*100).toFixed(0)} points</strong>. {((tot90-tot10)/m.tot*100) > 40 ? "Large : ton portefeuille est concentré sur des secteurs à fort potentiel mais volatils (Tech, IA)." : "Modérée : ton allocation est relativement équilibrée."} Le P50 reste ta boussole ; le P10 dit combien tu peux encaisser sans paniquer.
           </div>
         </div>
+        </>}
       </div>
       <div className="card">
         <div className="cd-ti"><h3>Détail par position</h3></div>
