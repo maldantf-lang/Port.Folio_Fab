@@ -118,8 +118,29 @@ const DCA_KEY = "fab-pf-dca-v1";
 const DB_NAME = "fab-pf-history";
 const DB_VERSION = 1;
 const SNAP_STORE = "snapshots";
-const REFRESH_MS = 10000;
+const REFRESH_MS = 60000;        // 60 s (était 10 s : bombardait les proxies)
+const PRICE_TTL = 55000;         // ne pas refetch si un fetch a eu lieu il y a < 55 s
+const DBG = false;               // logs verbeux (proxies en échec, etc.) — false en production
 const FALLBACK_EURUSD = 1.174;
+
+// Heures d'ouverture des marchés (Paris) : ~9h (Europe) → 22h (clôture US), lun-ven.
+// Hors de cette fenêtre les cours ne bougent pas → on suspend le rafraîchissement auto.
+function isMarketHours() {
+  const now = new Date();
+  const day = now.getDay();                 // 0=dim, 6=sam
+  if(day === 0 || day === 6) return false;
+  const h = now.getHours();
+  return h >= 9 && h < 22;
+}
+// Libellé de la prochaine réouverture (pour l'indicateur de pause)
+function nextOpenLabel() {
+  const now = new Date();
+  const day = now.getDay(), h = now.getHours();
+  if(day >= 1 && day <= 5 && h < 9) return "reprise 9h";
+  if(day === 6 || (day === 5 && h >= 22)) return "reprise lun. 9h";
+  if(day === 0) return "reprise lun. 9h";
+  return "reprise 9h";                       // soir de semaine → lendemain 9h
+}
 
 const YF = {
   FTI:  { y: "FTI",     ccy: "USD" },
@@ -541,7 +562,7 @@ async function fetchSymbol(sym) {
   const px = await Promise.any(promises);
   const b = PRICE_BOUNDS[sym];
   if (b && (px < b[0] || px > b[1])) {
-    console.warn("[Fetch] prix hors bornes, rejeté", sym, px, b);
+    DBG && console.warn("[Fetch] prix hors bornes, rejeté", sym, px, b);
     throw new Error("price out of bounds: " + sym + " " + px);
   }
   return px;
@@ -554,7 +575,7 @@ async function fetchAllPrices() {
   const now = Date.now();
   await Promise.all(tickers.map(async t => {
     try { results[t] = await fetchSymbol(YF[t].y); ts[t] = now; }
-    catch(e) { console.warn("[Fetch]", t, "→", YF[t].y, "fail"); }
+    catch(e) { DBG && console.warn("[Fetch]", t, "→", YF[t].y, "fail"); }
   }));
   let eurusd = FALLBACK_EURUSD;
   try {
@@ -593,7 +614,7 @@ function effectiveSignal(t, prices, qHist) {
   return { sig, base:baseSig, drift: sig!==baseSig, rsi, reason: notes.length ? notes.join(" · ") : "aligné avec l'analyste" };
 }
 
-function enrich(port, prices, eurusd, priceTsMap, snapshots, qHistMap) {
+function enrich(port, prices, eurusd, priceTsMap, convMap, qHistMap) {
   const now = Date.now();
   const items = port.map(p => {
     const inv = p.q * p.b;
@@ -603,7 +624,10 @@ function enrich(port, prices, eurusd, priceTsMap, snapshots, qHistMap) {
     const pct = (val != null && inv > 0) ? (pnl / inv) * 100 : null;
     const ts = priceTsMap && priceTsMap[p.t] ? priceTsMap[p.t] : null;
     const priceAge = ts != null ? now - ts : null;
-    const dynConv = calcDynamicConviction(p.t, { pxE }, snapshots, qHistMap && qHistMap[p.t]);
+    // Conviction pré-calculée (mémoïsée hors du tick prix) ; secours = conviction de base analyste
+    const dynConv = (convMap && convMap[p.t]) || {
+      value: AN[p.t] ? AN[p.t].c : 50, decay: 1, coherence: 1, changes: {}, available: 0, divergent: false, lu: AN[p.t] ? getANLu(p.t) : null
+    };
     const eff = effectiveSignal(p.t, prices, qHistMap && qHistMap[p.t]);
     const pxNative = (prices && prices[p.t] != null) ? prices[p.t] : null;
     return { ...p, inv, pxE, val, pnl, pct, priceAge, dynConv, pxNative,
@@ -1045,28 +1069,6 @@ function calcHistCorrelations(port, qHistMap) {
 }
 
 // Calcule les corrélations inter-positions depuis snapshots
-function calcCorrelations(snapshots, tickers) {
-  if(snapshots.length<20) return null;
-  const rets = {};
-  tickers.forEach(t => { rets[t]=[]; });
-  for(let i=1;i<snapshots.length;i++){
-    tickers.forEach(t => {
-      const pp=(snapshots[i-1].port||[]).find(x=>x.t===t);
-      const cp=(snapshots[i].port||[]).find(x=>x.t===t);
-      if(pp&&cp&&pp.pxE&&cp.pxE&&pp.pxE>0) rets[t].push((cp.pxE-pp.pxE)/pp.pxE);
-      else if(rets[t].length>0) rets[t].push(0);
-    });
-  }
-  const mat = {};
-  tickers.forEach(ti => {
-    mat[ti]={};
-    tickers.forEach(tj => {
-      mat[ti][tj] = ti===tj ? 1.0 : pearson(rets[ti],rets[tj]);
-    });
-  });
-  return mat;
-}
-
 // Précision du moteur : compare P50 stocké vs prix réel
 function calcMotorPrecision(snapshots) {
   const tracked=[];
@@ -1188,13 +1190,16 @@ function Ring({ pct }) {
   );
 }
 
-function Header({ countdownPct, status, lastTs, onPillClick, onSettings }) {
+function Header({ countdownPct, status, lastTs, paused, onPillClick, onSettings }) {
   return (
     <div className="hd">
       <div className="lg">port<span className="dot">.</span>folio</div>
       <div className="hd-r">
         <button className="bn bn-b ic-only" style={{fontSize:14,padding:"5px 8px"}} onClick={onSettings} title="Réglages">⚙</button>
-        <Ring pct={countdownPct}/>
+        {paused
+          ? <span className="pill" onClick={onPillClick} title={"Rafraîchissement en pause hors marché · "+nextOpenLabel()}
+              style={{background:"rgba(240,160,32,.12)",color:"#f0a020",cursor:"pointer"}}>⏸ {nextOpenLabel()}</span>
+          : <Ring pct={countdownPct}/>}
         <div className={"pill " + (status==="ld"?"ld":status==="er"?"er":"")} onClick={onPillClick}>
           <span className="dt"></span>
           <span>{status==="er"?"err":ftime(lastTs)}</span>
@@ -1251,6 +1256,7 @@ function AnticipatoryAlerts({ port, onSelect }) {
     if(p.rsiLive != null && p.rsiLive <= 30) alerts.push({ t:p.t, level:"gr", icon:"📉", msg:`RSI ${p.rsiLive} — survente, fenêtre d'entrée possible` });
     if(p.rsiLive != null && p.rsiLive >= 70) alerts.push({ t:p.t, level:"am", icon:"📈", msg:`RSI ${p.rsiLive} — surachat, prudence` });
     if(p.effDrift) alerts.push({ t:p.t, level:"pu", icon:"↻", msg:`Verdict ajusté au prix : ${p.effReason}` });
+    if(p.dynConv && p.dynConv.divergent) alerts.push({ t:p.t, level:"am", icon:"🧭", msg:`Conviction en dérive — le marché s'écarte de la thèse, à revérifier` });
   });
   if(alerts.length === 0) return null;
   const colors = { rd:"#e85d5d", gr:"#2ecc8f", am:"#f0a020", pu:"#8b7cf5" };
@@ -1380,6 +1386,26 @@ function BuySimulatorCard({ port, onSelect }) {
       )}
       <div className="dim" style={{fontSize:8,marginTop:6}}>Simulation d'allocation, pas un ordre. Projection de cours : onglet Forecast.</div>
     </div>
+  );
+}
+
+// Couleurs par secteur (cohérentes barre empilée / légende)
+const SEC_COL = { Tech:"#4f83f5", Luxe:"#8b7cf5", "Défense":"#2ecc8f", "Énergie":"#f0a020", Biotech:"#e85d5d", Immo:"#d4a843", Matériaux:"#d4a843", Autre:"#8892a8" };
+const secCol = s => SEC_COL[s] || "#8892a8";
+
+// Mini-courbe 90 jours (≈13 points hebdo) pour la liste des positions
+function Sparkline({ hist, w, h }) {
+  const W = w || 52, H = h || 18;
+  const pts = (hist || []).slice(-13).map(d => d.px).filter(v => v > 0);
+  if(pts.length < 4) return <div style={{width:W,height:H}}/>;
+  const min = Math.min(...pts), max = Math.max(...pts), range = (max - min) || 1;
+  const up = pts[pts.length-1] >= pts[0];
+  const col = up ? "#2ecc8f" : "#e85d5d";
+  const d = pts.map((v,i) => (i===0?"M":"L") + (i/(pts.length-1)*W).toFixed(1) + "," + (H - ((v-min)/range)*H).toFixed(1)).join(" ");
+  return (
+    <svg width={W} height={H} style={{display:"block"}} aria-hidden="true">
+      <path d={d} fill="none" stroke={col} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
+    </svg>
   );
 }
 
@@ -1608,21 +1634,26 @@ function PositionsView({ port, m, eurusd, onSelect, onTabChange, onRefresh, last
           <span className="dim mono" style={{fontSize:10}}>EUR/USD {eurusd?eurusd.toFixed(4):"—"}</span>
         </div>
         {port.map(p => (
-          <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}>
-            <div style={{flex:"0 0 38%"}}>
+          <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}
+            style={{borderLeft: p.wt>35 ? "2px solid #f0a020" : "2px solid transparent", paddingLeft:6}}
+            title={p.wt>35 ? "Position concentrée (>35 %)" : undefined}>
+            <div style={{flex:"0 0 33%"}}>
               <div className="tk">{p.t} <span className={"chip "+(p.effSig||p.sig)} style={{marginLeft:6}}>{p.effSig||p.sig}</span>
                 {p.effDrift && <span style={{marginLeft:4,fontSize:9,color:"#8b7cf5"}} title={"Analyste : "+p.effBase+" · ajusté au prix : "+p.effReason}>↻</span>}
                 {isStale(p.priceAge) && <span style={{marginLeft:6,fontSize:9,color:"#f0a020"}} title="Prix potentiellement périmé">⏱ {staleLabel(p.priceAge)}</span>}
               </div>
               <div className="nm">{p.n}</div>
             </div>
-            <div className="num" style={{flex:"0 0 28%"}}>
+            <div style={{flex:"0 0 15%",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <Sparkline hist={qHistMap && qHistMap[p.t]}/>
+            </div>
+            <div className="num" style={{flex:"0 0 26%"}}>
               <div>{p.pxE!=null?fe(p.pxE):"—"}</div>
               <div style={{fontSize:10}} className="dim">{p.q.toLocaleString("fr-FR",{maximumFractionDigits:4})} u.</div>
             </div>
-            <div className="num" style={{flex:"0 0 34%"}}>
+            <div className="num" style={{flex:"0 0 26%"}}>
               <div style={{color:cl(p.pnl)}}>{fe(p.pnl)}</div>
-              <div style={{fontSize:10,color:cl(p.pct)}}>{fp(p.pct)} • {fp(p.wt,0)}</div>
+              <div style={{fontSize:10}}><span style={{color:cl(p.pct)}}>{fp(p.pct)}</span> • <span style={{color:p.wt>35?"#f0a020":"#8892a8",fontWeight:p.wt>35?700:400}}>{fp(p.wt,0)}</span></div>
             </div>
           </div>
         ))}
@@ -1630,15 +1661,22 @@ function PositionsView({ port, m, eurusd, onSelect, onTabChange, onRefresh, last
       <BuySimulatorCard port={port} onSelect={onSelect}/>
       <div className="card">
         <div className="cd-ti"><h3>Exposition sectorielle</h3></div>
-        {sectors.map(([s,v]) => (
-          <div key={s} className="row">
-            <div>{s}</div>
-            <div style={{flex:1,margin:"0 12px"}}>
-              <div className="bar"><span style={{width:(v/totVal*100)+"%",background:"#4f83f5"}}/></div>
+        <div style={{display:"flex",height:16,borderRadius:8,overflow:"hidden",marginBottom:12,border:"1px solid rgba(255,255,255,.06)"}}>
+          {sectors.map(([s,v]) => (
+            <div key={s} title={`${s} · ${(v/totVal*100).toFixed(0)}%`}
+              style={{width:(v/totVal*100)+"%",background:secCol(s),transition:"width .3s"}}/>
+          ))}
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:"7px 16px"}}>
+          {sectors.map(([s,v]) => (
+            <div key={s} style={{display:"flex",alignItems:"center",gap:5,fontSize:10}}>
+              <span style={{width:9,height:9,borderRadius:2,background:secCol(s),flex:"0 0 auto"}}/>
+              <span style={{color:"#dde3f0"}}>{s}</span>
+              <span className="mono" style={{color:"#8892a8"}}>{(v/totVal*100).toFixed(0)}%</span>
+              <span className="mono" style={{color:"#3a4560"}}>{fe(v)}</span>
             </div>
-            <div className="num" style={{minWidth:80}}>{fe(v)} <span className="dim" style={{fontSize:10}}>({(v/totVal*100).toFixed(0)}%)</span></div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </>
   );
@@ -2901,6 +2939,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   const [earnDate, setEarnDate] = useState(undefined); // undefined=chargement, null=aucune, {ts,date}=ok
   const [horizon, setHorizon] = useState(12);
   const [reviewBump, setReviewBump] = useState(0);
+  const [cInfo, setCInfo] = useState(false);
 
   useEffect(() => {
     snapshotsRange(Date.now() - 90*86400000).then(arr => {
@@ -3330,9 +3369,25 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
       {/* CONVICTION AUTO-GÉRÉE */}
       <div className="card">
         <div className="cd-ti"><h3>Conviction auto-gérée</h3>
-          <button className="bn bn-b" style={{fontSize:10,padding:"4px 10px"}}
-            onClick={()=>{markReviewed(ticker); setReviewBump(b=>b+1);}}>Marquer comme révisée</button>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <span onClick={()=>setCInfo(v=>!v)} title="À quoi sert la conviction auto-gérée ?"
+              style={{cursor:"pointer",width:16,height:16,borderRadius:8,border:"1px solid",color:cInfo?"#4f83f5":"#8892a8",borderColor:cInfo?"#4f83f5":"#3a4560",
+                fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",fontStyle:"italic",fontFamily:"Georgia,serif",flex:"0 0 auto"}}>{cInfo?"×":"i"}</span>
+            <button className="bn bn-b" style={{fontSize:10,padding:"4px 10px"}}
+              onClick={()=>{markReviewed(ticker); setReviewBump(b=>b+1);}}>Marquer comme révisée</button>
+          </div>
         </div>
+        {cInfo && (
+          <div style={{background:"rgba(79,131,245,.06)",border:"1px solid rgba(79,131,245,.15)",borderRadius:8,padding:"10px 12px",marginBottom:10,fontSize:10,lineHeight:1.5,color:"#8892a8"}}>
+            <div style={{color:"#dde3f0",fontWeight:700,marginBottom:4}}>À quoi ça sert ?</div>
+            Une conviction d'analyste est un jugement figé à une date. Le problème : <strong>une thèse vieillit</strong>, et le marché peut lui donner tort avant qu'on la mette à jour. La conviction auto-gérée empêche une vieille certitude trop forte de fausser tes prévisions. Elle part de la <strong>conviction de base</strong> de l'analyste, puis la corrige seule par deux mécanismes :
+            <div style={{marginTop:6,paddingLeft:4}}>
+              <div style={{marginBottom:5}}><strong style={{color:"#f0a020"}}>× Décroissance.</strong> Plus la thèse est ancienne, plus la conviction s'érode (jusqu'à −50 % à un an). Une analyse d'il y a 10 mois pèse moins qu'une fraîche. Le bouton « Marquer comme révisée » remet le compteur à zéro.</div>
+              <div><strong style={{color:"#4f83f5"}}>× Cohérence momentum.</strong> Le moteur compare la thèse au <strong>mouvement réel du cours sur 6 horizons</strong> (1 sem → 3 ans). Si le marché confirme la thèse, la conviction tient ; s'il va à l'inverse (divergence), elle est réduite — un signal d'alerte s'affiche alors.</div>
+            </div>
+            <div style={{marginTop:6}}>Résultat : <strong>base × décroissance × cohérence</strong>. Cette valeur ajustée alimente directement les prévisions P10/P50/P90 — c'est le « cap de fond » du moteur, tenu honnête par le temps et le marché.</div>
+          </div>
+        )}
         <div style={{display:"flex",alignItems:"baseline",gap:10,marginBottom:10}}>
           <div className="mono" style={{fontSize:22,fontWeight:800,color:"#2ecc8f"}}>{ec}<span style={{fontSize:12,color:"#8892a8"}}>/100</span></div>
           <div style={{fontSize:10,color:"#8892a8"}}>
@@ -3459,6 +3514,7 @@ function App() {
   }, [port]);
 
   const busyRef = useRef(false);
+  const lastTsRef = useRef(0);
   const portRef = useRef(port); useEffect(() => { portRef.current = port; }, [port]);
   const pricesRef = useRef(prices); useEffect(() => { pricesRef.current = prices; }, [prices]);
   const timerRef = useRef(null);
@@ -3493,6 +3549,8 @@ function App() {
   // Fetch principal
   const fetchAll = useCallback(async (silent) => {
     if (busyRef.current) return;
+    // Cache : si un fetch auto a eu lieu il y a moins de PRICE_TTL, on ne re-sollicite pas les proxies
+    if (silent && lastTsRef.current && Date.now() - lastTsRef.current < PRICE_TTL) return;
     busyRef.current = true;
     if (!silent) setStatus("ld");
     try {
@@ -3503,13 +3561,14 @@ function App() {
       setEurusd(ne);
       const now = Date.now();
       setLastTs(now);
+      lastTsRef.current = now;
       setStatus("");
       setFetchCount(c => c + 1);
 
       // Sauvegarde locale — on FUSIONNE avec le dernier prix vu de chaque ticker
       // pour ne jamais retomber sur la valeur figée au redémarrage (auto-réparation)
       const mergedPrices = { ...pricesRef.current, ...np };
-      const enriched = enrich(portRef.current, mergedPrices, ne, mergedTsMap);
+      const enriched = enrich(portRef.current, mergedPrices, ne, mergedTsMap, convMapRef.current, null);
       const m = metrics(enriched);
       saveStore({ port: portRef.current, prices: mergedPrices, eurusd: ne, priceTs: now, priceTsMap: mergedTsMap });
 
@@ -3554,8 +3613,12 @@ function App() {
 
   // Boot + interval
   useEffect(() => {
-    fetchAll(true);
-    timerRef.current = setInterval(() => fetchAll(true), REFRESH_MS);
+    fetchAll(true);                              // 1er chargement : toujours, même hors marché
+    timerRef.current = setInterval(() => {
+      if (document.hidden) return;               // pause quand l'onglet/écran est en arrière-plan
+      if (!isMarketHours()) return;              // pause la nuit / le week-end (cours figés)
+      fetchAll(true);
+    }, REFRESH_MS);
     cdRef.current = setInterval(() => {
       setCountdown(c => {
         const elapsed = (Date.now() - (lastTs||Date.now())) / REFRESH_MS;
@@ -3582,7 +3645,18 @@ function App() {
   useEffect(() => { saveAlerts(alerts); }, [alerts]);
 
   // Données dérivées
-  const enriched = useMemo(() => enrich(port, prices, eurusd, priceTsMap, snapshots, qHistMap), [port, prices, eurusd, priceTsMap, snapshots, qHistMap]);
+  // Conviction auto-gérée : lourde (6 horizons × historique) mais NE dépend PAS du prix live.
+  // Mémoïsée ici pour ne recalculer qu'au changement de positions / historique / snapshots
+  // (au lieu de chaque tick de 60 s → CPU divisé sur mobile).
+  const convMap = useMemo(() => {
+    const map = {};
+    port.forEach(p => { map[p.t] = calcDynamicConviction(p.t, {}, snapshots, qHistMap && qHistMap[p.t]); });
+    return map;
+  }, [port, qHistMap, snapshots]);
+  const convMapRef = useRef({});
+  useEffect(() => { convMapRef.current = convMap; }, [convMap]);
+
+  const enriched = useMemo(() => enrich(port, prices, eurusd, priceTsMap, convMap, qHistMap), [port, prices, eurusd, priceTsMap, convMap, qHistMap]);
   const m = useMemo(() => metrics(enriched), [enriched]);
   const sells = enriched.filter(p => p.sig === "sell").length;
 
@@ -3602,6 +3676,7 @@ function App() {
         countdownPct={countdown}
         status={status}
         lastTs={lastTs}
+        paused={!isMarketHours()}
         onPillClick={() => fetchAll(false)}
         onSettings={() => setCfgOpen(true)}
       />
