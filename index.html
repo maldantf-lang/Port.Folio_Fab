@@ -111,7 +111,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v13.9-2026-07-08-002";
+const BUILD = "v14.0-2026-07-08-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -664,6 +664,32 @@ function crowdCompass(p) {
 }
 
 // 2. Score de timing 0-100 (mauvais → excellent moment pour agir) par position
+// Décompose le score de timing en étapes lisibles (pour l'exemple pédagogique en direct)
+function explainTiming(p) {
+  const rsi = p.rsiLive, an = AN[p.t], pxN = p.pxNative;
+  if(rsi == null && !(an && an.tgt && pxN != null)) return null;
+  const steps = [];
+  let s = 50;
+  if(rsi != null){
+    let d;
+    if(rsi <= 30){ d = 25; steps.push({ txt:`RSI ${rsi} → survendu (sous 30), le titre sort d'un creux`, d }); }
+    else if(rsi >= 70){ d = -25; steps.push({ txt:`RSI ${rsi} → suracheté (au-dessus de 70), il vient de bien monter`, d }); }
+    else { d = (50-rsi)*0.3; steps.push({ txt:`RSI ${rsi} → zone neutre`, d }); }
+    s += d;
+  }
+  if(an && an.tgt && pxN != null){
+    const band = an.tgt.h - an.tgt.l;
+    if(band > 0){
+      const pos = (pxN - an.tgt.l)/band;
+      const d = (0.5 - pos)*30;
+      steps.push({ txt:`Cours ${pxN.toFixed(0)} vs objectifs ${an.tgt.l}/${an.tgt.a}/${an.tgt.h} → ${pos<0.5?"sous":"au-dessus de"} la médiane, ${pos<0.5?"il reste du potentiel":"c'est déjà cher"}`, d });
+      s += d;
+    }
+  }
+  const total = Math.max(0, Math.min(100, Math.round(s)));
+  return { steps, total, label: total>=70?"Bon moment":total>=45?"Neutre":"Patienter" };
+}
+
 function timingScore(p) {
   const rsi = p.rsiLive;
   let s = 50; const parts = [];
@@ -799,10 +825,40 @@ function getANLu(ticker) {
   if(ov[ticker]&&ov[ticker].lu) return ov[ticker].lu;
   return (AN[ticker]&&AN[ticker].lu) || "2026-05-01";
 }
-function markReviewed(ticker) {
+function markReviewed(ticker, pxNative) {
   const ov = loadANOverrides();
-  ov[ticker] = { ...(ov[ticker]||{}), lu: new Date().toISOString().slice(0,10) };
+  ov[ticker] = { ...(ov[ticker]||{}), lu: new Date().toISOString().slice(0,10),
+    pxRev: (pxNative != null && pxNative > 0) ? pxNative : (ov[ticker]||{}).pxRev, flagged: false };
   saveANOverrides(ov);
+}
+// Marque une thèse comme fragilisée : la conviction reste érodée, la ligne reste signalée
+function flagThesis(ticker) {
+  const ov = loadANOverrides();
+  ov[ticker] = { ...(ov[ticker]||{}), flagged: true, flaggedAt: new Date().toISOString().slice(0,10) };
+  saveANOverrides(ov);
+}
+function getANRev(ticker) { const ov = loadANOverrides(); return ov[ticker] || {}; }
+
+// Détecte si une thèse mérite une revue, et pourquoi. Ne juge pas la thèse : signale seulement.
+const REVIEW_AGE_DAYS = 90;
+function reviewNeeds(p) {
+  const an = AN[p.t]; if(!an) return null;
+  const lu = getANLu(p.t);
+  const age = Math.floor((Date.now() - new Date(lu)) / 86400000);
+  const rev = getANRev(p.t);
+  const reasons = [];
+  let sev = 0;
+  if(rev.flagged) { reasons.push({ txt:"Marquée fragilisée lors d'une revue précédente", w:3 }); sev += 3; }
+  if(age >= REVIEW_AGE_DAYS) { reasons.push({ txt:`Thèse non revue depuis ${age} jours`, w: age>=180?3:2 }); sev += age>=180?3:2; }
+  if(p.dynConv && p.dynConv.divergent) { reasons.push({ txt:"Le marché s'écarte durablement de la thèse", w:3 }); sev += 3; }
+  if(p.effDrift) { reasons.push({ txt:`Verdict ajusté au prix : ${p.effReason}`, w:2 }); sev += 2; }
+  if(an.tgt && p.pxNative != null) {
+    if(p.pxNative >= an.tgt.h) { reasons.push({ txt:`Cours au-dessus de l'objectif haut (${an.tgt.h}) — objectifs peut-être périmés`, w:3 }); sev += 3; }
+    else if(p.pxNative <= an.tgt.l) { reasons.push({ txt:`Cours sous l'objectif bas (${an.tgt.l}) — thèse mise à l'épreuve`, w:2 }); sev += 2; }
+  }
+  if(!reasons.length) return null;
+  return { ticker:p.t, age, lu, reasons, sev, level: sev>=5 ? "rd" : sev>=3 ? "am" : "bl",
+    pxRev: rev.pxRev != null ? rev.pxRev : null, pxNow: p.pxNative };
 }
 
 // Décroissance temporelle simple (legacy, sans momentum) — gardée pour compat
@@ -1257,6 +1313,15 @@ function AnticipatoryAlerts({ port, onSelect }) {
     if(p.rsiLive != null && p.rsiLive >= 70) alerts.push({ t:p.t, level:"am", icon:"📈", msg:`RSI ${p.rsiLive} — surachat, prudence` });
     if(p.effDrift) alerts.push({ t:p.t, level:"pu", icon:"↻", msg:`Verdict ajusté au prix : ${p.effReason}` });
     if(p.dynConv && p.dynConv.divergent) alerts.push({ t:p.t, level:"am", icon:"🧭", msg:`Conviction en dérive — le marché s'écarte de la thèse, à revérifier` });
+    // Revue de thèse programmée : rappel automatique au-delà de 90 jours
+    if(p.dynConv && p.dynConv.lu){
+      const age = Math.floor((Date.now() - new Date(p.dynConv.lu)) / 86400000);
+      if(age >= 90){
+        const half = age >= 182;
+        alerts.push({ t:p.t, level: half?"rd":"am", icon:"📅",
+          msg:`Revue de thèse due — analyse vieille de ${age} j${half?" · conviction au plancher (−50 %)":` · conviction déjà réduite`}` });
+      }
+    }
   });
   if(alerts.length === 0) return null;
   const colors = { rd:"#e85d5d", gr:"#2ecc8f", am:"#f0a020", pu:"#8b7cf5" };
@@ -1300,22 +1365,53 @@ function DecisionSupport({ port, qHistMap, onSelect }) {
             color:tInfo?"#4f83f5":"#8892a8",borderColor:tInfo?"#4f83f5":"#3a4560",
             fontSize:9,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",fontStyle:"italic",fontFamily:"Georgia,serif"}}>i</span>
       </div>
-      {tInfo && (
+      {tInfo && (() => {
+        // Exemple réel : on prend la position la plus parlante (score le plus éloigné de 50)
+        const cand = compass.map(x => ({ t:x.p.t, n:x.p.n, ex:explainTiming(x.p) }))
+          .filter(x => x.ex && x.ex.steps.length)
+          .sort((a,b) => Math.abs(b.ex.total-50) - Math.abs(a.ex.total-50))[0];
+        const exCol = cand ? (cand.ex.total>=70?"#2ecc8f":cand.ex.total>=45?"#f0a020":"#8892a8") : "#8892a8";
+        return (
         <div style={{background:"rgba(79,131,245,.06)",border:"1px solid rgba(79,131,245,.15)",borderRadius:8,padding:"10px 12px",marginBottom:8,fontSize:10,lineHeight:1.5,color:"#8892a8"}}>
           <div style={{color:"#dde3f0",fontWeight:700,marginBottom:4}}>Le score de timing (0–100)</div>
-          Il ne dit pas <em>quoi</em> acheter (ça, c'est la conviction et la thèse), mais <strong>si c'est un bon moment</strong> pour renforcer cette position aujourd'hui. Il croise deux signaux d'entrée :
-          <div style={{marginTop:6,paddingLeft:4}}>
-            <div style={{marginBottom:5}}><strong style={{color:"#4f83f5"}}>1. Le RSI (force technique).</strong> Sous 30, le titre est « survendu » — souvent un creux, donc le score <strong style={{color:"#2ecc8f"}}>monte</strong>. Au-dessus de 70, il est « suracheté » — souvent un sommet, le score <strong style={{color:"#e85d5d"}}>baisse</strong>.</div>
-            <div><strong style={{color:"#4f83f5"}}>2. La position vs objectifs analystes.</strong> Si le cours est <strong>sous la médiane</strong> des objectifs (bas / médian / haut), il reste du potentiel → score <strong style={{color:"#2ecc8f"}}>monte</strong>. S'il est déjà au-dessus, c'est plus cher → score <strong style={{color:"#e85d5d"}}>baisse</strong>.</div>
-          </div>
-          <div style={{marginTop:6,display:"flex",gap:10,flexWrap:"wrap"}}>
+          Il ne dit pas <em>quoi</em> acheter — ça, c'est la thèse. Il répond à : <strong>« si je renforce cette ligne, est-ce que j'achète au bon moment ou après la hausse ? »</strong>
+          <div style={{marginTop:5}}>Tout part de <strong>50 (neutre)</strong>, puis deux corrections s'appliquent : le <strong style={{color:"#4f83f5"}}>rythme récent du cours</strong> (RSI) et la <strong style={{color:"#4f83f5"}}>marge restante</strong> avant les objectifs analystes.</div>
+
+          {cand && (
+            <div style={{background:"rgba(0,0,0,.25)",border:"1px solid rgba(255,255,255,.06)",borderRadius:6,padding:"9px 10px",marginTop:8}}>
+              <div style={{color:"#dde3f0",fontWeight:700,marginBottom:6}}>Exemple réel · {cand.t} <span style={{color:"#3a4560",fontWeight:400}}>(en direct)</span></div>
+              <div style={{display:"flex",justifyContent:"space-between",padding:"3px 0"}}>
+                <span>Point de départ neutre</span><span className="mono" style={{color:"#dde3f0"}}>50</span>
+              </div>
+              {cand.ex.steps.map((st,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"3px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
+                  <span style={{flex:1}}>{st.txt}</span>
+                  <span className="mono" style={{color:st.d>=0?"#2ecc8f":"#e85d5d",whiteSpace:"nowrap"}}>{st.d>=0?"+":"−"}{Math.abs(st.d).toFixed(0)}</span>
+                </div>
+              ))}
+              <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0 0",borderTop:"1px solid rgba(255,255,255,.12)",marginTop:4}}>
+                <strong style={{color:"#dde3f0"}}>Score final</strong>
+                <strong className="mono" style={{color:exCol}}>{cand.ex.total} · {cand.ex.label}</strong>
+              </div>
+              <div style={{marginTop:6,fontSize:9,color:"#8892a8",fontStyle:"italic"}}>
+                {cand.ex.total>=70
+                  ? `Traduction : si tu comptais renforcer ${cand.t}, le moment est plutôt favorable.`
+                  : cand.ex.total>=45
+                    ? `Traduction : rien d'urgent sur ${cand.t}, ni bonne ni mauvaise fenêtre.`
+                    : `Traduction : ${cand.t} vient de monter et/ou approche ses objectifs — mieux vaut attendre une respiration avant de renforcer.`}
+              </div>
+            </div>
+          )}
+
+          <div style={{marginTop:8,display:"flex",gap:10,flexWrap:"wrap"}}>
             <span style={{color:"#2ecc8f"}}>≥ 70 : Bon moment</span>
             <span style={{color:"#f0a020"}}>45–69 : Neutre</span>
             <span style={{color:"#8892a8"}}>&lt; 45 : Patienter</span>
           </div>
-          <div style={{marginTop:6,fontSize:9,color:"#3a4560"}}>Aide à la décision, pas un ordre. Un bon timing sur une thèse faible reste un mauvais achat.</div>
+          <div style={{marginTop:6,fontSize:9,color:"#3a4560"}}>Aide à la décision, pas un ordre. Un bon timing sur une thèse faible reste un mauvais achat — et un score bas ne veut pas dire « vendre », juste « pas maintenant pour renforcer ».</div>
         </div>
-      )}
+        );
+      })()}
       {compass.slice(0,5).map(({p,c,t})=>(
         <div key={p.t} onClick={()=>onSelect&&onSelect(p.t)} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.04)",cursor:"pointer"}}>
           <strong className="tk" style={{minWidth:44}}>{p.t}</strong>
@@ -1409,6 +1505,95 @@ function Sparkline({ hist, w, h }) {
   );
 }
 
+// REVUE DE THÈSE ASSISTÉE — l'appli prépare le dossier, l'utilisateur garde la décision
+function ThesisReview({ port, onSelect }) {
+  const [bump, setBump] = useState(0);
+  const [open, setOpen] = useState(null);
+  const items = useMemo(() => port.filter(p => p.val != null).map(reviewNeeds).filter(Boolean)
+    .sort((a,b) => b.sev - a.sev), [port, bump]);
+  if(!items.length) return null;
+  const cols = { rd:"#e85d5d", am:"#f0a020", bl:"#4f83f5" };
+  const cur = items.find(i => i.ticker === open);
+  const p = cur ? port.find(x => x.t === cur.ticker) : null;
+  const an = cur ? AN[cur.ticker] : null;
+
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Thèses à revoir</h3><span className="dim" style={{fontSize:10}}>{items.length}</span></div>
+      <div style={{fontSize:9,color:"#3a4560",marginBottom:8,lineHeight:1.4}}>
+        L'appli repère ce qui a changé et prépare le dossier. La décision reste la tienne.
+      </div>
+      {items.map(it => (
+        <div key={it.ticker}>
+          <div onClick={()=>setOpen(open===it.ticker?null:it.ticker)}
+            style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderTop:"1px solid rgba(255,255,255,.04)",cursor:"pointer"}}>
+            <span style={{width:6,height:6,borderRadius:3,background:cols[it.level],flex:"0 0 auto"}}/>
+            <strong className="tk" style={{minWidth:44}}>{it.ticker}</strong>
+            <span style={{fontSize:10,color:cols[it.level],flex:1}}>{it.reasons[0].txt}{it.reasons.length>1?` · +${it.reasons.length-1}`:""}</span>
+            <span style={{fontSize:10,color:"#3a4560"}}>{open===it.ticker?"▲":"▼"}</span>
+          </div>
+
+          {open === it.ticker && p && (
+            <div style={{background:"rgba(0,0,0,.25)",border:"1px solid rgba(255,255,255,.06)",borderRadius:8,padding:"10px 12px",margin:"4px 0 8px"}}>
+              <div className="lbl" style={{marginBottom:5}}>Pourquoi cette revue</div>
+              {it.reasons.map((r,i)=>(
+                <div key={i} style={{fontSize:10,color:"#8892a8",marginBottom:3,lineHeight:1.4}}>• {r.txt}</div>
+              ))}
+
+              <div className="lbl" style={{margin:"9px 0 5px"}}>Ce qui a changé depuis la dernière revue ({it.lu})</div>
+              <div className="row" style={{padding:"3px 0"}}><span style={{fontSize:10}}>Cours</span>
+                <span className="mono" style={{fontSize:10}}>
+                  {it.pxRev != null ? it.pxRev.toFixed(2) + " → " : ""}
+                  <strong style={{color:"#dde3f0"}}>{it.pxNow != null ? it.pxNow.toFixed(2) : "—"}</strong>
+                  {it.pxRev != null && it.pxNow != null &&
+                    <span style={{color:cl(it.pxNow-it.pxRev),marginLeft:5}}>{fp((it.pxNow/it.pxRev-1)*100,1)}</span>}
+                </span>
+              </div>
+              {an && an.tgt && (
+                <div className="row" style={{padding:"3px 0"}}><span style={{fontSize:10}}>Objectifs (bas/méd./haut)</span>
+                  <span className="mono" style={{fontSize:10,color:"#dde3f0"}}>{an.tgt.l} / {an.tgt.a} / {an.tgt.h}</span>
+                </div>
+              )}
+              {p.rsiLive != null && (
+                <div className="row" style={{padding:"3px 0"}}><span style={{fontSize:10}}>RSI</span>
+                  <span className="mono" style={{fontSize:10,color:p.rsiLive>=70?"#f0a020":p.rsiLive<=30?"#2ecc8f":"#dde3f0"}}>{p.rsiLive}</span>
+                </div>
+              )}
+              {p.dynConv && (
+                <div className="row" style={{padding:"3px 0"}}><span style={{fontSize:10}}>Conviction actuelle</span>
+                  <span className="mono" style={{fontSize:10,color:"#dde3f0"}}>{p.dynConv.value}/100
+                    <span style={{color:"#3a4560"}}> (base {an?an.c:"—"})</span></span>
+                </div>
+              )}
+
+              <div className="lbl" style={{margin:"9px 0 4px"}}>À vérifier de ton côté</div>
+              <div style={{fontSize:10,color:"#8892a8",lineHeight:1.5}}>
+                Les catalyseurs annoncés se sont-ils réalisés ? Un risque nouveau est-il apparu (résultats, réglementation, concurrence) ? Les objectifs sont-ils toujours crédibles ?
+                <span style={{color:"#3a4560"}}> Le détail de la thèse est dans la fiche de la position.</span>
+              </div>
+
+              <div className="g2" style={{marginTop:9}}>
+                <button className="bn bn-g" onClick={()=>{
+                  if(confirm(`${it.ticker} — confirmer que la thèse tient toujours ?\n\nCela remet la conviction à son plein poids.\nNe confirme que si tu as réellement relu la thèse.`)){
+                    markReviewed(it.ticker, p.pxNative); setOpen(null); setBump(b=>b+1);
+                  }
+                }}>✓ La thèse tient</button>
+                <button className="bn bn-w" onClick={()=>{
+                  if(confirm(`${it.ticker} — marquer la thèse comme fragilisée ?\n\nLa conviction reste érodée et la ligne restera signalée.`)){
+                    flagThesis(it.ticker); setOpen(null); setBump(b=>b+1);
+                  }
+                }}>⚠ Thèse fragilisée</button>
+              </div>
+              <button className="bn bn-b" style={{width:"100%",marginTop:6,fontSize:10}}
+                onClick={()=>onSelect && onSelect(it.ticker)}>Ouvrir la fiche complète →</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, qHistMap = {}, spyHist, onSelect, onTabChange }) {
   const health = useMemo(() => calcHealth(port, m), [port, m]);
   const hcol = health.total>=70?"#2ecc8f":health.total>=50?"#f0a020":"#e85d5d";
@@ -1443,6 +1628,7 @@ function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, q
   return (
     <>
       <AnticipatoryAlerts port={port} onSelect={onSelect}/>
+      <ThesisReview port={port} onSelect={onSelect}/>
       <DecisionSupport port={port} qHistMap={qHistMap} onSelect={onSelect}/>
       {/* MARCHÉS */}
       {Object.keys(macroCtx).length>0 && (
@@ -2987,18 +3173,18 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 
   // Verdict synthétique : signal + conviction + risque combinés en une phrase
   const verdict = useMemo(() => {
-    const sigLabel = {buy:"RENFORCER", sell:"ALLÉGER", hold:"CONSERVER", spec:"SPÉCULATIF"}[p.sig] || "CONSERVER";
+    const vsig = p.effSig || p.sig;   // signal réactif au prix (pas la vue analyste figée)
+    const sigLabel = {buy:"RENFORCER", sell:"ALLÉGER", hold:"CONSERVER", spec:"SPÉCULATIF"}[vsig] || "CONSERVER";
     const riskLabel = risk.total>=65?"risque élevé":risk.total>=40?"risque modéré":"risque faible";
     const convLabel = ec>=80?"conviction forte":ec>=60?"conviction correcte":"conviction faible";
     let phrase;
-    const vsig = p.effSig || p.sig;
     if(vsig==="sell" && risk.total>=55) phrase = `Signal de vente avec ${riskLabel} actuel — fenêtre de sortie favorable.`;
     else if(vsig==="buy" && risk.total<45) phrase = `Opportunité de renforcement à ${riskLabel} — ${convLabel} de la thèse.`;
     else if(vsig==="buy" && risk.total>=55) phrase = `Thèse positive mais ${riskLabel} actuel — renforcer prudemment ou attendre.`;
     else if(vsig==="sell" && risk.total<45) phrase = `Signal de vente mais risque actuel limité — pas d'urgence à agir.`;
     else phrase = `Position stable, ${riskLabel}, ${convLabel}.`;
     return { sigLabel, riskLabel, convLabel, phrase };
-  }, [p.sig, risk.total, ec]);
+  }, [p.sig, p.effSig, p.pxE, risk.total, ec]);
 
   // Fiscal (PEA exonéré imposition revenu, CTO = PFU 30%)
   const fiscal = useMemo(() => {
@@ -3374,7 +3560,24 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
               style={{cursor:"pointer",width:16,height:16,borderRadius:8,border:"1px solid",color:cInfo?"#4f83f5":"#8892a8",borderColor:cInfo?"#4f83f5":"#3a4560",
                 fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",fontStyle:"italic",fontFamily:"Georgia,serif",flex:"0 0 auto"}}>{cInfo?"×":"i"}</span>
             <button className="bn bn-b" style={{fontSize:10,padding:"4px 10px"}}
-              onClick={()=>{markReviewed(ticker); setReviewBump(b=>b+1);}}>Marquer comme révisée</button>
+              onClick={()=>{
+                const an = AN[ticker];
+                const age = dynConv.lu ? Math.floor((Date.now()-new Date(dynConv.lu))/86400000) : null;
+                const chk = [
+                  `Revue de thèse — ${ticker}`,
+                  age!=null ? `Dernière revue il y a ${age} jours.` : "",
+                  "",
+                  "Avant de confirmer, as-tu vérifié :",
+                  an && an.tgt ? `• Les objectifs analystes (${an.tgt.l}/${an.tgt.a}/${an.tgt.h}) sont-ils toujours d'actualité ?` : "• Les objectifs analystes sont-ils toujours d'actualité ?",
+                  "• Les catalyseurs annoncés se sont-ils réalisés (ou sont-ils toujours attendus) ?",
+                  "• Un risque nouveau est-il apparu (résultats, réglementation, concurrence) ?",
+                  dynConv.divergent ? "• ⚠️ Le marché diverge de la thèse — as-tu compris pourquoi ?" : "",
+                  "",
+                  "Confirmer remet la conviction à son plein poids.",
+                  "Ne confirme que si tu as réellement relu la thèse."
+                ].filter(Boolean).join("\n");
+                if(confirm(chk)){ markReviewed(ticker, p.pxNative); setReviewBump(b=>b+1); }
+              }}>Marquer comme révisée</button>
           </div>
         </div>
         {cInfo && (
