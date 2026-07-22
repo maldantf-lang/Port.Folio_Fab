@@ -111,7 +111,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v14.0-2026-07-08-001";
+const BUILD = "v14.1-2026-07-08-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -1312,7 +1312,6 @@ function AnticipatoryAlerts({ port, onSelect }) {
     if(p.rsiLive != null && p.rsiLive <= 30) alerts.push({ t:p.t, level:"gr", icon:"📉", msg:`RSI ${p.rsiLive} — survente, fenêtre d'entrée possible` });
     if(p.rsiLive != null && p.rsiLive >= 70) alerts.push({ t:p.t, level:"am", icon:"📈", msg:`RSI ${p.rsiLive} — surachat, prudence` });
     if(p.effDrift) alerts.push({ t:p.t, level:"pu", icon:"↻", msg:`Verdict ajusté au prix : ${p.effReason}` });
-    if(p.dynConv && p.dynConv.divergent) alerts.push({ t:p.t, level:"am", icon:"🧭", msg:`Conviction en dérive — le marché s'écarte de la thèse, à revérifier` });
     // Revue de thèse programmée : rappel automatique au-delà de 90 jours
     if(p.dynConv && p.dynConv.lu){
       const age = Math.floor((Date.now() - new Date(p.dynConv.lu)) / 86400000);
@@ -1323,11 +1322,12 @@ function AnticipatoryAlerts({ port, onSelect }) {
       }
     }
   });
-  if(alerts.length === 0) return null;
+  const reviewItems = port.filter(p => p.val != null).map(reviewNeeds).filter(Boolean);
+  if(alerts.length === 0 && reviewItems.length === 0) return null;
   const colors = { rd:"#e85d5d", gr:"#2ecc8f", am:"#f0a020", pu:"#8b7cf5" };
   return (
     <div className="card">
-      <div className="cd-ti"><h3>Signaux à surveiller</h3><span className="dim" style={{fontSize:10}}>{alerts.length}</span></div>
+      <div className="cd-ti"><h3>Signaux à surveiller</h3><span className="dim" style={{fontSize:10}}>{alerts.length + reviewItems.length}</span></div>
       {alerts.map((a,i)=>(
         <div key={i} onClick={()=>onSelect&&onSelect(a.t)}
           style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderTop:i?"1px solid rgba(255,255,255,.04)":"none",cursor:"pointer"}}>
@@ -1336,6 +1336,7 @@ function AnticipatoryAlerts({ port, onSelect }) {
           <span style={{fontSize:11,color:colors[a.level],flex:1}}>{a.msg}</span>
         </div>
       ))}
+      <ThesisReview port={port} onSelect={onSelect}/>
       <div className="dim" style={{fontSize:8,marginTop:6}}>Prochains résultats : voir l'onglet Forecast.</div>
     </div>
   );
@@ -1506,6 +1507,16 @@ function Sparkline({ hist, w, h }) {
 }
 
 // REVUE DE THÈSE ASSISTÉE — l'appli prépare le dossier, l'utilisateur garde la décision
+// Questions de revue SPÉCIFIQUES à la position, construites depuis sa propre thèse
+function reviewQuestions(ticker) {
+  const an = AN[ticker]; if(!an) return [];
+  const qs = [];
+  (an.cat||[]).forEach(c => qs.push({ k:"cat", label:c, q:"réalisé, toujours attendu, ou tombé à l'eau ?" }));
+  (an.ris||[]).forEach(r => qs.push({ k:"ris", label:r, q:"s'est-il matérialisé depuis ?" }));
+  if(an.tgt) qs.push({ k:"tgt", label:`Objectifs ${an.tgt.l} / ${an.tgt.a} / ${an.tgt.h}`, q:"toujours crédibles au vu des derniers résultats ?" });
+  return qs;
+}
+
 function ThesisReview({ port, onSelect }) {
   const [bump, setBump] = useState(0);
   const [open, setOpen] = useState(null);
@@ -1518,10 +1529,11 @@ function ThesisReview({ port, onSelect }) {
   const an = cur ? AN[cur.ticker] : null;
 
   return (
-    <div className="card">
-      <div className="cd-ti"><h3>Thèses à revoir</h3><span className="dim" style={{fontSize:10}}>{items.length}</span></div>
-      <div style={{fontSize:9,color:"#3a4560",marginBottom:8,lineHeight:1.4}}>
-        L'appli repère ce qui a changé et prépare le dossier. La décision reste la tienne.
+    <>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:9,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.08)"}}>
+        <span className="lbl" style={{margin:0}}>Thèses à revoir</span>
+        <span className="dim" style={{fontSize:9}}>{items.length}</span>
+        <span style={{fontSize:9,color:"#3a4560",flex:1,textAlign:"right"}}>dossier pré-rempli · tu décides</span>
       </div>
       {items.map(it => (
         <div key={it.ticker}>
@@ -1566,11 +1578,19 @@ function ThesisReview({ port, onSelect }) {
                 </div>
               )}
 
-              <div className="lbl" style={{margin:"9px 0 4px"}}>À vérifier de ton côté</div>
-              <div style={{fontSize:10,color:"#8892a8",lineHeight:1.5}}>
-                Les catalyseurs annoncés se sont-ils réalisés ? Un risque nouveau est-il apparu (résultats, réglementation, concurrence) ? Les objectifs sont-ils toujours crédibles ?
-                <span style={{color:"#3a4560"}}> Le détail de la thèse est dans la fiche de la position.</span>
-              </div>
+              <div className="lbl" style={{margin:"9px 0 4px"}}>À trancher de ton côté · propre à {it.ticker}</div>
+              {reviewQuestions(it.ticker).map((q,i)=>(
+                <div key={i} style={{display:"flex",gap:6,padding:"4px 0",borderTop:i?"1px solid rgba(255,255,255,.04)":"none"}}>
+                  <span style={{flex:"0 0 auto",fontSize:10,color:q.k==="cat"?"#2ecc8f":q.k==="ris"?"#e85d5d":"#4f83f5"}}>
+                    {q.k==="cat"?"▲":q.k==="ris"?"▼":"◆"}
+                  </span>
+                  <span style={{flex:1,fontSize:10,lineHeight:1.4}}>
+                    <strong style={{color:"#dde3f0"}}>{q.label}</strong>
+                    <span style={{color:"#8892a8"}}> — {q.q}</span>
+                  </span>
+                </div>
+              ))}
+              <div style={{fontSize:9,color:"#3a4560",marginTop:5}}>▲ catalyseurs · ▼ risques · ◆ objectifs. La thèse complète est dans la fiche.</div>
 
               <div className="g2" style={{marginTop:9}}>
                 <button className="bn bn-g" onClick={()=>{
@@ -1590,7 +1610,7 @@ function ThesisReview({ port, onSelect }) {
           )}
         </div>
       ))}
-    </div>
+    </>
   );
 }
 
@@ -1628,7 +1648,6 @@ function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, q
   return (
     <>
       <AnticipatoryAlerts port={port} onSelect={onSelect}/>
-      <ThesisReview port={port} onSelect={onSelect}/>
       <DecisionSupport port={port} qHistMap={qHistMap} onSelect={onSelect}/>
       {/* MARCHÉS */}
       {Object.keys(macroCtx).length>0 && (
@@ -3580,6 +3599,26 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
               }}>Marquer comme révisée</button>
           </div>
         </div>
+        {reviewQuestions(ticker).length > 0 && (
+          <div style={{background:"rgba(0,0,0,.22)",border:"1px solid rgba(255,255,255,.06)",borderRadius:8,padding:"10px 12px",marginBottom:10}}>
+            <div className="lbl" style={{marginBottom:6}}>Revue de thèse · à trancher pour {ticker}</div>
+            {reviewQuestions(ticker).map((q,i)=>(
+              <div key={i} style={{display:"flex",gap:7,padding:"5px 0",borderTop:i?"1px solid rgba(255,255,255,.04)":"none"}}>
+                <span style={{flex:"0 0 auto",fontSize:10,color:q.k==="cat"?"#2ecc8f":q.k==="ris"?"#e85d5d":"#4f83f5"}}>
+                  {q.k==="cat"?"▲":q.k==="ris"?"▼":"◆"}
+                </span>
+                <span style={{flex:1,fontSize:10,lineHeight:1.45}}>
+                  <strong style={{color:"#dde3f0"}}>{q.label}</strong>
+                  <span style={{color:"#8892a8"}}> — {q.q}</span>
+                </span>
+              </div>
+            ))}
+            <div style={{fontSize:9,color:"#3a4560",marginTop:6}}>
+              ▲ catalyseurs à confirmer · ▼ risques à surveiller · ◆ objectifs à valider.
+              {dynConv.divergent && <span style={{color:"#f0a020"}}> ⚠️ Le marché diverge de la thèse — comprends pourquoi avant de confirmer.</span>}
+            </div>
+          </div>
+        )}
         {cInfo && (
           <div style={{background:"rgba(79,131,245,.06)",border:"1px solid rgba(79,131,245,.15)",borderRadius:8,padding:"10px 12px",marginBottom:10,fontSize:10,lineHeight:1.5,color:"#8892a8"}}>
             <div style={{color:"#dde3f0",fontWeight:700,marginBottom:4}}>À quoi ça sert ?</div>
