@@ -111,7 +111,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v14.2-2026-07-23-001";
+const BUILD = "v14.3-2026-07-23-002";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -2759,6 +2759,55 @@ function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
 
 /* CfgView — DÉCLARÉE HORS de App */
 /* ============== CODE DE VERROUILLAGE ============== */
+/* ===== BIOMÉTRIE (WebAuthn) — empreinte digitale Android/Samsung =====
+   Chrome Android relie WebAuthn au capteur d'empreinte du téléphone.
+   Exige HTTPS (GitHub Pages convient). Le PIN reste le secours obligatoire :
+   sans lui, un changement d'appareil ou un capteur indisponible = blocage total. */
+const BIO_KEY = "fab-bio-cred";
+function getBioCred(){ try { return localStorage.getItem(BIO_KEY)||""; } catch(e){ return ""; } }
+function setBioCred(v){ try { if(v) localStorage.setItem(BIO_KEY,v); else localStorage.removeItem(BIO_KEY); } catch(e){} }
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+const unb64url = s => { s = s.replace(/-/g,"+").replace(/_/g,"/"); const bin = atob(s); const a = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a; };
+
+// Le capteur est-il disponible sur cet appareil ?
+async function bioAvailable(){
+  try {
+    if(!window.PublicKeyCredential || !navigator.credentials) return false;
+    if(!window.isSecureContext) return false;                       // HTTPS obligatoire
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch(e){ return false; }
+}
+
+// Enrôlement : associe l'empreinte de CET appareil à l'application
+async function bioEnroll(){
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const userId = crypto.getRandomValues(new Uint8Array(16));
+  const cred = await navigator.credentials.create({ publicKey: {
+    challenge,
+    rp: { name: "port.folio Fab" },                                  // domaine courant par défaut
+    user: { id: userId, name: "fab", displayName: "port.folio Fab" },
+    pubKeyCredParams: [{ type:"public-key", alg:-7 }, { type:"public-key", alg:-257 }],
+    authenticatorSelection: { authenticatorAttachment:"platform", userVerification:"required", residentKey:"preferred" },
+    timeout: 60000, attestation: "none"
+  }});
+  if(!cred) throw new Error("Enrôlement annulé");
+  setBioCred(b64url(cred.rawId));
+  return true;
+}
+
+// Déverrouillage : déclenche l'invite d'empreinte
+async function bioVerify(){
+  const id = getBioCred();
+  if(!id) throw new Error("Aucune empreinte enregistrée");
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const assertion = await navigator.credentials.get({ publicKey: {
+    challenge,
+    allowCredentials: [{ type:"public-key", id: unb64url(id) }],
+    userVerification: "required", timeout: 60000
+  }});
+  return Boolean(assertion);
+}
+
 const PIN_KEY = "fab-pin";
 function getPinHash() { try { return localStorage.getItem(PIN_KEY)||""; } catch(e){ return ""; } }
 function setPinHash(h) { try { if(h) localStorage.setItem(PIN_KEY,h); else localStorage.removeItem(PIN_KEY); } catch(e){} }
@@ -2771,6 +2820,18 @@ function hashPin(p) {
 function LockScreen({ onUnlock }) {
   const [input, setInput] = useState("");
   const [error, setError] = useState(false);
+  const [bioState, setBioState] = useState("idle");   // idle | prompt | fail | none
+  const triedRef = useRef(false);
+
+  // Tentative biométrique automatique à l'ouverture (si une empreinte est enrôlée)
+  const tryBio = useCallback(async () => {
+    if(!getBioCred()) { setBioState("none"); return; }
+    setBioState("prompt");
+    try { if(await bioVerify()) { onUnlock(); return; } setBioState("fail"); }
+    catch(e){ setBioState("fail"); }
+  }, [onUnlock]);
+
+  useEffect(() => { if(!triedRef.current){ triedRef.current = true; tryBio(); } }, [tryBio]);
 
   const press = (d) => { if(input.length>=4||error) return; setInput(p=>p+d); };
   const del = () => { if(!error) setInput(p=>p.slice(0,-1)); };
@@ -2791,7 +2852,16 @@ function LockScreen({ onUnlock }) {
         <div style={{fontSize:30,fontWeight:800,letterSpacing:"-.02em",marginBottom:6}}>
           port<span style={{color:"#4f83f5"}}>.</span>folio
         </div>
-        <div style={{fontSize:12,color:"#3a4560",letterSpacing:".05em"}}>CODE DE DÉVERROUILLAGE</div>
+        <div style={{fontSize:12,color:"#3a4560",letterSpacing:".05em"}}>
+          {bioState==="prompt" ? "TOUCHE LE CAPTEUR D'EMPREINTE" : "CODE DE DÉVERROUILLAGE"}
+        </div>
+        {getBioCred() && bioState!=="prompt" && (
+          <button onClick={tryBio} style={{marginTop:14,background:"rgba(79,131,245,.12)",
+            border:"1px solid rgba(79,131,245,.3)",color:"#4f83f5",borderRadius:22,
+            padding:"9px 18px",fontSize:12,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:7}}>
+            <span style={{fontSize:15}}>☝</span>{bioState==="fail" ? "Réessayer l'empreinte" : "Déverrouiller par empreinte"}
+          </button>
+        )}
       </div>
       {/* Indicateurs */}
       <div style={{display:"flex",gap:18,marginBottom:44}}>
@@ -2815,6 +2885,51 @@ function LockScreen({ onUnlock }) {
       </div>
       {error && <div style={{marginTop:22,fontSize:12,color:"#e85d5d"}}>Code incorrect</div>}
     </div>
+  );
+}
+
+// Réglage de la biométrie — dépend du PIN (secours obligatoire)
+function BioSettings({ pinActive }) {
+  const [avail, setAvail] = useState(null);
+  const [on, setOn] = useState(() => Boolean(getBioCred()));
+  const [msg, setMsg] = useState("");
+  useEffect(() => { bioAvailable().then(setAvail); }, []);
+
+  if(avail === null) return <div style={{fontSize:11,color:"#8892a8"}}>Vérification du capteur…</div>;
+  if(!avail) return (
+    <div style={{fontSize:11,color:"#8892a8",lineHeight:1.5}}>
+      Aucun capteur biométrique utilisable sur cet appareil/navigateur.
+      <div style={{fontSize:9,color:"#3a4560",marginTop:5}}>Nécessite Chrome sur Android (ou Safari/iOS) avec une empreinte configurée, et une connexion sécurisée HTTPS.</div>
+    </div>
+  );
+  if(on) return (
+    <>
+      <div style={{fontSize:11,color:"#2ecc8f",marginBottom:8}}>✓ Empreinte active sur cet appareil</div>
+      <button className="bn bn-r" style={{width:"100%"}}
+        onClick={()=>{ setBioCred(""); setOn(false); setMsg(""); }}>Retirer l'empreinte</button>
+      <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.5}}>
+        L'empreinte est propre à cet appareil. Le code à 4 chiffres reste actif en secours.
+      </div>
+    </>
+  );
+  return (
+    <>
+      <div style={{fontSize:11,color:"#8892a8",marginBottom:8,lineHeight:1.5}}>
+        Déverrouille l'application avec le capteur d'empreinte du téléphone, au lieu de saisir le code.
+      </div>
+      {!pinActive && (
+        <div style={{fontSize:10,color:"#f0a020",marginBottom:8,lineHeight:1.5}}>
+          ⚠️ Active d'abord un code à 4 chiffres : il sert de secours si le capteur est indisponible ou si tu changes d'appareil.
+        </div>
+      )}
+      {msg && <div style={{fontSize:11,color:msg.startsWith("✓")?"#2ecc8f":"#e85d5d",marginBottom:6}}>{msg}</div>}
+      <button className="bn bn-b" style={{width:"100%",opacity:pinActive?1:.45}} disabled={!pinActive}
+        onClick={async ()=>{
+          setMsg("");
+          try { await bioEnroll(); setOn(true); setMsg("✓ Empreinte enregistrée"); }
+          catch(e){ setMsg("Échec : " + (e && e.message ? e.message : "annulé")); }
+        }}>☝ Activer l'empreinte</button>
+    </>
   );
 }
 
@@ -2930,6 +3045,10 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
             })}
           </tbody>
         </table>
+      </div>
+      <div className="card">
+        <div className="cd-ti"><h3>Empreinte digitale</h3></div>
+        <BioSettings pinActive={pinActive}/>
       </div>
       <div className="card">
         <div className="cd-ti"><h3>Code de déverrouillage</h3></div>
@@ -4050,7 +4169,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><App/
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(()=>{});
+    // Portée limitée au dossier du projet : n'interfère pas avec les autres
+    // applications hébergées sur le même domaine GitHub Pages.
+    navigator.serviceWorker.register('sw.js', { scope: './' }).catch(()=>{});
   });
 }
 </script>
