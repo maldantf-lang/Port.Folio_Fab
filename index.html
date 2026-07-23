@@ -111,7 +111,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v14.1-2026-07-08-001";
+const BUILD = "v14.2-2026-07-23-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -170,17 +170,24 @@ const PRICE_BOUNDS = {
   GLD: [800, 5000], ITA: [60, 300]
 };
 
+// BASE TYPE — structure des supports suivis, SANS données personnelles.
+// Confidentialité : quantités (q) et prix de revient (b) restent à 0 dans le code public.
+// Tes vraies valeurs arrivent une seule fois par Réglages → Importer, puis vivent
+// dans le stockage local de l'appareil (privé) et se rechargent automatiquement.
+// Pour ajouter/retirer un support suivi : édite cette liste (t, n, s, v, acct).
 const PORT_DEF = [
-  { t:"FTI",  n:"TechnipFMC",        q:1,        b:8.09,   s:"Énergie", sig:"sell", v:28, acct:"CTO" },
-  { t:"HPE",  n:"HP Enterprise",     q:1,        b:16.79,  s:"Tech",    sig:"hold", v:32, acct:"CTO" },
-  { t:"AMZN", n:"Amazon",            q:0.07,     b:130.86, s:"Tech",    sig:"buy",  v:25, acct:"CTO" },
-  { t:"MC",   n:"LVMH",              q:0.014547, b:756.17, s:"Luxe",    sig:"hold", v:24, acct:"CTO" },
-  { t:"NATO", n:"Future of Defence", q:0.314544, b:15.90,  s:"Défense", sig:"buy",  v:20, acct:"CTO" },
-  { t:"NVDA", n:"NVIDIA",            q:0.03,     b:145.33, s:"Tech",    sig:"buy",  v:38, acct:"CTO" },
-  { t:"ABUS", n:"Arbutus Biopharma", q:0.484261, b:4.13,   s:"Biotech", sig:"spec", v:65, acct:"CTO" },
-  { t:"GAD",  n:"Global Aero & Def", q:0.119033, b:8.40,   s:"Défense", sig:"buy",  v:18, acct:"CTO" },
-  { t:"MSFT", n:"Microsoft",         q:0.002811, b:355.75, s:"Tech",    sig:"buy",  v:22, acct:"CTO" }
+  { t:"FTI",  n:"TechnipFMC",        q:0, b:0, s:"Énergie", sig:"sell", v:28, acct:"CTO" },
+  { t:"HPE",  n:"HP Enterprise",     q:0, b:0, s:"Tech",    sig:"hold", v:32, acct:"CTO" },
+  { t:"AMZN", n:"Amazon",            q:0, b:0, s:"Tech",    sig:"buy",  v:25, acct:"CTO" },
+  { t:"MC",   n:"LVMH",              q:0, b:0, s:"Luxe",    sig:"hold", v:24, acct:"CTO" },
+  { t:"NATO", n:"Future of Defence", q:0, b:0, s:"Défense", sig:"buy",  v:20, acct:"CTO" },
+  { t:"NVDA", n:"NVIDIA",            q:0, b:0, s:"Tech",    sig:"buy",  v:38, acct:"CTO" },
+  { t:"ABUS", n:"Arbutus Biopharma", q:0, b:0, s:"Biotech", sig:"spec", v:65, acct:"CTO" },
+  { t:"GAD",  n:"Global Aero & Def", q:0, b:0, s:"Défense", sig:"buy",  v:18, acct:"CTO" },
+  { t:"MSFT", n:"Microsoft",         q:0, b:0, s:"Tech",    sig:"buy",  v:22, acct:"CTO" }
 ];
+// Portefeuille non encore renseigné sur cet appareil ?
+const isUnconfigured = arr => !arr || !arr.length || arr.every(p => !(p.q > 0));
 
 const AN = {
   FTI:{r:"ALLÉGER",c:85,p:5,sig:"sell",lu:"2026-07-06",tgt:{l:45,a:76,h:90},
@@ -504,16 +511,22 @@ function openDB() {
     req.onerror = () => rej(req.error);
   });
 }
+const SNAP_KEEP_MS = 400 * 24 * 3600 * 1000;   // on conserve ~13 mois (horizon max utile : 12 mois)
 async function snapshotAdd(snap) {
   try {
     const db = await openDB();
     return new Promise((res, rej) => {
       const tx = db.transaction(SNAP_STORE, "readwrite");
-      tx.objectStore(SNAP_STORE).put(snap);
+      const store = tx.objectStore(SNAP_STORE);
+      store.put(snap);
+      // Purge : supprime tout ce qui dépasse la fenêtre de conservation (évite une base sans fin)
+      const cutoff = Date.now() - SNAP_KEEP_MS;
+      const purge = store.openCursor(IDBKeyRange.upperBound(cutoff, true));
+      purge.onsuccess = (e) => { const c = e.target.result; if(c){ c.delete(); c.continue(); } };
       tx.oncomplete = () => { db.close(); res(); };
       tx.onerror = () => { db.close(); rej(tx.error); };
     });
-  } catch(e) { console.warn("[DB] add err", e); }
+  } catch(e) { DBG && console.warn("[DB] add err", e); }
 }
 async function snapshotsRange(fromTs) {
   try {
@@ -521,10 +534,11 @@ async function snapshotsRange(fromTs) {
     return new Promise((res) => {
       const tx = db.transaction(SNAP_STORE, "readonly");
       const out = [];
-      const req = tx.objectStore(SNAP_STORE).openCursor();
+      // Lecture bornée par la clé (ts) : ne parcourt plus toute la base
+      const req = tx.objectStore(SNAP_STORE).openCursor(IDBKeyRange.lowerBound(fromTs));
       req.onsuccess = (e) => {
         const c = e.target.result;
-        if (c) { if (c.value.ts >= fromTs) out.push(c.value); c.continue(); }
+        if (c) { out.push(c.value); c.continue(); }
         else { db.close(); res(out); }
       };
       req.onerror = () => { db.close(); res([]); };
@@ -837,15 +851,16 @@ function flagThesis(ticker) {
   ov[ticker] = { ...(ov[ticker]||{}), flagged: true, flaggedAt: new Date().toISOString().slice(0,10) };
   saveANOverrides(ov);
 }
-function getANRev(ticker) { const ov = loadANOverrides(); return ov[ticker] || {}; }
 
 // Détecte si une thèse mérite une revue, et pourquoi. Ne juge pas la thèse : signale seulement.
 const REVIEW_AGE_DAYS = 90;
-function reviewNeeds(p) {
+function reviewNeeds(p, ov) {
   const an = AN[p.t]; if(!an) return null;
-  const lu = getANLu(p.t);
+  const all = ov || loadANOverrides();          // lecture unique fournie par l'appelant
+  const rec = all[p.t] || {};
+  const lu = rec.lu || an.lu || "2026-05-01";
   const age = Math.floor((Date.now() - new Date(lu)) / 86400000);
-  const rev = getANRev(p.t);
+  const rev = rec;
   const reasons = [];
   let sev = 0;
   if(rev.flagged) { reasons.push({ txt:"Marquée fragilisée lors d'une revue précédente", w:3 }); sev += 3; }
@@ -1305,6 +1320,7 @@ function Strip({ m, alertCount }) {
 /* ============== DASHBOARD ============== */
 // Alertes anticipatrices : signaux dérivés en direct (concentration, RSI, dérive de verdict)
 function AnticipatoryAlerts({ port, onSelect }) {
+  const [reviewBump, setReviewBump] = useState(0);
   const alerts = [];
   port.forEach(p => {
     if(p.val == null) return;
@@ -1322,7 +1338,11 @@ function AnticipatoryAlerts({ port, onSelect }) {
       }
     }
   });
-  const reviewItems = port.filter(p => p.val != null).map(reviewNeeds).filter(Boolean);
+  const reviewItems = useMemo(() => {
+    const ov = loadANOverrides();               // une seule lecture pour toutes les positions
+    return port.filter(p => p.val != null).map(p => reviewNeeds(p, ov)).filter(Boolean)
+      .sort((a,b) => b.sev - a.sev);
+  }, [port, reviewBump]);
   if(alerts.length === 0 && reviewItems.length === 0) return null;
   const colors = { rd:"#e85d5d", gr:"#2ecc8f", am:"#f0a020", pu:"#8b7cf5" };
   return (
@@ -1336,7 +1356,7 @@ function AnticipatoryAlerts({ port, onSelect }) {
           <span style={{fontSize:11,color:colors[a.level],flex:1}}>{a.msg}</span>
         </div>
       ))}
-      <ThesisReview port={port} onSelect={onSelect}/>
+      <ThesisReview port={port} items={reviewItems} onReviewed={()=>setReviewBump(b=>b+1)} onSelect={onSelect}/>
       <div className="dim" style={{fontSize:8,marginTop:6}}>Prochains résultats : voir l'onglet Forecast.</div>
     </div>
   );
@@ -1517,12 +1537,9 @@ function reviewQuestions(ticker) {
   return qs;
 }
 
-function ThesisReview({ port, onSelect }) {
-  const [bump, setBump] = useState(0);
+function ThesisReview({ port, items, onReviewed, onSelect }) {
   const [open, setOpen] = useState(null);
-  const items = useMemo(() => port.filter(p => p.val != null).map(reviewNeeds).filter(Boolean)
-    .sort((a,b) => b.sev - a.sev), [port, bump]);
-  if(!items.length) return null;
+  if(!items || !items.length) return null;
   const cols = { rd:"#e85d5d", am:"#f0a020", bl:"#4f83f5" };
   const cur = items.find(i => i.ticker === open);
   const p = cur ? port.find(x => x.t === cur.ticker) : null;
@@ -1595,12 +1612,12 @@ function ThesisReview({ port, onSelect }) {
               <div className="g2" style={{marginTop:9}}>
                 <button className="bn bn-g" onClick={()=>{
                   if(confirm(`${it.ticker} — confirmer que la thèse tient toujours ?\n\nCela remet la conviction à son plein poids.\nNe confirme que si tu as réellement relu la thèse.`)){
-                    markReviewed(it.ticker, p.pxNative); setOpen(null); setBump(b=>b+1);
+                    markReviewed(it.ticker, p.pxNative); setOpen(null); onReviewed && onReviewed();
                   }
                 }}>✓ La thèse tient</button>
                 <button className="bn bn-w" onClick={()=>{
                   if(confirm(`${it.ticker} — marquer la thèse comme fragilisée ?\n\nLa conviction reste érodée et la ligne restera signalée.`)){
-                    flagThesis(it.ticker); setOpen(null); setBump(b=>b+1);
+                    flagThesis(it.ticker); setOpen(null); onReviewed && onReviewed();
                   }
                 }}>⚠ Thèse fragilisée</button>
               </div>
@@ -1648,6 +1665,21 @@ function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, q
   return (
     <>
       <AnticipatoryAlerts port={port} onSelect={onSelect}/>
+      {isUnconfigured(port) && (
+        <div className="card" style={{border:"1px solid rgba(79,131,245,.35)",background:"rgba(79,131,245,.06)"}}>
+          <div className="cd-ti"><h3 style={{color:"#4f83f5"}}>Portefeuille à renseigner</h3></div>
+          <div style={{fontSize:11,color:"#dde3f0",lineHeight:1.55,marginBottom:8}}>
+            Cet appareil ne connaît pas encore tes positions. Par confidentialité, elles ne sont <strong>pas</strong> stockées dans le code de l'application : elles vivent uniquement ici, sur ton appareil.
+          </div>
+          <div style={{fontSize:10,color:"#8892a8",lineHeight:1.6}}>
+            <strong style={{color:"#dde3f0"}}>Une seule fois :</strong> ⚙ Réglages → <strong>⬆ Importer</strong> → choisis ton fichier de sauvegarde.<br/>
+            Ensuite, tout se recharge automatiquement à chaque ouverture — plus rien à faire.
+          </div>
+          <div style={{fontSize:9,color:"#3a4560",marginTop:8}}>
+            Les cours, analyses et prévisions fonctionnent déjà ; seules les valeurs de ton portefeuille manquent.
+          </div>
+        </div>
+      )}
       <DecisionSupport port={port} qHistMap={qHistMap} onSelect={onSelect}/>
       {/* MARCHÉS */}
       {Object.keys(macroCtx).length>0 && (
@@ -3975,7 +4007,43 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+// Filet anti-crash : intercepte une erreur de rendu et propose une sortie propre
+// (sans lui, une seule erreur affiche l'écran technique brut à la place de l'appli)
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state = { err:null }; }
+  static getDerivedStateFromError(err){ return { err }; }
+  componentDidCatch(err, info){ DBG && console.error("[Boundary]", err, info); }
+  render(){
+    if(!this.state.err) return this.props.children;
+    return (
+      <div style={{padding:"32px 20px",minHeight:"100vh",background:"#080b11",color:"#dde3f0",
+        fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
+        <div style={{fontSize:17,fontWeight:700,marginBottom:10}}>Souci d'affichage</div>
+        <div style={{fontSize:12,color:"#8892a8",lineHeight:1.6,marginBottom:18}}>
+          Une partie de l'écran n'a pas pu s'afficher. <strong style={{color:"#2ecc8f"}}>Tes données sont intactes</strong> — rien n'a été effacé.
+          Recharger suffit presque toujours.
+        </div>
+        <button onClick={()=>window.location.reload()}
+          style={{width:"100%",padding:"12px",borderRadius:9,border:"none",background:"#4f83f5",
+            color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:10}}>Recharger l'application</button>
+        <button onClick={()=>{ try{ localStorage.removeItem(HIST3Y_KEY); localStorage.removeItem(MACRO_CTX_KEY); }catch(e){} window.location.reload(); }}
+          style={{width:"100%",padding:"11px",borderRadius:9,border:"1px solid rgba(255,255,255,.12)",
+            background:"transparent",color:"#8892a8",fontSize:12,cursor:"pointer"}}>Recharger en vidant le cache des cours</button>
+        <div style={{fontSize:10,color:"#3a4560",marginTop:16,lineHeight:1.5}}>
+          Le second bouton n'efface que les cours mis en cache — jamais tes positions ni ton historique.
+        </div>
+        <details style={{marginTop:18}}>
+          <summary style={{fontSize:10,color:"#3a4560",cursor:"pointer"}}>Détail technique</summary>
+          <pre style={{fontSize:9,color:"#8892a8",whiteSpace:"pre-wrap",marginTop:8}}>
+            {String(this.state.err && (this.state.err.stack || this.state.err.message || this.state.err))}
+          </pre>
+        </details>
+      </div>
+    );
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
 
 </script>
 
