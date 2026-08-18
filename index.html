@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v14.4-2026-07-23-001";
+const BUILD = "v14.8-2026-07-23-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -184,6 +184,28 @@ const PORT_DEF = [
 ];
 // Filet : si toutes les positions sont vidées manuellement, on guide vers l'import
 const isUnconfigured = arr => !arr || !arr.length || arr.every(p => !(p.q > 0));
+
+// Robustesse : nettoie un portefeuille venu du stockage ou d'un import.
+// Rejette les entrées invalides ; si rien d'exploitable, retombe sur la base.
+// Objectif : une donnée corrompue ne doit JAMAIS planter l'application.
+function sanitizePort(arr) {
+  if(!Array.isArray(arr)) return PORT_DEF;
+  const clean = arr.filter(p => p && typeof p.t === "string" && p.t.trim())
+    .map(p => ({
+      t: String(p.t).toUpperCase().trim(),
+      n: (p.n != null ? String(p.n) : p.t),
+      q: Number.isFinite(+p.q) && +p.q >= 0 ? +p.q : 0,
+      b: Number.isFinite(+p.b) && +p.b >= 0 ? +p.b : 0,
+      s: p.s || "Autre",
+      sig: ["buy","hold","sell","spec"].includes(p.sig) ? p.sig : "hold",
+      v: Number.isFinite(+p.v) && +p.v > 0 ? +p.v : 25,
+      acct: p.acct === "PEA" ? "PEA" : "CTO"
+    }));
+  // dédoublonnage par ticker (garde la première occurrence)
+  const seen = new Set(), dedup = [];
+  clean.forEach(p => { if(!seen.has(p.t)){ seen.add(p.t); dedup.push(p); } });
+  return dedup.length ? dedup : PORT_DEF;
+}
 
 const AN = {
   FTI:{r:"ALLÉGER",c:85,p:5,sig:"sell",lu:"2026-07-06",tgt:{l:45,a:76,h:90},
@@ -359,7 +381,22 @@ function saveWatch(arr) { try { localStorage.setItem(WATCH_KEY, JSON.stringify(a
 const HIST3Y_KEY = "fab-hist-wk"; // hebdomadaire 3 ans (clé bumpée : granularité changée)
 const HIST3Y_TTL = 24 * 60 * 60 * 1000; // 24h
 
-function loadHist3y() { try { const s=localStorage.getItem(HIST3Y_KEY); return s?JSON.parse(s):{}; } catch(e){ return {}; } }
+// Robustesse : nettoie une série d'historique (points {date, px}). Rejette les
+// points invalides (px NaN, ≤0, date manquante) avant qu'ils n'atteignent RSI,
+// momentum, corrélations ou les graphiques. Un cache corrompu ne casse plus rien.
+function sanitizeHistArr(arr) {
+  if(!Array.isArray(arr)) return [];
+  return arr.filter(d => d && d.date != null && Number.isFinite(+d.px) && +d.px > 0)
+    .map(d => ({ ...d, px: +d.px }));
+}
+function sanitizeHistMap(map) {
+  if(!map || typeof map !== "object") return {};
+  const out = {};
+  for(const k in map) { const c = sanitizeHistArr(map[k]); if(c.length) out[k] = c; }
+  return out;
+}
+
+function loadHist3y() { try { const s=localStorage.getItem(HIST3Y_KEY); return s?sanitizeHistMap(JSON.parse(s)):{}; } catch(e){ return {}; } }
 function saveHist3y(d) { try { localStorage.setItem(HIST3Y_KEY, JSON.stringify(d)); } catch(e){} }
 
 async function fetchQuarterlyHistory(yfsym) {
@@ -534,7 +571,8 @@ async function snapshotsRange(fromTs) {
       const req = tx.objectStore(SNAP_STORE).openCursor(IDBKeyRange.lowerBound(fromTs));
       req.onsuccess = (e) => {
         const c = e.target.result;
-        if (c) { out.push(c.value); c.continue(); }
+        // Ne garde que les snapshots bien formés (ts numérique, portefeuille = tableau)
+        if (c) { const v = c.value; if(v && Number.isFinite(v.ts) && Array.isArray(v.port)) out.push(v); c.continue(); }
         else { db.close(); res(out); }
       };
       req.onerror = () => { db.close(); res([]); };
@@ -640,7 +678,8 @@ function enrich(port, prices, eurusd, priceTsMap, convMap, qHistMap) {
     };
     const eff = effectiveSignal(p.t, prices, qHistMap && qHistMap[p.t]);
     const pxNative = (prices && prices[p.t] != null) ? prices[p.t] : null;
-    return { ...p, inv, pxE, val, pnl, pct, priceAge, dynConv, pxNative,
+    const rvol = realizedVol(qHistMap && qHistMap[p.t]);   // volatilité observée 3 ans
+    return { ...p, inv, pxE, val, pnl, pct, priceAge, dynConv, pxNative, rvol,
       effSig:eff.sig, effBase:eff.base, effDrift:eff.drift, effReason:eff.reason, rsiLive:eff.rsi };
   });
   const tot = items.reduce((s,p) => s + (p.val || 0), 0);
@@ -1019,13 +1058,15 @@ function calcBeta(posPrices, spyPrices) {
   if(n<4) return null;
   const posR=[], spyR=[];
   for(let i=0;i<n;i++){
+    if(!(posPrices[i]>0) || !(spyPrices[i]>0)) continue;   // évite toute division par zéro
     posR.push((posPrices[i+1]-posPrices[i])/posPrices[i]);
     spyR.push((spyPrices[i+1]-spyPrices[i])/spyPrices[i]);
   }
+  if(posR.length<4) return null;
   const mn=arr=>arr.reduce((a,b)=>a+b,0)/arr.length;
   const mPos=mn(posR), mSpy=mn(spyR);
   let cov=0, varSpy=0;
-  for(let i=0;i<n;i++){
+  for(let i=0;i<posR.length;i++){
     cov+=(posR[i]-mPos)*(spyR[i]-mSpy);
     varSpy+=Math.pow(spyR[i]-mSpy,2);
   }
@@ -1216,6 +1257,58 @@ function checkAlerts(port, alerts, prices, eurusd, lastNotifRef) {
 }
 
 /* ============== MOTEUR PRÉVISION 10 FACTEURS ============== */
+// Volatilité RÉELLE annualisée depuis l'historique hebdo (remplace l'estimation figée).
+// La largeur du cône reflète alors le comportement observé du titre, pas un chiffre deviné.
+function realizedVol(qHist) {
+  const px = (qHist||[]).map(d=>d.px).filter(v=>v>0);
+  if(px.length < 12) return null;
+  const r = [];
+  for(let i=1;i<px.length;i++) r.push(Math.log(px[i]/px[i-1]));
+  const m = r.reduce((s,x)=>s+x,0)/r.length;
+  const varc = r.reduce((s,x)=>s+(x-m)*(x-m),0)/(r.length-1);
+  const annual = Math.sqrt(varc) * Math.sqrt(52);      // hebdo → annuel
+  return Math.max(0.10, Math.min(1.20, annual));       // borné anti-aberration
+}
+
+// CALIBRATION ADAPTATIVE — le moteur mesure son erreur passée et se corrige.
+// Pour chaque prévision stockée, on la compare au prix réel atteint plus tard,
+// en RAMENANT la prévision 12M à l'horizon réellement écoulé (√temps).
+// → boucle "la prévision d'hier ajuste celle de demain".
+const CALIB_MIN = 12;   // nb minimum de comparaisons avant activation (affiché dans les Réglages)
+let CALIB = { sigMult:1, muBias:0, samples:0, cov:null, ready:false };
+function calcCalibration(snapshots) {
+  const pairs = [];
+  for(let i=0;i<snapshots.length;i++){
+    const s0 = snapshots[i]; if(!s0.forecasts) continue;
+    for(let j=i+1;j<snapshots.length;j++){
+      const dt = (snapshots[j].ts - s0.ts)/86400000;
+      if(dt < 15) continue;
+      if(dt > 75) break;
+      const sL = snapshots[j];
+      Object.entries(s0.forecasts).forEach(([t,fc])=>{
+        const p0=(s0.port||[]).find(p=>p.t===t), pL=(sL.port||[]).find(p=>p.t===t);
+        if(!p0||!pL||!(p0.pxE>0)||!(pL.pxE>0)) return;
+        const actual=(pL.pxE-p0.pxE)/p0.pxE;
+        const kt=dt/365, k=Math.sqrt(kt);
+        const mu=(fc.p50||0)*kt;
+        const sig=((fc.p90-fc.p10)/2/1.28)*k;       // demi-largeur ramenée à l'horizon
+        if(!(sig>0)) return;
+        pairs.push({ inBand: actual>=mu-1.28*sig && actual<=mu+1.28*sig,
+          signed:(actual-mu), kt });
+      });
+      break;                                          // un seul point de contrôle par prévision
+    }
+  }
+  if(pairs.length < CALIB_MIN) return { sigMult:1, muBias:0, samples:pairs.length, cov:null, ready:false };
+  const cov = pairs.filter(p=>p.inBand).length/pairs.length;   // couverture observée (cible 0.80)
+  // Cône trop étroit (réalité s'échappe trop) → élargir ; trop large → resserrer. Borné.
+  const sigMult = cov<0.65 ? 1.30 : cov<0.75 ? 1.15 : cov>0.92 ? 0.85 : 1.0;
+  // Biais moyen annualisé, fortement amorti et borné (évite de sur-réagir au bruit)
+  const sumErr = pairs.reduce((s,p)=>s+p.signed,0), sumKt = pairs.reduce((s,p)=>s+p.kt,0);
+  const muBias = Math.max(-0.05, Math.min(0.05, (sumErr/Math.max(0.001,sumKt))*0.3));
+  return { sigMult, muBias, samples:pairs.length, cov:+cov.toFixed(2), ready:true };
+}
+
 function forecast(pos, mac) {
   const an = AN[pos.t] || {};
   // 10 facteurs (compactés) : conviction, momentum sectoriel, signal, volatilité, position cycle, etc.
@@ -1228,15 +1321,24 @@ function forecast(pos, mac) {
   const f7 = ["IA","Tech","Défense","Énergie"].includes(pos.s) ? .15 : 0; // tailwind sectoriel
   const f8 = pos.s === "Énergie" && pos.sig === "sell" ? -.10 : 0;
   const f9 = mac && mac.regime?.includes("stagflation") ? -.05 : 0;
-  const f10 = an.tgt ? (an.tgt.a / Math.max(0.01, pos.b) - 1) * 0.3 : 0;
-  const mu12 = f3*0.5 + (f1-0.5)*0.10 + f2*0.06 + f4*0.04 + f6*0.08 + f7 + f8 + f9 + f10*0.4;
-  const sigma12 = Math.max(0.10, f5 * 1.2);
+  // f10 : marge vers l'objectif analyste, mesurée depuis le COURS ACTUEL (pxNative),
+  // et non le prix de revient personnel (pos.b) — corrigé : le PRU n'a aucun sens prédictif.
+  const ref = (pos.pxNative != null && pos.pxNative > 0) ? pos.pxNative
+            : (pos.pxE != null && pos.pxE > 0) ? pos.pxE : pos.b;
+  const f10 = (an.tgt && ref > 0) ? (an.tgt.a / ref - 1) * 0.3 : 0;
+  let mu12 = f3*0.5 + (f1-0.5)*0.10 + f2*0.06 + f4*0.04 + f6*0.08 + f7 + f8 + f9 + f10*0.4;
+  // Volatilité RÉELLE si disponible (largeur du cône ancrée sur le comportement observé)
+  const baseVol = (pos.rvol != null && pos.rvol > 0) ? pos.rvol : (pos.v || 25)/100 * 1.2;
+  // Calibration adaptative : correction de largeur (sigMult) et de biais (muBias) apprise du passé
+  mu12 += (CALIB.muBias || 0);
+  const sigma12 = Math.max(0.10, baseVol * (CALIB.sigMult || 1));
   // P10/P50/P90
   return {
     p10: mu12 - 1.28 * sigma12,
     p50: mu12,
     p90: mu12 + 1.28 * sigma12,
     sigma: sigma12,
+    calibrated: CALIB.ready,
     factors: { f1,f2,f3,f4,f5,f6,f7,f8,f9,f10 }
   };
 }
@@ -2929,6 +3031,143 @@ function BioSettings({ pinActive }) {
   );
 }
 
+// AUTO-DIAGNOSTIC — vérifie en direct l'état des dépendances de l'appli
+function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
+  const [net, setNet] = useState("idle");   // idle | testing | ok | fail
+  const [snapN, setSnapN] = useState(null);
+
+  const checks = [];
+  // Stockage local accessible ?
+  let storageOk = false;
+  try { localStorage.setItem("fab-test", "1"); localStorage.removeItem("fab-test"); storageOk = true; } catch(e){}
+  checks.push({ k:"Stockage local", ok:storageOk,
+    detail: storageOk ? "lecture/écriture OK" : "bloqué (mode privé ?)" });
+
+  // Cours reçus ?
+  const priced = port.filter(p => prices && prices[p.t] != null).length;
+  checks.push({ k:"Cours reçus", ok: priced > 0, warn: priced < port.length,
+    detail: `${priced}/${port.length} positions` });
+
+  // Fraîcheur du dernier rafraîchissement
+  const ageMin = lastTs ? Math.round((Date.now()-lastTs)/60000) : null;
+  checks.push({ k:"Dernier rafraîchissement", ok: ageMin != null && ageMin < 30, warn: ageMin != null && ageMin >= 30,
+    detail: ageMin == null ? "jamais" : ageMin < 1 ? "à l'instant" : `il y a ${ageMin} min` });
+
+  // Taux de change dans les bornes
+  const fxOk = eurusd > 0.5 && eurusd < 2;
+  checks.push({ k:"Taux EUR/USD", ok: fxOk, detail: fxOk ? eurusd.toFixed(3) : "hors bornes → secours" });
+
+  // Snapshots lisibles (asynchrone, à la demande)
+  const countSnaps = async () => {
+    try { const all = await snapshotsRange(0); setSnapN(all.length); } catch(e){ setSnapN(-1); }
+  };
+  useEffect(() => { countSnaps(); }, []);
+  checks.push({ k:"Historique (snapshots)", ok: snapN != null && snapN >= 0,
+    detail: snapN == null ? "lecture…" : snapN < 0 ? "illisible" : `${snapN} enregistrés` });
+
+  // Test réseau à la demande (une seule requête, pour ne pas solliciter les proxies)
+  const testNet = async () => {
+    setNet("testing");
+    try { const px = await fetchSymbol("AMZN"); setNet(px > 0 ? "ok" : "fail"); }
+    catch(e){ setNet("fail"); }
+  };
+
+  const dot = c => c.ok ? (c.warn ? "🟡" : "🟢") : "🔴";
+
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Santé du système</h3><span className="dim" style={{fontSize:9}}>diagnostic en direct</span></div>
+      {checks.map((c,i)=>(
+        <div key={i} className="row" style={{padding:"5px 0",borderTop:i?"1px solid rgba(255,255,255,.04)":"none"}}>
+          <span style={{fontSize:11}}>{dot(c)} {c.k}</span>
+          <span className="mono" style={{fontSize:10,color:"#8892a8"}}>{c.detail}</span>
+        </div>
+      ))}
+      <div className="row" style={{padding:"5px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
+        <span style={{fontSize:11}}>
+          {net==="ok"?"🟢":net==="fail"?"🔴":net==="testing"?"🟡":"⚪"} Accès aux cours (proxies)
+        </span>
+        <button className="bn bn-b" style={{fontSize:10,padding:"3px 10px"}} onClick={testNet} disabled={net==="testing"}>
+          {net==="idle"?"Tester":net==="testing"?"…":net==="ok"?"OK ✓":"Échec — réessayer"}
+        </button>
+      </div>
+      <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.4}}>
+        🟢 OK · 🟡 à surveiller · 🔴 problème. En cas de 🔴 répété sur les cours, un rechargement ou l'attente d'une reprise réseau résout presque tout.
+      </div>
+    </div>
+  );
+}
+
+// INDICATEUR DE CALIBRATION — suit la progression vers l'auto-correction du moteur
+function CalibrationStatus() {
+  const [snaps, setSnaps] = useState(null);
+  useEffect(() => { snapshotsRange(0).then(setSnaps).catch(()=>setSnaps([])); }, []);
+
+  if(snaps === null) return (
+    <div className="card"><div className="cd-ti"><h3>Calibration du moteur</h3></div>
+      <div style={{fontSize:11,color:"#8892a8"}}>Lecture de l'historique…</div></div>
+  );
+
+  const cal = calcCalibration(snaps);
+  const n = cal.samples || 0;
+  const pct = Math.min(100, n / CALIB_MIN * 100);
+  const ready = cal.ready;
+  const withFc = snaps.filter(s => s.forecasts).length;
+
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Calibration du moteur</h3>
+        <span style={{fontSize:10,color:ready?"#2ecc8f":"#f0a020"}}>{ready?"active":"en constitution"}</span>
+      </div>
+      <div style={{fontSize:10,color:"#8892a8",lineHeight:1.5,marginBottom:9}}>
+        Le moteur compare ses prévisions passées aux prix réellement atteints, puis corrige ses prochaines prévisions. Il lui faut <strong>{CALIB_MIN} comparaisons</strong> avant de s'activer.
+      </div>
+
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:4}}>
+        <span style={{color:"#dde3f0"}}>Points de contrôle</span>
+        <span className="mono" style={{color:ready?"#2ecc8f":"#f0a020",fontWeight:700}}>{n} / {CALIB_MIN}</span>
+      </div>
+      <div style={{height:7,background:"rgba(255,255,255,.06)",borderRadius:4,overflow:"hidden",marginBottom:10}}>
+        <div style={{height:"100%",width:pct+"%",background:ready?"#2ecc8f":"#f0a020",borderRadius:4,transition:"width .4s"}}/>
+      </div>
+
+      {ready ? (
+        <>
+          <div className="row" style={{padding:"4px 0"}}>
+            <span style={{fontSize:11}}>Couverture réelle du cône</span>
+            <span className="mono" style={{fontSize:11,color:cal.cov>=0.7&&cal.cov<=0.9?"#2ecc8f":"#f0a020"}}>
+              {Math.round(cal.cov*100)}% <span style={{color:"#3a4560"}}>(cible 80%)</span>
+            </span>
+          </div>
+          <div className="row" style={{padding:"4px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
+            <span style={{fontSize:11}}>Correction de largeur</span>
+            <span className="mono" style={{fontSize:11,color:"#dde3f0"}}>
+              ×{cal.sigMult.toFixed(2)} {cal.sigMult>1?"(élargi)":cal.sigMult<1?"(resserré)":"(inchangé)"}
+            </span>
+          </div>
+          <div className="row" style={{padding:"4px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
+            <span style={{fontSize:11}}>Correction de biais</span>
+            <span className="mono" style={{fontSize:11,color:"#dde3f0"}}>
+              {cal.muBias>=0?"+":""}{(cal.muBias*100).toFixed(1)} pts/an
+            </span>
+          </div>
+          <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.5}}>
+            Couverture proche de 80% = cône honnête. Trop basse → la réalité s'échappe, le cône s'élargit. Trop haute → cône trop large, il se resserre.
+          </div>
+        </>
+      ) : (
+        <div style={{fontSize:10,color:"#8892a8",lineHeight:1.5}}>
+          Encore <strong style={{color:"#f0a020"}}>{Math.max(0, CALIB_MIN-n)} comparaison{CALIB_MIN-n>1?"s":""}</strong> avant activation. En attendant, les prévisions restent basées sur la volatilité réelle observée, sans auto-correction.
+          <div style={{fontSize:9,color:"#3a4560",marginTop:6}}>
+            {snaps.length} snapshot{snaps.length>1?"s":""} enregistré{snaps.length>1?"s":""} · {withFc} avec prévisions.
+            Un point de contrôle naît de deux snapshots de la même position espacés de 15 à 75 jours — ouvrir l'app régulièrement les fait progresser.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onAskNotif, notifPerm, prices, eurusd, lastTs, fetchCount, priceTsMap }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ t:"", n:"", q:"", b:"", s:"Tech", sig:"hold", v:25 });
@@ -3001,10 +3240,7 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
         const parsed = JSON.parse(ev.target.result);
         const arr = Array.isArray(parsed) ? parsed : parsed.port;
         if(!Array.isArray(arr)) { alert("Fichier invalide : aucune liste de positions trouvée."); return; }
-        const clean = arr.filter(p => p && p.t && p.q!=null && p.b!=null).map(p => ({
-          t:String(p.t).toUpperCase(), n:p.n||p.t, q:+p.q, b:+p.b,
-          s:p.s||"Autre", sig:p.sig||"hold", v:+p.v||25, acct:p.acct||"CTO"
-        }));
+        const clean = sanitizePort(arr).filter(p => p.q > 0 || arr.length === 1);
         if(!clean.length) { alert("Aucune position valide dans le fichier."); return; }
         if(!confirm("Importer "+clean.length+" positions ? Cela remplace le portefeuille actuel.")) return;
         onPortChange(clean);
@@ -3017,6 +3253,8 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
 
   return (
     <>
+      <SystemHealth port={port} prices={prices} eurusd={eurusd} lastTs={lastTs} priceTsMap={priceTsMap}/>
+      <CalibrationStatus/>
       <div className="card">
         <div className="cd-ti"><h3>Santé des données</h3><span className="dim" style={{fontSize:9}}>fraîcheur des cours</span></div>
         <div style={{fontSize:9,color:"#8892a8",marginBottom:8}}>🟢 à jour · 🟡 ancien (&gt;15 min) · ⚪ secours (valeur figée)</div>
@@ -3863,7 +4101,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 function App() {
   const [locked, setLocked] = useState(() => Boolean(getPinHash()));
   const [port, setPort] = useState(() => {
-    const s = loadStore(); return s?.port || PORT_DEF;
+    const s = loadStore(); return s && s.port ? sanitizePort(s.port) : PORT_DEF;
   });
   const [prices, setPrices] = useState(() => {
     const stored = loadStore()?.prices || {};
@@ -3882,6 +4120,9 @@ function App() {
   const [toast, setToast] = useState(null);
   const [alerts, setAlerts] = useState(loadAlerts);
   const [snapshots, setSnapshots] = useState([]);
+  // Calibration adaptative du moteur : recalculée à chaque évolution des snapshots.
+  // Alimente forecast() via le module CALIB (le moteur apprend son erreur passée).
+  useEffect(() => { CALIB = calcCalibration(snapshots); }, [snapshots]);
   const [countdown, setCountdown] = useState(1);
   const [fetchCount, setFetchCount] = useState(0);
   const [notifPerm, setNotifPerm] = useState(typeof Notification !== "undefined" ? Notification.permission : "default");
@@ -4072,14 +4313,14 @@ function App() {
 
       <Strip m={m} alertCount={sells}/>
 
-      {tab === "today" && <TodayView port={enriched} m={m} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={qHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/>}
-      {tab === "forecast" && <ForecastView port={enriched} m={m} onSelect={setDetail}/>}
-      {tab === "memory" && <MemoryView snapshots={snapshots} port={enriched} m={m} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/>}
+      {tab === "today" && <ErrorBoundary inline label="Actual"><TodayView port={enriched} m={m} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={qHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
+      {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail}/></ErrorBoundary>}
+      {tab === "memory" && <ErrorBoundary inline label="Mémoire"><MemoryView snapshots={snapshots} port={enriched} m={m} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/></ErrorBoundary>}
 
-      {detail && detailPort && <DetailView
+      {detail && detailPort && <ErrorBoundary inline label="Détail"><DetailView
         ticker={detail} port={enriched} snapshots={snapshots}
         alerts={alerts} eurusd={eurusd} onBack={() => setDetail(null)}
-      />}
+      /></ErrorBoundary>}
 
       {cfgOpen && (
         <div className="dt-ovr">
@@ -4127,9 +4368,25 @@ function App() {
 class ErrorBoundary extends React.Component {
   constructor(props){ super(props); this.state = { err:null }; }
   static getDerivedStateFromError(err){ return { err }; }
-  componentDidCatch(err, info){ DBG && console.error("[Boundary]", err, info); }
+  componentDidCatch(err, info){ DBG && console.error("[Boundary]", this.props.label||"root", err, info); }
   render(){
     if(!this.state.err) return this.props.children;
+    // Mode compact : un onglet plante sans emporter le reste de l'application
+    if(this.props.inline) {
+      return (
+        <div className="card" style={{border:"1px solid rgba(232,93,93,.3)",background:"rgba(232,93,93,.05)"}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#e85d5d",marginBottom:6}}>« {this.props.label||"Cet onglet"} » n'a pas pu s'afficher</div>
+          <div style={{fontSize:11,color:"#8892a8",lineHeight:1.5,marginBottom:10}}>
+            Les autres onglets restent utilisables. <strong style={{color:"#2ecc8f"}}>Aucune donnée n'a été perdue.</strong>
+          </div>
+          <button className="bn bn-b" style={{width:"100%"}} onClick={()=>this.setState({err:null})}>Réessayer cet onglet</button>
+          <details style={{marginTop:10}}>
+            <summary style={{fontSize:10,color:"#3a4560",cursor:"pointer"}}>Détail technique</summary>
+            <pre style={{fontSize:9,color:"#8892a8",whiteSpace:"pre-wrap",marginTop:6}}>{String(this.state.err && (this.state.err.stack||this.state.err.message||this.state.err))}</pre>
+          </details>
+        </div>
+      );
+    }
     return (
       <div style={{padding:"32px 20px",minHeight:"100vh",background:"#080b11",color:"#dde3f0",
         fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
