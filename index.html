@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v15.0-2026-07-23-001";
+const BUILD = "v15.1-2026-07-23-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -172,15 +172,15 @@ const PRICE_BOUNDS = {
 /* ===== PORTEFEUILLE CHIFFRÉ =====
    Confidentialité : tes positions ne sont plus en clair dans ce fichier public.
    PORT_ENC contient un bloc chiffré (AES-GCM 256, clé dérivée par PBKDF2).
-   Il est illisible sans la phrase secrète — que seul toi connais.
+   Il est illisible sans le mot de passe — que seul toi connais.
 
-   Fonctionnement : la phrase est demandée UNE FOIS par appareil. Le résultat
+   Fonctionnement : le mot de passe est demandé UNE FOIS par appareil. Le résultat
    déchiffré est ensuite conservé dans le stockage local (privé de l'appareil)
    et rechargé automatiquement à chaque ouverture suivante.
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"jUul7Cd23GmWpiwg2BztPA==","iv":"N7QjvZMx876pGK6e","data":"Vfa2jzC3pkzcQy4bWM/Bafu4St9V1JnJxnOmV3NcsPq0/GFclYXh16Y/LM03wAGUhCpc3JBSNejjegz4bsHp5smFbMn0TVb3BRhPcSAOW0bnTSi9bh4v62NKw1vvjLfcu7EmtSb1LXv26mo3v3qUpusKbtHyfUJzs02M7xuEt9fGQdrSVJT0TzY2360Kh1Y5T6qGSjV3eCjldI8gzmdMDW46TPasVR02lwABDF7Al7gF+BZ/KLpT5yuo+jVEm2/w6VqUektyWP6YO/knXaL5GhnVVmOf4Lpzi6OQNprBhFM6EwQDG5FX40wQhF/SrvkgCbGJzGRIAv4sXEpdjJRDKQSIRNRCV4OEL6eQ+4futouzCELCmaXC7fPdFDiraOp5Bn5MC6x87aLDK+yzra3zeHeeZPguOcWJ7/CwuvlY7TdkP+pIyjHQgQLBVzz/qqDnsWFGb/aP34QlYuIunUSB3NIA+nU6oNQjb9daEXmaukHKVI1Kx/6I5sjsMPE0+2OKBo8Nrbi8S8wyA3pdCAuvZCUv/zx3i7oUD1E94Rvz3DYr55SNA1ji79ekxzYdBFpzsrLAOTVXacKOQYhLlBd5XmCsVrgd2CAwQ33CRaRivzv+R8S2ILmjP8JC0Gz1IZ6YI2bOusu1Khbxb/de1QMdRXDjX56NbLydI2wpSwJ1YXR1UXcoeoMGU3JZr1hwxwCFhh1OPJJ80YgapkNnR8F+q02Bhxue6oLQOGs3NMS9ZfOVNisjU51s+Mcqg0MbQXJVZM3isrCJiFxOePc8V1hj2VxogPXP8uGCoJZaNYKxn2lX5MY4j+4G/7dkY7uu7urNujUoJ61fYwbE18DJGlSsPGFWXPUsoJI/gTYQHfshDF54KABxej1o+PulnrlCHt+zABofgj8tHp+4w/jbQZTTlpye2Bz7zJhkT1LYad8aV1M1qFj9nWmEtMvSYlkRdrKqgaxmpAeCPFKFFSR0K5FteWJxVpQarLpo6CmDFJwclyclTn39QOpKqe0L54ae1It8tn1IHe2LRxg5ucBWdeSQ30aykiUdki/uM+Oy8JVraziJeNtnCOAFJRKj/rR0cUQxFwkWlAHCu6qmH/VfME0/d7eX+CyxHKCts+U9Bc4HmUMY1AQSSn5pdJdQUzdv7ijChgzn8hEd0G8CL/81N1Nyhek="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -617,7 +617,7 @@ const PROXIES = [
 
 async function fetchOne(url, isWrap) {
   const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 9000);
+  const to = setTimeout(() => ctrl.abort(), 6000);   // 9s → 6s : on n'attend plus un proxy mort
   try {
     const r = await fetch(url, { signal: ctrl.signal });
     clearTimeout(to);
@@ -630,9 +630,31 @@ async function fetchOne(url, isWrap) {
   } catch(e) { clearTimeout(to); throw e; }
 }
 
+// Mémoire du proxy qui a répondu en dernier : on le réessaie en premier au cycle suivant.
+let BEST_PROXY = 0;
+// Ordre d'essai : le gagnant précédent d'abord, puis les autres.
+function proxyOrder() {
+  const idx = PROXIES.map((_,i)=>i);
+  return [BEST_PROXY, ...idx.filter(i=>i!==BEST_PROXY)];
+}
+
 async function fetchSymbol(sym) {
-  const promises = PROXIES.map((mk, i) => fetchOne(mk(sym), i === 5));
-  const px = await Promise.any(promises);
+  // Course PAR VAGUES : 2 proxies d'abord, on n'élargit que si les deux échouent.
+  // Avant : 6 requêtes simultanées × 11 tickers = 66 connexions → saturation du navigateur
+  // (limite ~6 par domaine) et files d'attente. Résultat : lenteur perçue de plusieurs secondes.
+  const order = proxyOrder();
+  let px = null, lastErr = null;
+  for (let start = 0; start < order.length; start += 2) {
+    const wave = order.slice(start, start + 2);
+    try {
+      const results = await Promise.any(wave.map(i =>
+        fetchOne(PROXIES[i](sym), i === 5).then(v => ({ v, i }))
+      ));
+      px = results.v; BEST_PROXY = results.i;    // on retient la source qui a marché
+      break;
+    } catch(e) { lastErr = e; }
+  }
+  if (px == null) throw lastErr || new Error("toutes les sources ont échoué");
   const b = PRICE_BOUNDS[sym];
   if (b && (px < b[0] || px > b[1])) {
     DBG && console.warn("[Fetch] prix hors bornes, rejeté", sym, px, b);
@@ -646,15 +668,20 @@ async function fetchAllPrices() {
   const results = {};
   const ts = {};
   const now = Date.now();
-  await Promise.all(tickers.map(async t => {
-    try { results[t] = await fetchSymbol(YF[t].y); ts[t] = now; }
-    catch(e) { DBG && console.warn("[Fetch]", t, "→", YF[t].y, "fail"); }
-  }));
+  // Traitement par LOTS de 3 : évite d'ouvrir des dizaines de connexions d'un coup
+  // (le navigateur en limite ~6 par domaine ; au-delà tout part en file d'attente).
+  const BATCH = 3;
+  for (let i = 0; i < tickers.length; i += BATCH) {
+    await Promise.all(tickers.slice(i, i + BATCH).map(async t => {
+      try { results[t] = await fetchSymbol(YF[t].y); ts[t] = now; }
+      catch(e) { DBG && console.warn("[Fetch]", t, "→", YF[t].y, "fail"); }
+    }));
+  }
   let eurusd = FALLBACK_EURUSD;
   try {
     const r = await fetchSymbol("EURUSD=X");
     if (r > 0.5 && r < 2) eurusd = r;
-  } catch(e) { console.warn("[Fetch] EURUSD fail, fallback", FALLBACK_EURUSD); }
+  } catch(e) { DBG && console.warn("[Fetch] EURUSD fail, fallback", FALLBACK_EURUSD); }
   return { prices: results, priceTsMap: ts, eurusd };
 }
 
@@ -2940,7 +2967,7 @@ function hashPin(p) {
   return btoa(Math.abs(h).toString(36)+"pfv2026");
 }
 
-// Saisie de la phrase secrète — affichée UNIQUEMENT si le portefeuille chiffré
+// Saisie du mot de passe — affichée UNIQUEMENT si le portefeuille chiffré
 // n'a pas encore été déverrouillé sur cet appareil.
 function UnlockData({ onDecrypted }) {
   const [pw, setPw] = useState("");
@@ -2954,7 +2981,7 @@ function UnlockData({ onDecrypted }) {
       const data = await decryptPort(PORT_ENC, pw);
       onDecrypted(sanitizePort(data));
     } catch(e) {
-      setErr("Phrase incorrecte."); setBusy(false); setPw("");
+      setErr("Mot de passe incorrect."); setBusy(false); setPw("");
     }
   };
 
@@ -2966,13 +2993,13 @@ function UnlockData({ onDecrypted }) {
         port<span style={{color:"#4f83f5"}}>.</span>folio
       </div>
       <div style={{fontSize:12,color:"#8892a8",textAlign:"center",lineHeight:1.6,marginBottom:22,maxWidth:300}}>
-        Tes positions sont chiffrées. Saisis ta phrase secrète pour les déverrouiller sur cet appareil.
-        <div style={{fontSize:10,color:"#3a4560",marginTop:7}}>Une seule fois : elle ne sera plus redemandée ici.</div>
+        Tes positions sont chiffrées. Saisis ton mot de passe pour les déverrouiller sur cet appareil.
+        <div style={{fontSize:10,color:"#3a4560",marginTop:7}}>Une seule fois : il ne sera plus redemandé ici.</div>
       </div>
       <input type="password" value={pw} autoFocus
         onChange={e=>{ setPw(e.target.value); setErr(""); }}
         onKeyDown={e=>{ if(e.key==="Enter") submit(); }}
-        placeholder="Phrase secrète"
+        placeholder="Mot de passe"
         style={{width:"100%",maxWidth:300,padding:"12px 14px",borderRadius:9,
           border:"1px solid "+(err?"#e85d5d":"rgba(255,255,255,.14)"),background:"#0f1420",
           color:"#dde3f0",fontSize:14,outline:"none",marginBottom:10}}/>
@@ -2984,7 +3011,7 @@ function UnlockData({ onDecrypted }) {
         {busy ? "Déchiffrement…" : "Déverrouiller"}
       </button>
       <div style={{fontSize:9,color:"#3a4560",marginTop:18,textAlign:"center",lineHeight:1.5,maxWidth:300}}>
-        Le déchiffrement se fait sur ton appareil. La phrase n'est ni transmise ni enregistrée.
+        Le déchiffrement se fait sur ton appareil. Le mot de passe n'est ni transmis ni enregistré.
       </div>
     </div>
   );
@@ -3140,11 +3167,18 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
   checks.push({ k:"Historique (snapshots)", ok: snapN != null && snapN >= 0,
     detail: snapN == null ? "lecture…" : snapN < 0 ? "illisible" : `${snapN} enregistrés` });
 
-  // Test réseau à la demande (une seule requête, pour ne pas solliciter les proxies)
+  // Test réseau à la demande : identifie QUELLE source répond, et en combien de temps
+  const [netMsg, setNetMsg] = useState("");
   const testNet = async () => {
-    setNet("testing");
-    try { const px = await fetchSymbol("AMZN"); setNet(px > 0 ? "ok" : "fail"); }
-    catch(e){ setNet("fail"); }
+    setNet("testing"); setNetMsg("");
+    const t0 = Date.now();
+    let okCount = 0; const names = ["allorigins","corsproxy","codetabs","allorigins·q2","corsproxy·q2","allorigins·get"];
+    for(let i=0;i<PROXIES.length;i++){
+      try { const px = await fetchOne(PROXIES[i]("AMZN"), i===5); if(px>0){ okCount++; if(okCount===1) setNetMsg(names[i]+" répond en "+(Date.now()-t0)+" ms"); } }
+      catch(e){}
+    }
+    if(okCount>0){ setNet("ok"); setNetMsg(m => m + " · " + okCount + "/" + PROXIES.length + " sources actives"); }
+    else { setNet("fail"); setNetMsg("Aucune source ne répond — réseau ou proxies indisponibles. Les cours de secours restent affichés."); }
   };
 
   const dot = c => c.ok ? (c.warn ? "🟡" : "🟢") : "🔴";
@@ -3166,8 +3200,9 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
           {net==="idle"?"Tester":net==="testing"?"…":net==="ok"?"OK ✓":"Échec — réessayer"}
         </button>
       </div>
+      {netMsg && <div style={{fontSize:10,color:net==="ok"?"#2ecc8f":"#e85d5d",marginTop:4,lineHeight:1.4}}>{netMsg}</div>}
       <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.4}}>
-        🟢 OK · 🟡 à surveiller · 🔴 problème. En cas de 🔴 répété sur les cours, un rechargement ou l'attente d'une reprise réseau résout presque tout.
+        🟢 OK · 🟡 à surveiller · 🔴 problème. Les proxies gratuits sont parfois saturés : un échec ponctuel est normal, les cours de secours prennent le relais.
       </div>
     </div>
   );
