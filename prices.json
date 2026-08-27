@@ -1,0 +1,19 @@
+{
+ "updated": "2026-08-27T08:00:00.000Z",
+ "eurusd": 1.174,
+ "count": 10,
+ "stale": [],
+ "note": "Fichier d'amorçage. Il sera remplace automatiquement par GitHub Actions des la premiere execution du workflow.",
+ "prices": {
+  "FTI": 68.34,
+  "HPE": 45.0,
+  "AMZN": 245.0,
+  "MC": 490.0,
+  "NATO": 21.3,
+  "NVDA": 196.0,
+  "ABUS": 4.70,
+  "GAD": 8.42,
+  "MSFT": 390.0,
+  "SPY": 748.0
+ }
+}

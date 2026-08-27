@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v15.3-2026-08-27-001";
+const BUILD = "v16.0-2026-08-27-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -193,7 +193,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"mGU8EnzC2xvJOBtitisxZQ==","iv":"ww74QCwjwDfT5vgu","data":"LAWJOFvG9IrZ15GMsTaz+cWI9iF+NaEjcoogatXFHzUhx5CqOG6d5KuosirJUjSqDTg41muq0Ir6XY3rfFgB+o4FoWJbBxWvY9neOQJA2IhTmjEz22mHlrfik510kcCiuFRphwLtW/zoTPnw6eFOr2pCVqc2uXWMgnoPSjLysofyG6aHdzpV8VXoqDEsvyEX1LUh2+eR2fLF2DKARz7dXqjM4Z8s1n1T680tTaaV0DGfqXP14ewKsna45aRZKcWW8mW6VSq61FPOPimt9KBEfjX7gRmMlowJeqMK6R848n6oXJdoTlC3ZP5y252RSerAo9nttOlKqTe2dmmCNkRlUd6r+s+UkI0z+bHyYqEzB4xAfkflto8KA9ZMOnCRaxbW1HUjT4DW4FtEQ3gJk+lKakPbG3pSJB8jq7EvB93Gl16pr1GuOWWOgU7yp/hXZU1Q7pbEy14zHxj8Ar4MFeTPGTfvVa9C/ANeUopOUdQD22wW56DkzPU1AFLCXknesgzzfPTNjRHZX1XmLb7hTMYQdDjsQHSFHNOUzKFuCAFxA7iPTsv9pDCcHW+Qc+eXrz/g3Z1DmmzOTA8QFaWlJVd0JmXsPDfC1Om4Wih216CBtia+CQ8800Gg/8ZRXBpvZQXxf4SoEyteJk64TiFzMCkRbMZ8m4yt8e7v4iwQwuTBeQ6Q54p1uzUc3O7FtbKhV4mhfPuYUzCct6OKLzIcKvsncJqDI4HmNlNlkWUW4NJl5imyzuWvc0ygdtf+6x/AjIh/WRRkk4eskhfXV7AxMw3ZIV4NQAUjiSwsKXBByRrRdIgC2zicXCcVI5b+fpWOm1qcOQ/v2vyi8kmnrJWfELIKMygpi+95IrUvdmj8ZamTYVbWLi0ooFdbulpVPXS/Ep3uWDUoYbP7ya6cit/bAD1qW2Jh6S3DreJ5KyOXM5Fwomp5u8QhHP36g6nAXvAYtsYDw7B70hpX2L/aYadZgVLtoIiSKsabi/sg0Y1weFAjYPxTHfzgjU5HRFwbruUniKFjVYmSMaLBuWLpQeY++6hN3da7Wi7ETm3jCyExDeAyBQ1Yj+C2Oe3o8yghAnv5Dp83lO298ePqsunV8YVv2R0Fu7sTthHWiSxB02ZQm2oqCYB0+0LOiF2RcQlcR/Mx2020EmkCRygUZ6PKAQMJtlyj9Pc="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -762,30 +762,78 @@ async function fetchEurUsd() {
   } catch(e) { clearTimeout(to); throw e; }
 }
 
+/* SOURCE PRINCIPALE : prices.json, publié par GitHub Actions toutes les 15 min.
+   Servi depuis le MÊME domaine que l'app → aucun CORS, aucun proxy, aucune limite
+   de débit : c'est instantané et ça marche même quand tous les proxies sont bloqués.
+   Les proxies ne servent plus qu'à rafraîchir entre deux mises à jour du fichier. */
+const PRICE_FILE = "./prices.json";
+let PRICE_FILE_STATE = { ok:null, updated:null, count:0 };
+
+async function fetchPriceFile() {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const r = await fetch(PRICE_FILE + "?t=" + Date.now(), { cache:"no-store", signal: ctrl.signal });
+    clearTimeout(to);
+    if (!r.ok) throw new Error("http " + r.status);
+    const j = await r.json();
+    if (!j || !j.prices || typeof j.prices !== "object") throw new Error("format inattendu");
+    const ts = j.updated ? new Date(j.updated).getTime() : Date.now();
+    if (!Number.isFinite(ts)) throw new Error("date invalide");
+    const prices = {}, tsMap = {};
+    Object.entries(j.prices).forEach(([k, v]) => {
+      const b = PRICE_BOUNDS[k];
+      if (!Number.isFinite(+v) || +v <= 0) return;
+      if (b && (+v < b[0] || +v > b[1])) return;        // même garde-fou que côté proxy
+      prices[k] = +v; tsMap[k] = ts;
+    });
+    const eurusd = (Number.isFinite(+j.eurusd) && +j.eurusd > 0.5 && +j.eurusd < 2) ? +j.eurusd : null;
+    PRICE_FILE_STATE = { ok:true, updated:ts, count:Object.keys(prices).length };
+    return { prices, tsMap, eurusd, ts };
+  } catch(e) {
+    clearTimeout(to);
+    PRICE_FILE_STATE = { ok:false, updated:null, count:0 };
+    throw e;
+  }
+}
+
 async function fetchAllPrices(fast) {
   const tickers = Object.keys(YF);
   const results = {};
   const ts = {};
   const now = Date.now();
-  // Au DÉMARRAGE (fast=true) on lance des lots larges pour afficher les cours au plus vite.
-  // Ensuite, lots plus petits pour rester sous les limites des proxies gratuits.
-  const BATCH = fast ? 8 : 3;
-  for (let i = 0; i < tickers.length; i += BATCH) {
-    await Promise.all(tickers.slice(i, i + BATCH).map(async t => {
-      try { results[t] = await fetchSymbol(YF[t].y); ts[t] = now; }
-      catch(e) { DBG && console.warn("[Fetch]", t, "→", YF[t].y, "fail"); }
-    }));
-  }
-  let eurusd = FALLBACK_EURUSD;
+  let eurusd = null;
+
+  // 1) Base instantanée depuis le fichier same-origin (jamais bloqué)
   try {
-    eurusd = await fetchEurUsd();                      // source directe, sans proxy
-  } catch(e) {
-    try {                                              // repli : Yahoo via proxy
-      const r = await fetchSymbol("EURUSD=X");
-      if (r > 0.5 && r < 2) eurusd = r;
-    } catch(e2) { DBG && console.warn("[Fetch] EURUSD fail, fallback", FALLBACK_EURUSD); }
+    const f = await fetchPriceFile();
+    Object.assign(results, f.prices);
+    Object.assign(ts, f.tsMap);
+    if (f.eurusd) eurusd = f.eurusd;
+  } catch(e) { DBG && console.warn("[Prices] fichier indisponible", e.message); }
+
+  // 2) Rafraîchissement optionnel via proxies — best effort, n'écrase jamais une
+  //    base valide en cas d'échec. Au démarrage on privilégie l'affichage immédiat.
+  const fileFresh = PRICE_FILE_STATE.ok && (now - PRICE_FILE_STATE.updated) < 20*60*1000;
+  if (!(fast && fileFresh)) {
+    const BATCH = 3;
+    for (let i = 0; i < tickers.length; i += BATCH) {
+      await Promise.all(tickers.slice(i, i + BATCH).map(async t => {
+        try { const px = await fetchSymbol(YF[t].y); results[t] = px; ts[t] = Date.now(); }
+        catch(e) { DBG && console.warn("[Fetch]", t, "→", YF[t].y, "fail"); }
+      }));
+    }
   }
-  return { prices: results, priceTsMap: ts, eurusd };
+
+  // 3) Taux de change : fichier > Frankfurter (direct) > Yahoo (proxy) > secours
+  if (eurusd == null) {
+    try { eurusd = await fetchEurUsd(); }
+    catch(e) {
+      try { const r = await fetchSymbol("EURUSD=X"); if (r > 0.5 && r < 2) eurusd = r; }
+      catch(e2) { DBG && console.warn("[Fetch] EURUSD fail, fallback", FALLBACK_EURUSD); }
+    }
+  }
+  return { prices: results, priceTsMap: ts, eurusd: eurusd || FALLBACK_EURUSD };
 }
 
 /* ============== CALCULS ============== */
@@ -3316,6 +3364,13 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
 
   // Cours RÉELLEMENT reçus du réseau (un prix de secours ne compte pas comme reçu)
   const fresh = port.filter(p => priceTsMap && priceTsMap[p.t]).length;
+  // Source principale : fichier prices.json publié par GitHub Actions
+  const pf = PRICE_FILE_STATE;
+  const pfAge = pf.updated ? Math.round((Date.now()-pf.updated)/60000) : null;
+  checks.push({ k:"Fichier de cours (GitHub)", ok: pf.ok === true, warn: pf.ok === true && pfAge > 60,
+    detail: pf.ok === null ? "non testé" : pf.ok === false ? "absent — voir installation"
+      : `${pf.count} cours · ${pfAge < 1 ? "à l'instant" : "il y a "+pfAge+" min"}` });
+
   checks.push({ k:"Cours reçus", ok: fresh > 0, warn: fresh > 0 && fresh < port.length,
     detail: fresh === 0 ? "aucun — tout en secours" : `${fresh}/${port.length} en direct` });
 
