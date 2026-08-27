@@ -193,7 +193,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"CeAd5LFa4wTxDui7JGoV5w==","iv":"35FGDTywGdV9tla/","data":"WWLiwBJZ2ie+rk8KsYMe4B2kp/V+mWunqk3VT+ObVBqR1q2aBW8IRbV6JZUq/jW11/z4buA1xV24Hq2FNJQCNFBGIej1vabHIeCHPn3oJO577RNNBTwuN0AqUpNkrTo1B8wpzLD4Czu3mY9UyWUf0zz2aIhj0mpeYb5l0x3EO24sbG2AASE0/HGhcqhXa+ZV7kuZyuWdXf8175JTBUph0c4yaC1Ql4Z5xvtlMv4aRge2/9i5RaVL9NZ9QYN2rHJf6ECme5FmMIAnhC8Xru/Kp+dYJwdojwpZz6PKsTNDDV1Hqyw/MfImHZX2nEVdXnOMCZaG6d/9PFXDUdR/sGSE/8fTtQEDfEPGznFHIy0mQnkUMsCnPqSsdKHs7HQ3CXabFsVl1hxkuE2dW2olYWnTd9fisEMAve3+XkPLHU7gFhkxAUz2PkUegkskWCTGlJGLPH8KqtOmn+SL7LDY5hA54yw63YyVqbq2EdpRyTnQI17tVxcvbQ5LwSWh/kzMRTa7rsXU1Ww+j/i5aUcJ1Faqcz9pxT7ha8H5XqGWRUrQywuwyK33SI7Q/TRndE9PiESWXDySJXNMEfD7ehP6dXlR6aqbV7TmIAaZcm0tnyMjP+lgRI8ieSMLOyGzaVowc8SqBmQNSxu9YnIm6y65nVGrX/WsXtQPCOrIi4Hl2dudCiBZYiXTJTGsKfqgFTTbZ1eJ4LXNsrIL+oyOXlKOerJOANBjtKsTZyTYiIuleAZDXU4N3biTnIXWcy1w5n287Ux+fnK/CQFNfpsNR2SGjr4R/SsEKdIeKVU33U5X3cBkNA9mTPCUyLJZJsLhWh6OV2N1oyjXVv7AFwd8q5VtgLXdO/jk75jLJFOTNF3e9mxZycTc5s6aT57GDxm8+QhCXFSof4CD4uCzkm29g1tJlVoAXIpcuXBLztXcQb2YoC9da1zg/diKYyvXguHQ8jzsI0mhlG9W6pXHfdDgEhG6gokcTIhFk+5qkVShMFW8ad6/3QJ3KB9IjEjN3u9bSe1JLMF+ImddKZPevPeEVr/XOD4EQP2ixNYWkGu+wxSqv08g36cJ+uee4iizc21yt0n46S6iLviTUaY+96/Ow2q8KXCNcNpdVUO648LXUnGivRKGFO+EAVyNf3qon9/YWLtAfSVfQw1MW2CG0YBoLoHpAxiRU1k="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -641,7 +641,6 @@ function openDB() {
   });
 }
 const SNAP_KEEP_MS = 400 * 24 * 3600 * 1000;   // on conserve ~13 mois (horizon max utile : 12 mois)
-const SNAP_MIN_GAP = 30 * 60 * 1000;           // 1 snapshot toutes les 30 min maximum
 async function snapshotAdd(snap) {
   try {
     const db = await openDB();
@@ -658,45 +657,6 @@ async function snapshotAdd(snap) {
     });
   } catch(e) { DBG && console.warn("[DB] add err", e); }
 }
-// Compte les snapshots SANS charger leur contenu (count() natif d'IndexedDB).
-// Charger toute la base juste pour afficher un nombre coûtait plusieurs Mo.
-async function snapshotsCount() {
-  try {
-    const db = await openDB();
-    return new Promise((res) => {
-      const tx = db.transaction(SNAP_STORE, "readonly");
-      const req = tx.objectStore(SNAP_STORE).count();
-      req.onsuccess = () => { db.close(); res(req.result); };
-      req.onerror = () => { db.close(); res(-1); };
-    });
-  } catch(e) { return -1; }
-}
-
-// Allège la base : supprime les snapshots espacés de moins de SNAP_MIN_GAP.
-// Ne touche ni à la première ni à la dernière valeur d'un intervalle utile.
-async function thinSnapshots() {
-  try {
-    const db = await openDB();
-    return new Promise((res) => {
-      const tx = db.transaction(SNAP_STORE, "readwrite");
-      const store = tx.objectStore(SNAP_STORE);
-      let lastKept = -Infinity, removed = 0;
-      const req = store.openCursor();
-      req.onsuccess = (e) => {
-        const c = e.target.result;
-        if (c) {
-          const ts = c.value && c.value.ts;
-          if (Number.isFinite(ts) && ts - lastKept < SNAP_MIN_GAP) { c.delete(); removed++; }
-          else lastKept = ts;
-          c.continue();
-        }
-      };
-      tx.oncomplete = () => { db.close(); res(removed); };
-      tx.onerror = () => { db.close(); res(-1); };
-    });
-  } catch(e) { return -1; }
-}
-
 async function snapshotsRange(fromTs) {
   try {
     const db = await openDB();
@@ -841,7 +801,6 @@ async function fetchAllPrices(fast) {
   const tickers = Object.keys(YF);
   const results = {};
   const ts = {};
-  const now = Date.now();
   let eurusd = null;
 
   // 1) Base instantanée depuis le fichier same-origin (jamais bloqué)
@@ -852,10 +811,14 @@ async function fetchAllPrices(fast) {
     if (f.eurusd) eurusd = f.eurusd;
   } catch(e) { DBG && console.warn("[Prices] fichier indisponible", e.message); }
 
-  // 2) Rafraîchissement optionnel via proxies — best effort, n'écrase jamais une
-  //    base valide en cas d'échec. Au démarrage on privilégie l'affichage immédiat.
-  const fileFresh = PRICE_FILE_STATE.ok && (now - PRICE_FILE_STATE.updated) < 20*60*1000;
-  if (!(fast && fileFresh)) {
+  // 2) Rafraîchissement optionnel via proxies — best effort, n'écrase jamais une base
+  //    valide en cas d'échec. AU BOOT (fast) : si le fichier a fourni des cours (même
+  //    anciens), on les affiche IMMÉDIATEMENT et on saute la boucle proxy bloquante.
+  //    Le rafraîchissement périodique (60 s) sollicitera les proxies en arrière-plan.
+  //    Corrige le "trou noir" de 60-70 s où l'app attendait des proxies morts alors
+  //    qu'un fichier valide existait déjà (tout s'affichait en "secours figé").
+  const fileHasPrices = PRICE_FILE_STATE.ok === true && Object.keys(results).length > 0;
+  if (!(fast && fileHasPrices)) {
     const BATCH = 3;
     for (let i = 0; i < tickers.length; i += BATCH) {
       await Promise.all(tickers.slice(i, i + BATCH).map(async t => {
@@ -865,8 +828,9 @@ async function fetchAllPrices(fast) {
     }
   }
 
-  // 3) Taux de change : fichier > Frankfurter (direct) > Yahoo (proxy) > secours
-  if (eurusd == null) {
+  // 3) Taux de change : fichier > Frankfurter (direct) > Yahoo (proxy) > secours.
+  //    Au boot on ne bloque pas sur le réseau : fichier ou FALLBACK, l'intervalle affine.
+  if (eurusd == null && !fast) {
     try { eurusd = await fetchEurUsd(); }
     catch(e) {
       try { const r = await fetchSymbol("EURUSD=X"); if (r > 0.5 && r < 2) eurusd = r; }
@@ -3423,8 +3387,10 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
   const fxOk = eurusd > 0.5 && eurusd < 2;
   checks.push({ k:"Taux EUR/USD", ok: fxOk, detail: fxOk ? eurusd.toFixed(3) : "hors bornes → secours" });
 
-  // Snapshots : simple comptage, sans charger les données
-  const countSnaps = async () => { setSnapN(await snapshotsCount()); };
+  // Snapshots lisibles (asynchrone, à la demande)
+  const countSnaps = async () => {
+    try { const all = await snapshotsRange(0); setSnapN(all.length); } catch(e){ setSnapN(-1); }
+  };
   useEffect(() => { countSnaps(); }, []);
   checks.push({ k:"Historique (snapshots)", ok: snapN != null && snapN >= 0,
     detail: snapN == null ? "lecture…" : snapN < 0 ? "illisible" : `${snapN} enregistrés` });
@@ -3473,9 +3439,7 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
 // INDICATEUR DE CALIBRATION — suit la progression vers l'auto-correction du moteur
 function CalibrationStatus() {
   const [snaps, setSnaps] = useState(null);
-  // La calibration compare des prévisions espacées de 15 à 75 jours :
-  // inutile de charger toute la base, une fenêtre de 200 jours suffit largement.
-  useEffect(() => { snapshotsRange(Date.now() - 200*86400000).then(setSnaps).catch(()=>setSnaps([])); }, []);
+  useEffect(() => { snapshotsRange(0).then(setSnaps).catch(()=>setSnaps([])); }, []);
 
   if(snaps === null) return (
     <div className="card"><div className="cd-ti"><h3>Calibration du moteur</h3></div>
@@ -3886,12 +3850,6 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
       <div className="card">
         <div className="cd-ti"><h3>Maintenance</h3></div>
         <button className="bn bn-w" style={{width:"100%",marginBottom:6}} onClick={onClearCache}>🗑 Vider le cache prix</button>
-        <button className="bn bn-w" style={{width:"100%",marginBottom:6}} onClick={async ()=>{
-          const n = await snapshotsCount();
-          if(!confirm(`Alléger l'historique ?\n\n${n} enregistrements actuellement.\nLes points espacés de moins de 30 min seront fusionnés (un seul conservé).\nLes courbes et la calibration ne perdent rien d'utile.`)) return;
-          const removed = await thinSnapshots();
-          alert(removed < 0 ? "Échec de l'allègement." : `✓ ${removed} enregistrements supprimés. Rouvre l'app pour voir la différence.`);
-        }}>📉 Alléger l'historique</button>
         <div className="dim" style={{fontSize:10,textAlign:"center",marginTop:6}}>
           Données stockées localement (localStorage + IndexedDB). Aucun envoi serveur.
         </div>
@@ -4558,11 +4516,9 @@ function App() {
     if (changed) { setAlerts(next); saveAlerts(next); }
   }, [port]);
 
-  // Charger snapshots — borné à la fenêtre de conservation (400 j).
-  // Équivalent à « tout », mais la lecture passe par l'index de la base
-  // au lieu de balayer chaque enregistrement.
+  // Charger snapshots
   const reloadSnapshots = useCallback(async () => {
-    const s = await snapshotsRange(Date.now() - SNAP_KEEP_MS);
+    const s = await snapshotsRange(0);
     setSnapshots(s.sort((a,b)=>a.ts-b.ts));
   }, []);
   useEffect(() => { reloadSnapshots(); }, [reloadSnapshots]);
@@ -4601,10 +4557,7 @@ function App() {
 
       // Snapshot historique (max 1 par 5min)
       const last = snapshots[snapshots.length-1];
-      // Un snapshot toutes les 30 min (au lieu de 5) : la base reste 6× plus légère
-      // sans rien perdre d'utile — la calibration compare des écarts de 15 à 75 JOURS,
-      // et les courbes d'historique sont quotidiennes.
-      if (!last || now - last.ts > SNAP_MIN_GAP) {
+      if (!last || now - last.ts > 5*60*1000) {
         // Stocker les prévisions pour le suivi de précision
         const fcMap = {};
         enriched.forEach(p => {
