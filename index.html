@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v15.1-2026-07-23-001";
+const BUILD = "v15.2-2026-08-26-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -180,7 +180,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"LRJQUi5LVFAAn2UI7JczcQ==","iv":"cklX1Z4fMfs1hzEk","data":"xu8iMKh9kwI95q7JNhvnFPq0Z8DXqxLXVRV2OKGFQwDL8iOk/axkkygmeeVDeHluF78yt8yDJDD2J+AIWAyXgoN3WLiC0Wb4lT8TfwBXt/sC8CpX/W+uz+3hbDLugxzVlw7LYYlZzcFrSRgPu/c7kA3Jt+rvD1zAl6KbPHiW8bQVGF2qGEix6u5dfCxONoBnNEUhyX09pHJ6wb+34wlGaRoEduE/9kdLQCnuUa1qMYt45TaKjwXoxy5PwLuh2jcAgq9l+nvgNNFfdwp0WehUmMzGVnKv0D6vmzKtq99FlX13iEjBQE4LobqdFVFdJiigmfM1DZeV0wPZR4AUyjOl+Fx/EgLBi/TZNzODE+7SkFSB8qk0UX9ul7O1cJPOEFHjxnskFBBdgKJArmLlSbuvia63m7pIRKv5MwifJTAiC2L0b3LSxD1YEuHUAKuT6PDmijWisz0gM/LPajy8LevpXM6mEilrMymX+WNXHL+Z2Y060JBw18EHq18LaAWOhWhaM5aKd6dBUvEU8WhHuz6LFaQoFwZYTzPh09U1I3lRzn9tzgoRf8Mi/t19smsr/KrrCXL7u9yItKDQbEn7q9+mlqcDCDqK2hUynRCOhPlHSCEOu6n267JpDb8sDhQ8irtBBn5LXrG/wmkhAUGftQ+N/LndYO2MLbwXJcB7/9IztExOi6StOblaUKrwFUgGpgedBGIC7OkGKNiFTIrpEsSJIdBl+80gMzTWLhUWQWUYZeIvBuX6V6Ow9mXA2+/S5HYzQFQB+Rnaz8rKA0Zbr7ld6rmPkyc+GMYrQU3YPpSXF/ZM/A5sAZ5OYt0vJPhl3nSJM9FlmBAWmywO+4/czsqRDnfkv1AHAzQaRP0/at1WICah/dZQeyrs2Q5TOx3JyKUB7KG5oCmHk1JtH8+w779t5l30yf59Mjdv7IYfcO/R8NjnJcfI6MRLZ/lyUTvxsx/xbgKJbBtC/ltPu6Ln1lgeBfYKCywzZ9/UF+KHcz59ZKP7EiUHAMmkZoHPchPZndDdOvfjHWpcfu8JeNmGaeF8KN3RAeaFSR0nD+h/hwPb2Mf7JvQYS2DfalU8tKbu1ro/W6bCBx8rQbc270HevbtXEvM526GEvEoc57jqVMgBBwXBaJCg/QeEyaIE0ZNbQhZj/+M7c4FeMld2NKk7e2785EY="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -429,8 +429,8 @@ async function fetchQuarterlyHistory(yfsym) {
   if(cache[yfsym] && Date.now()-cache[yfsym].ts < HIST3Y_TTL) return cache[yfsym].data;
   const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yfsym)}?interval=1wk&range=3y`;
   const proxUrls = [
-    `https://allorigins.win/raw?url=${encodeURIComponent(yUrl)}`,
-    `https://corsproxy.io/?${encodeURIComponent(yUrl)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(yUrl)}`,
+    `https://cors.x2u.in/${yUrl}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yUrl)}`
   ];
   for(const proxy of proxUrls) {
@@ -605,15 +605,25 @@ async function snapshotsRange(fromTs) {
   } catch(e) { return []; }
 }
 
-/* ============== FETCH PRIX ============== */
+/* ============== FETCH PRIX ==============
+   Sources vérifiées (août 2026) :
+   - corsproxy.io RETIRÉ : son offre gratuite est désormais limitée à localhost,
+     donc structurellement inutilisable depuis github.io (2 sources mortes sur 6).
+   - allorigins : ~20 requêtes/minute — d'où l'importance de limiter le nombre d'appels.
+   - codetabs : ~5 requêtes/seconde.
+   - cors.x2u.in : ~100 requêtes/heure, utile quand les autres bloquent.
+   Le taux EUR/USD ne passe plus par un proxy (voir fetchEurUsd). */
+const YQ = s => `https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`;
+const YQ2 = s => `https://query2.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`;
 const PROXIES = [
-  s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`)}`,
-  s => `https://corsproxy.io/?${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`)}`,
-  s => `https://api.codetabs.com/v1/proxy?quest=https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`,
-  s => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`)}`,
-  s => `https://corsproxy.io/?${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`)}`,
-  s => `https://api.allorigins.win/get?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`)}`
+  s => `https://api.allorigins.win/raw?url=${encodeURIComponent(YQ(s))}`,
+  s => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(YQ(s))}`,
+  s => `https://cors.x2u.in/${YQ(s)}`,
+  s => `https://api.allorigins.win/raw?url=${encodeURIComponent(YQ2(s))}`,
+  s => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(YQ2(s))}`,
+  s => `https://api.allorigins.win/get?url=${encodeURIComponent(YQ(s))}`
 ];
+const PROXY_NAMES = ["allorigins","codetabs","cors.x2u.in","allorigins·q2","codetabs·q2","allorigins·get"];
 
 async function fetchOne(url, isWrap) {
   const ctrl = new AbortController();
@@ -639,18 +649,20 @@ function proxyOrder() {
 }
 
 async function fetchSymbol(sym) {
-  // Course PAR VAGUES : 2 proxies d'abord, on n'élargit que si les deux échouent.
-  // Avant : 6 requêtes simultanées × 11 tickers = 66 connexions → saturation du navigateur
-  // (limite ~6 par domaine) et files d'attente. Résultat : lenteur perçue de plusieurs secondes.
+  // Stratégie économe : on tente D'ABORD la source qui a marché la dernière fois, SEULE.
+  // Les proxies gratuits sont limités (~20 req/min) : multiplier les appels les fait
+  // basculer en blocage. On n'élargit que si la première tentative échoue.
   const order = proxyOrder();
+  const waves = [[order[0]], [order[1], order[2]], [order[3], order[4], order[5]]];
   let px = null, lastErr = null;
-  for (let start = 0; start < order.length; start += 2) {
-    const wave = order.slice(start, start + 2);
+  for (const wave of waves) {
+    const ids = wave.filter(i => i != null);
+    if (!ids.length) continue;
     try {
-      const results = await Promise.any(wave.map(i =>
+      const r = await Promise.any(ids.map(i =>
         fetchOne(PROXIES[i](sym), i === 5).then(v => ({ v, i }))
       ));
-      px = results.v; BEST_PROXY = results.i;    // on retient la source qui a marché
+      px = r.v; BEST_PROXY = r.i;    // on retient la source qui a marché
       break;
     } catch(e) { lastErr = e; }
   }
@@ -661,6 +673,22 @@ async function fetchSymbol(sym) {
     throw new Error("price out of bounds: " + sym + " " + px);
   }
   return px;
+}
+
+// Taux EUR/USD SANS proxy : Frankfurter (Banque centrale européenne) autorise le CORS,
+// ne demande aucune clé et n'impose pas de limite. Une source fragile en moins.
+async function fetchEurUsd() {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const r = await fetch("https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR", { signal: ctrl.signal });
+    clearTimeout(to);
+    if (!r.ok) throw new Error("http " + r.status);
+    const j = await r.json();
+    const v = j && j.rates && j.rates.EUR;   // USD → EUR, exactement ce qu'il nous faut
+    if (!isFinite(v) || v <= 0.5 || v >= 2) throw new Error("taux hors bornes");
+    return 1 / v;                            // on renvoie EUR/USD comme Yahoo (inversé ensuite)
+  } catch(e) { clearTimeout(to); throw e; }
 }
 
 async function fetchAllPrices() {
@@ -679,9 +707,13 @@ async function fetchAllPrices() {
   }
   let eurusd = FALLBACK_EURUSD;
   try {
-    const r = await fetchSymbol("EURUSD=X");
-    if (r > 0.5 && r < 2) eurusd = r;
-  } catch(e) { DBG && console.warn("[Fetch] EURUSD fail, fallback", FALLBACK_EURUSD); }
+    eurusd = await fetchEurUsd();                      // source directe, sans proxy
+  } catch(e) {
+    try {                                              // repli : Yahoo via proxy
+      const r = await fetchSymbol("EURUSD=X");
+      if (r > 0.5 && r < 2) eurusd = r;
+    } catch(e2) { DBG && console.warn("[Fetch] EURUSD fail, fallback", FALLBACK_EURUSD); }
+  }
   return { prices: results, priceTsMap: ts, eurusd };
 }
 
@@ -1162,8 +1194,8 @@ async function fetchEarningsDate(yfsym) {
   if(cache[yfsym] && Date.now()-cache[yfsym].ts < EARN_TTL) return cache[yfsym].data;
   const yUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yfsym)}?modules=calendarEvents`;
   const proxUrls = [
-    `https://allorigins.win/raw?url=${encodeURIComponent(yUrl)}`,
-    `https://corsproxy.io/?${encodeURIComponent(yUrl)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(yUrl)}`,
+    `https://cors.x2u.in/${yUrl}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yUrl)}`
   ];
   for(const proxy of proxUrls) {
@@ -3145,10 +3177,10 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
   checks.push({ k:"Stockage local", ok:storageOk,
     detail: storageOk ? "lecture/écriture OK" : "bloqué (mode privé ?)" });
 
-  // Cours reçus ?
-  const priced = port.filter(p => prices && prices[p.t] != null).length;
-  checks.push({ k:"Cours reçus", ok: priced > 0, warn: priced < port.length,
-    detail: `${priced}/${port.length} positions` });
+  // Cours RÉELLEMENT reçus du réseau (un prix de secours ne compte pas comme reçu)
+  const fresh = port.filter(p => priceTsMap && priceTsMap[p.t]).length;
+  checks.push({ k:"Cours reçus", ok: fresh > 0, warn: fresh > 0 && fresh < port.length,
+    detail: fresh === 0 ? "aucun — tout en secours" : `${fresh}/${port.length} en direct` });
 
   // Fraîcheur du dernier rafraîchissement
   const ageMin = lastTs ? Math.round((Date.now()-lastTs)/60000) : null;
@@ -3172,7 +3204,7 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
   const testNet = async () => {
     setNet("testing"); setNetMsg("");
     const t0 = Date.now();
-    let okCount = 0; const names = ["allorigins","corsproxy","codetabs","allorigins·q2","corsproxy·q2","allorigins·get"];
+    let okCount = 0; const names = PROXY_NAMES;
     for(let i=0;i<PROXIES.length;i++){
       try { const px = await fetchOne(PROXIES[i]("AMZN"), i===5); if(px>0){ okCount++; if(okCount===1) setNetMsg(names[i]+" répond en "+(Date.now()-t0)+" ms"); } }
       catch(e){}
