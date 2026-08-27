@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v15.2-2026-08-26-001";
+const BUILD = "v15.3-2026-08-27-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -151,7 +151,20 @@ const YF = {
   ABUS: { y: "ABUS",    ccy: "USD" },
   GAD:  { y: "DFND.MI", ccy: "EUR" },
   MSFT: { y: "MSFT",    ccy: "USD" },
-  SPY:  { y: "SPY",     ccy: "USD", bench: true }
+  SPY:  { y: "SPY",     ccy: "USD", bench: true },
+  // Opportunités suivies (watchlist) : cours live pour mesurer le potentiel restant
+  CEG:  { y: "CEG",     ccy: "USD", watch: true },
+  PLTR: { y: "PLTR",    ccy: "USD", watch: true },
+  FCX:  { y: "FCX",     ccy: "USD", watch: true },
+  ASML: { y: "ASML",    ccy: "USD", watch: true },
+  URA:  { y: "URA",     ccy: "USD", watch: true },
+  // ETF de référence sectorielle : servent à MESURER le momentum réel des secteurs
+  SMH:  { y: "SMH",     ccy: "USD", sector: "IA Infrastructure" },
+  NLR:  { y: "NLR",     ccy: "USD", sector: "Nucléaire & Énergie" },
+  ITA:  { y: "ITA",     ccy: "USD", sector: "Défense & Sécurité" },
+  IGV:  { y: "IGV",     ccy: "USD", sector: "Cloud & SaaS IA" },
+  COPX: { y: "COPX",    ccy: "USD", sector: "Matières premières" },
+  XLE:  { y: "XLE",     ccy: "USD", sector: "Énergie offshore" }
 };
 
 const PRICE_DEF = {
@@ -180,7 +193,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"mGU8EnzC2xvJOBtitisxZQ==","iv":"ww74QCwjwDfT5vgu","data":"LAWJOFvG9IrZ15GMsTaz+cWI9iF+NaEjcoogatXFHzUhx5CqOG6d5KuosirJUjSqDTg41muq0Ir6XY3rfFgB+o4FoWJbBxWvY9neOQJA2IhTmjEz22mHlrfik510kcCiuFRphwLtW/zoTPnw6eFOr2pCVqc2uXWMgnoPSjLysofyG6aHdzpV8VXoqDEsvyEX1LUh2+eR2fLF2DKARz7dXqjM4Z8s1n1T680tTaaV0DGfqXP14ewKsna45aRZKcWW8mW6VSq61FPOPimt9KBEfjX7gRmMlowJeqMK6R848n6oXJdoTlC3ZP5y252RSerAo9nttOlKqTe2dmmCNkRlUd6r+s+UkI0z+bHyYqEzB4xAfkflto8KA9ZMOnCRaxbW1HUjT4DW4FtEQ3gJk+lKakPbG3pSJB8jq7EvB93Gl16pr1GuOWWOgU7yp/hXZU1Q7pbEy14zHxj8Ar4MFeTPGTfvVa9C/ANeUopOUdQD22wW56DkzPU1AFLCXknesgzzfPTNjRHZX1XmLb7hTMYQdDjsQHSFHNOUzKFuCAFxA7iPTsv9pDCcHW+Qc+eXrz/g3Z1DmmzOTA8QFaWlJVd0JmXsPDfC1Om4Wih216CBtia+CQ8800Gg/8ZRXBpvZQXxf4SoEyteJk64TiFzMCkRbMZ8m4yt8e7v4iwQwuTBeQ6Q54p1uzUc3O7FtbKhV4mhfPuYUzCct6OKLzIcKvsncJqDI4HmNlNlkWUW4NJl5imyzuWvc0ygdtf+6x/AjIh/WRRkk4eskhfXV7AxMw3ZIV4NQAUjiSwsKXBByRrRdIgC2zicXCcVI5b+fpWOm1qcOQ/v2vyi8kmnrJWfELIKMygpi+95IrUvdmj8ZamTYVbWLi0ooFdbulpVPXS/Ep3uWDUoYbP7ya6cit/bAD1qW2Jh6S3DreJ5KyOXM5Fwomp5u8QhHP36g6nAXvAYtsYDw7B70hpX2L/aYadZgVLtoIiSKsabi/sg0Y1weFAjYPxTHfzgjU5HRFwbruUniKFjVYmSMaLBuWLpQeY++6hN3da7Wi7ETm3jCyExDeAyBQ1Yj+C2Oe3o8yghAnv5Dp83lO298ePqsunV8YVv2R0Fu7sTthHWiSxB02ZQm2oqCYB0+0LOiF2RcQlcR/Mx2020EmkCRygUZ6PKAQMJtlyj9Pc="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -323,7 +336,65 @@ const SECS = [
   {n:"Immo Tech",           r:-70,m:"↓↓", col:"#e85d5d", tag:"Vendre",      c:99}
 ];
 
-/* ============== STRESS-TESTS ============== */
+/* ===== SECTEURS & MACRO MESURÉS (plus écrits à la main) =====
+   Le classement sectoriel et le régime de marché sont désormais DÉDUITS des cours
+   d'ETF de référence : momentum réel + position dans la fourchette 3 ans.
+   Les flèches et les tags deviennent une mesure, plus une opinion figée. */
+function sectorMomentum(qHist, cur) {
+  const px = (qHist||[]).map(d=>d.px).filter(v=>v>0);
+  if(px.length < 30 || !(cur>0)) return null;
+  const at = w => px[Math.max(0, px.length - w)];      // w semaines en arrière
+  const chg = (a,b) => (a>0 && b>0) ? (b/a - 1)*100 : null;
+  const m1 = chg(at(4), cur), m3 = chg(at(13), cur), m12 = chg(at(52), cur);
+  if(m1==null || m3==null) return null;
+  const score = m1*0.5 + m3*0.35 + (m12||0)*0.15;      // court terme pondéré plus fort
+  return { m1, m3, m12, score, pct: pctRank(qHist, cur) };
+}
+// Traduit un score de momentum en flèche + recommandation lisible
+function sectorVerdict(mom) {
+  if(!mom) return { m:"—", tag:"Données manquantes", col:"#8892a8", c:null };
+  const s = mom.score, hot = mom.pct != null && mom.pct > 0.85;
+  if(s > 12)  return { m:"↑↑", tag: hot ? "Surpondérer (mais cher)" : "Surpondérer", col:"#2ecc8f" };
+  if(s > 4)   return { m:"↑",  tag:"Renforcer",  col:"#2ecc8f" };
+  if(s > -4)  return { m:"→",  tag:"Conserver",  col:"#f0a020" };
+  if(s > -12) return { m:"↓",  tag:"Alléger",    col:"#e85d5d" };
+  return              { m:"↓↓", tag:"Éviter",     col:"#e85d5d" };
+}
+// Construit le classement sectoriel à partir des ETF réellement suivis
+function buildSectors(prices, qHistMap) {
+  const out = [];
+  Object.entries(YF).forEach(([k, cfg]) => {
+    if(!cfg.sector) return;
+    const mom = sectorMomentum(qHistMap && qHistMap[k], prices && prices[k]);
+    const v = sectorVerdict(mom);
+    out.push({ n: cfg.sector, etf: k, mom, ...v });
+  });
+  return out.sort((a,b) => ((b.mom&&b.mom.score)||-999) - ((a.mom&&a.mom.score)||-999));
+}
+// Régime de marché déduit de signaux mesurables (taux, peur, appétit pour le risque)
+function buildMacro(ctx) {
+  if(!ctx || ctx.qqqPct == null) return null;
+  const risk = ctx.qqqPct, fear = ctx.gldPct, rates = ctx.tltPct;
+  const sig = [];
+  let regime, col;
+  if(risk > 0.75 && (fear == null || fear < 0.75)) { regime = "Appétit pour le risque élevé"; col = "#2ecc8f"; }
+  else if(risk < 0.35) { regime = "Aversion au risque — marché défensif"; col = "#e85d5d"; }
+  else if(fear != null && fear > 0.85) { regime = "Tension : ruée vers les valeurs refuge"; col = "#f0a020"; }
+  else { regime = "Marché sans direction marquée"; col = "#f0a020"; }
+  const pc = v => Math.round(v*100);
+  sig.push({ k:"Appétit pour le risque", v:pc(risk)+"ᵉ centile",
+    txt: risk>0.75 ? "Les actions technologiques sont hautes dans leur fourchette : les investisseurs prennent du risque."
+       : risk<0.35 ? "La tech est basse dans sa fourchette : la prudence domine."
+       : "La tech est dans sa moyenne : ni euphorie ni panique." });
+  if(rates != null) sig.push({ k:"Taux longs", v:pc(rates)+"ᵉ centile",
+    txt: rates<0.35 ? "Les obligations sont basses, donc les taux sont élevés : l'argent coûte cher, ce qui pèse sur la croissance."
+       : rates>0.65 ? "Les obligations sont hautes, donc les taux sont bas : environnement favorable aux valeurs de croissance."
+       : "Les taux sont dans leur moyenne historique." });
+  if(fear != null) sig.push({ k:"Refuge (or)", v:pc(fear)+"ᵉ centile",
+    txt: fear>0.75 ? "L'or est haut : une partie du marché se protège contre un choc."
+       : "L'or est calme : pas de stress marqué." });
+  return { regime, col, sig };
+}
 const STRESS_SCENARIOS = [
   { id:"fed100", label:"Fed coupe 100pb", emoji:"🏦",
     desc:"La Fed abaisse ses taux directeurs de 100 points de base (1 %).",
@@ -691,14 +762,14 @@ async function fetchEurUsd() {
   } catch(e) { clearTimeout(to); throw e; }
 }
 
-async function fetchAllPrices() {
+async function fetchAllPrices(fast) {
   const tickers = Object.keys(YF);
   const results = {};
   const ts = {};
   const now = Date.now();
-  // Traitement par LOTS de 3 : évite d'ouvrir des dizaines de connexions d'un coup
-  // (le navigateur en limite ~6 par domaine ; au-delà tout part en file d'attente).
-  const BATCH = 3;
+  // Au DÉMARRAGE (fast=true) on lance des lots larges pour afficher les cours au plus vite.
+  // Ensuite, lots plus petits pour rester sous les limites des proxies gratuits.
+  const BATCH = fast ? 8 : 3;
   for (let i = 0; i < tickers.length; i += BATCH) {
     await Promise.all(tickers.slice(i, i + BATCH).map(async t => {
       try { results[t] = await fetchSymbol(YF[t].y); ts[t] = now; }
@@ -2311,12 +2382,39 @@ function HistoryView({ snapshots, port, eurusd, qHistMap, spyHist }) {
   );
 }
 
-function MacroView() {
+function MacroView({ prices, qHistMap, macroCtx }) {
   return (
     <>
       <div className="card">
-        <div className="cd-ti"><h3>Régime de marché</h3></div>
-        <div style={{padding:"6px 0"}}><span className="lbl">Régime</span><div>{MACRO.regime}</div></div>
+        <div className="cd-ti"><h3>Régime de marché</h3><span className="dim" style={{fontSize:9}}>lu sur les marchés</span></div>
+        {(() => {
+          const dm = buildMacro(macroCtx);
+          if(!dm) return <div className="warn">📊 Lecture du régime en cours (indicateurs de marché).</div>;
+          return (
+            <>
+              <div style={{background:"rgba(255,255,255,.03)",borderLeft:"3px solid "+dm.col,
+                borderRadius:6,padding:"10px 12px",marginBottom:10}}>
+                <div className="lbl" style={{marginBottom:3}}>Ce que disent les marchés aujourd'hui</div>
+                <div style={{fontSize:13,fontWeight:600,color:dm.col}}>{dm.regime}</div>
+              </div>
+              {dm.sig.map((s,i)=>(
+                <div key={i} style={{padding:"7px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
+                    <span style={{fontSize:11,color:"#dde3f0"}}>{s.k}</span>
+                    <span className="mono" style={{fontSize:10,color:"#8892a8"}}>{s.v}</span>
+                  </div>
+                  <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45}}>{s.txt}</div>
+                </div>
+              ))}
+              <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.5}}>
+                Calculé à partir de la position actuelle de trois indicateurs dans leur fourchette des 3 ans : le Nasdaq (appétit pour le risque), les obligations longues (niveau des taux) et l'or (recherche de refuge).
+              </div>
+            </>
+          );
+        })()}
+      </div>
+      <div className="card">
+        <div className="cd-ti"><h3>Analyse de fond</h3><span className="dim" style={{fontSize:9}}>revue manuellement</span></div>
         <div style={{padding:"6px 0"}}><span className="lbl">Fed</span><div className="dim">{MACRO.fed}</div></div>
         <div style={{padding:"6px 0"}}><span className="lbl">Géopolitique</span><div className="dim">{MACRO.geo}</div></div>
         <div style={{padding:"6px 0"}}><span className="lbl">Cycle IA</span><div className="dim">{MACRO.ia}</div></div>
@@ -2326,19 +2424,47 @@ function MacroView() {
         {MACRO.wrong.map((w,i) => <div key={i} className="row" style={{padding:"8px 0"}}>{w}</div>)}
       </div>
       <div className="card">
-        <div className="cd-ti"><h3>Classement sectoriel</h3></div>
-        {SECS.map(s => (
-          <div key={s.n} className="row">
-            <div style={{flex:1}}>
-              <div><strong>{s.n}</strong> <span style={{color:s.col}}>{s.m}</span></div>
-              <div className="dim" style={{fontSize:10}}>{s.tag}</div>
+        <div className="cd-ti"><h3>Classement sectoriel</h3><span className="dim" style={{fontSize:9}}>mesuré sur les cours</span></div>
+        <div style={{fontSize:10,color:"#8892a8",lineHeight:1.5,marginBottom:10}}>
+          Chaque secteur est jugé sur le <strong>mouvement réel de son ETF de référence</strong> : 1 mois (moitié du score), 3 mois (un tiers) et 1 an (le reste). Le court terme pèse le plus, car c'est lui qui porte la tendance en cours.
+        </div>
+        {(() => {
+          const secs = buildSectors(prices, qHistMap);
+          const withData = secs.filter(s => s.mom);
+          if(!withData.length) return (
+            <div className="warn">📊 Classement en cours de calcul (historique des ETF sectoriels).</div>
+          );
+          const maxAbs = Math.max(...withData.map(s => Math.abs(s.mom.score)), 1);
+          return withData.map(s => (
+            <div key={s.n} style={{padding:"9px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+                <div style={{flex:1}}>
+                  <strong style={{fontSize:12}}>{s.n}</strong> <span style={{color:s.col,fontSize:13}}>{s.m}</span>
+                  <span className="dim" style={{fontSize:9,marginLeft:5}}>via {s.etf}</span>
+                </div>
+                <span style={{fontSize:10,color:s.col,fontWeight:700}}>{s.tag}</span>
+              </div>
+              {/* barre centrée : à droite = hausse, à gauche = baisse */}
+              <div style={{position:"relative",height:6,background:"rgba(255,255,255,.05)",borderRadius:3,marginBottom:4}}>
+                <div style={{position:"absolute",left:"50%",top:0,bottom:0,width:1,background:"rgba(255,255,255,.15)"}}/>
+                <div style={{position:"absolute",top:0,bottom:0,borderRadius:3,background:s.col,
+                  left: s.mom.score>=0 ? "50%" : (50 - Math.abs(s.mom.score)/maxAbs*48)+"%",
+                  width: (Math.abs(s.mom.score)/maxAbs*48)+"%"}}/>
+              </div>
+              <div style={{display:"flex",gap:10,fontSize:9,color:"#8892a8"}}>
+                <span>1 mois <span className="mono" style={{color:cl(s.mom.m1)}}>{fp(s.mom.m1,0)}</span></span>
+                <span>3 mois <span className="mono" style={{color:cl(s.mom.m3)}}>{fp(s.mom.m3,0)}</span></span>
+                {s.mom.m12!=null && <span>1 an <span className="mono" style={{color:cl(s.mom.m12)}}>{fp(s.mom.m12,0)}</span></span>}
+                {s.mom.pct!=null && <span style={{marginLeft:"auto",color:s.mom.pct>0.85?"#f0a020":"#3a4560"}}>
+                  {Math.round(s.mom.pct*100)}ᵉ centile{s.mom.pct>0.85?" · au sommet":""}
+                </span>}
+              </div>
             </div>
-            <div style={{flex:"0 0 100px"}}>
-              <div className="bar"><span style={{width:s.c+"%",background:s.col}}/></div>
-              <div className="num" style={{fontSize:10,marginTop:2}}>{fp(s.r,0)}</div>
-            </div>
-          </div>
-        ))}
+          ));
+        })()}
+        <div style={{fontSize:9,color:"#3a4560",marginTop:9,lineHeight:1.5}}>
+          ↑↑ forte hausse · ↑ hausse · → stable · ↓ baisse · ↓↓ forte baisse. Le « centile » situe le secteur dans sa fourchette des 3 ans : au-delà du 85ᵉ, il est haut historiquement — la tendance est bonne mais le point d'entrée est cher.
+        </div>
       </div>
     </>
   );
@@ -2402,20 +2528,31 @@ function WatchlistView({ port, m }) {
         </div>
         {watchList.map(tk=>{
           const o=OPPS.find(x=>x.t===tk), px=watchPrices[tk];
+          // Potentiel restant = écart entre le cours actuel et la cible analyste
+          const up = (o && o.tgt && px>0) ? (o.tgt/px - 1)*100 : null;
           return (
             <div key={tk} className="row">
               <div style={{flex:1}}>
                 <div><span className="tk">{tk}</span> {o&&<span className="chip buy" style={{marginLeft:4}}>watch</span>}</div>
                 <div className="nm">{o?.n||"—"}{o&&<span style={{color:"#3a4560"}}> • {o.s}</span>}</div>
               </div>
-              <div className="num" style={{textAlign:"right",minWidth:90}}>
+              <div className="num" style={{textAlign:"right",minWidth:112}}>
                 <div style={{fontSize:13,fontWeight:700}}>{px?"$"+px.toFixed(2):"—"}</div>
-                {o&&<div style={{fontSize:10,color:"#2ecc8f"}}>{fp(o.p,0)} 12M</div>}
+                {o && o.tgt && (
+                  up != null
+                    ? <div style={{fontSize:10,color:up>0?"#2ecc8f":"#e85d5d"}}>
+                        {fp(up,0)} jusqu'à ${o.tgt}
+                      </div>
+                    : <div style={{fontSize:10,color:"#3a4560"}}>cible ${o.tgt}</div>
+                )}
               </div>
               <button style={{marginLeft:8,color:"#e85d5d",fontSize:14,padding:"4px 6px",cursor:"pointer"}} onClick={()=>removeWatch(tk)}>✕</button>
             </div>
           );
         })}
+        <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.5}}>
+          Le pourcentage indique le <strong>potentiel restant</strong> : l'écart entre le cours actuel et l'objectif analyste. En vert, il reste de la marge ; en rouge, le cours a dépassé la cible — signe que l'objectif mérite une révision.
+        </div>
       </div>
       {watchList.length > 0 && (
         <div className="card">
@@ -2860,7 +2997,7 @@ function EarningsCalendar({ port, onSelect }) {
   );
 }
 
-function ForecastView({ port, m, onSelect }) {
+function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx }) {
   const [sub, setSub] = useState("prev");
   return (
     <>
@@ -2872,7 +3009,7 @@ function ForecastView({ port, m, onSelect }) {
       {sub==="prev" ? (
         <>
           <EarningsCalendar port={port} onSelect={onSelect}/>
-          <MacroView/>
+          <MacroView prices={prices} qHistMap={qHistMap} macroCtx={macroCtx}/>
           <ScenariosView port={port} m={m}/>
           <AnalysisView port={port} onSelect={onSelect}/>
         </>
@@ -4252,6 +4389,8 @@ function App() {
     const s = loadStore();
     return !(s && Array.isArray(s.port) && s.port.some(p => p && p.q > 0));
   });
+  const needDecryptRef = useRef(needDecrypt);
+  useEffect(() => { needDecryptRef.current = needDecrypt; }, [needDecrypt]);
   const [prices, setPrices] = useState(() => {
     const stored = loadStore()?.prices || {};
     // PRICE_DEF en fallback pour combler les éventuels trous → jamais "—" au boot
@@ -4326,14 +4465,14 @@ function App() {
   useEffect(() => { reloadSnapshots(); }, [reloadSnapshots]);
 
   // Fetch principal
-  const fetchAll = useCallback(async (silent) => {
+  const fetchAll = useCallback(async (silent, fast) => {
     if (busyRef.current) return;
     // Cache : si un fetch auto a eu lieu il y a moins de PRICE_TTL, on ne re-sollicite pas les proxies
     if (silent && lastTsRef.current && Date.now() - lastTsRef.current < PRICE_TTL) return;
     busyRef.current = true;
     if (!silent) setStatus("ld");
     try {
-      const { prices: np, priceTsMap: ntm, eurusd: ne } = await fetchAllPrices();
+      const { prices: np, priceTsMap: ntm, eurusd: ne } = await fetchAllPrices(fast);
       setPrices(prev => ({ ...prev, ...np }));
       const mergedTsMap = { ...priceTsMap, ...ntm };
       setPriceTsMap(mergedTsMap);
@@ -4349,7 +4488,13 @@ function App() {
       const mergedPrices = { ...pricesRef.current, ...np };
       const enriched = enrich(portRef.current, mergedPrices, ne, mergedTsMap, convMapRef.current, null);
       const m = metrics(enriched);
-      saveStore({ port: portRef.current, prices: mergedPrices, eurusd: ne, priceTs: now, priceTsMap: mergedTsMap });
+      // Tant que le portefeuille n'est pas déchiffré, on n'enregistre QUE les cours :
+      // écrire le squelette vide écraserait les données réelles à déchiffrer.
+      if(needDecryptRef.current) {
+        saveStore({ ...(loadStore()||{}), prices: mergedPrices, eurusd: ne, priceTs: now, priceTsMap: mergedTsMap });
+      } else {
+        saveStore({ port: portRef.current, prices: mergedPrices, eurusd: ne, priceTs: now, priceTsMap: mergedTsMap });
+      }
 
       // Snapshot historique (max 1 par 5min)
       const last = snapshots[snapshots.length-1];
@@ -4392,7 +4537,7 @@ function App() {
 
   // Boot + interval
   useEffect(() => {
-    fetchAll(true);                              // 1er chargement : toujours, même hors marché
+    fetchAll(true, true);                              // 1er chargement : toujours, même hors marché
     timerRef.current = setInterval(() => {
       if (document.hidden) return;               // pause quand l'onglet/écran est en arrière-plan
       if (!isMarketHours()) return;              // pause la nuit / le week-end (cours figés)
@@ -4447,7 +4592,15 @@ function App() {
   // Détail
   const detailPort = detail ? enriched.find(p => p.t === detail) : null;
 
-  if(needDecrypt) return <UnlockData onDecrypted={(p)=>{ setPort(p); setNeedDecrypt(false); }}/>;
+  if(needDecrypt) return <UnlockData onDecrypted={(p)=>{
+    // Sauvegarde IMMÉDIATE et explicite : on n'attend pas l'effet de persistance.
+    // Sans cela, le rafraîchissement des cours (qui tourne déjà pendant la saisie)
+    // pouvait ré-enregistrer l'ancien portefeuille vide par-dessus → mot de passe
+    // redemandé à chaque ouverture.
+    portRef.current = p;
+    try { saveStore({ port:p, prices, eurusd, priceTs: lastTs }); } catch(e){}
+    setPort(p); setNeedDecrypt(false);
+  }}/>;
   if(locked) return <LockScreen onUnlock={()=>setLocked(false)}/>;
 
   return (
@@ -4464,7 +4617,7 @@ function App() {
       <Strip m={m} alertCount={sells}/>
 
       {tab === "today" && <ErrorBoundary inline label="Actual"><TodayView port={enriched} m={m} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={qHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
-      {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail}/></ErrorBoundary>}
+      {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={qHistMap} macroCtx={macroCtx}/></ErrorBoundary>}
       {tab === "memory" && <ErrorBoundary inline label="Mémoire"><MemoryView snapshots={snapshots} port={enriched} m={m} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/></ErrorBoundary>}
 
       {detail && detailPort && <ErrorBoundary inline label="Détail"><DetailView
