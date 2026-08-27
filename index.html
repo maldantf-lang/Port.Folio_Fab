@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.0-2026-08-27-001";
+const BUILD = "v16.1-2026-08-27-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -193,7 +193,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"mGU8EnzC2xvJOBtitisxZQ==","iv":"ww74QCwjwDfT5vgu","data":"LAWJOFvG9IrZ15GMsTaz+cWI9iF+NaEjcoogatXFHzUhx5CqOG6d5KuosirJUjSqDTg41muq0Ir6XY3rfFgB+o4FoWJbBxWvY9neOQJA2IhTmjEz22mHlrfik510kcCiuFRphwLtW/zoTPnw6eFOr2pCVqc2uXWMgnoPSjLysofyG6aHdzpV8VXoqDEsvyEX1LUh2+eR2fLF2DKARz7dXqjM4Z8s1n1T680tTaaV0DGfqXP14ewKsna45aRZKcWW8mW6VSq61FPOPimt9KBEfjX7gRmMlowJeqMK6R848n6oXJdoTlC3ZP5y252RSerAo9nttOlKqTe2dmmCNkRlUd6r+s+UkI0z+bHyYqEzB4xAfkflto8KA9ZMOnCRaxbW1HUjT4DW4FtEQ3gJk+lKakPbG3pSJB8jq7EvB93Gl16pr1GuOWWOgU7yp/hXZU1Q7pbEy14zHxj8Ar4MFeTPGTfvVa9C/ANeUopOUdQD22wW56DkzPU1AFLCXknesgzzfPTNjRHZX1XmLb7hTMYQdDjsQHSFHNOUzKFuCAFxA7iPTsv9pDCcHW+Qc+eXrz/g3Z1DmmzOTA8QFaWlJVd0JmXsPDfC1Om4Wih216CBtia+CQ8800Gg/8ZRXBpvZQXxf4SoEyteJk64TiFzMCkRbMZ8m4yt8e7v4iwQwuTBeQ6Q54p1uzUc3O7FtbKhV4mhfPuYUzCct6OKLzIcKvsncJqDI4HmNlNlkWUW4NJl5imyzuWvc0ygdtf+6x/AjIh/WRRkk4eskhfXV7AxMw3ZIV4NQAUjiSwsKXBByRrRdIgC2zicXCcVI5b+fpWOm1qcOQ/v2vyi8kmnrJWfELIKMygpi+95IrUvdmj8ZamTYVbWLi0ooFdbulpVPXS/Ep3uWDUoYbP7ya6cit/bAD1qW2Jh6S3DreJ5KyOXM5Fwomp5u8QhHP36g6nAXvAYtsYDw7B70hpX2L/aYadZgVLtoIiSKsabi/sg0Y1weFAjYPxTHfzgjU5HRFwbruUniKFjVYmSMaLBuWLpQeY++6hN3da7Wi7ETm3jCyExDeAyBQ1Yj+C2Oe3o8yghAnv5Dp83lO298ePqsunV8YVv2R0Fu7sTthHWiSxB02ZQm2oqCYB0+0LOiF2RcQlcR/Mx2020EmkCRygUZ6PKAQMJtlyj9Pc="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -641,6 +641,7 @@ function openDB() {
   });
 }
 const SNAP_KEEP_MS = 400 * 24 * 3600 * 1000;   // on conserve ~13 mois (horizon max utile : 12 mois)
+const SNAP_MIN_GAP = 30 * 60 * 1000;           // 1 snapshot toutes les 30 min maximum
 async function snapshotAdd(snap) {
   try {
     const db = await openDB();
@@ -657,6 +658,45 @@ async function snapshotAdd(snap) {
     });
   } catch(e) { DBG && console.warn("[DB] add err", e); }
 }
+// Compte les snapshots SANS charger leur contenu (count() natif d'IndexedDB).
+// Charger toute la base juste pour afficher un nombre coûtait plusieurs Mo.
+async function snapshotsCount() {
+  try {
+    const db = await openDB();
+    return new Promise((res) => {
+      const tx = db.transaction(SNAP_STORE, "readonly");
+      const req = tx.objectStore(SNAP_STORE).count();
+      req.onsuccess = () => { db.close(); res(req.result); };
+      req.onerror = () => { db.close(); res(-1); };
+    });
+  } catch(e) { return -1; }
+}
+
+// Allège la base : supprime les snapshots espacés de moins de SNAP_MIN_GAP.
+// Ne touche ni à la première ni à la dernière valeur d'un intervalle utile.
+async function thinSnapshots() {
+  try {
+    const db = await openDB();
+    return new Promise((res) => {
+      const tx = db.transaction(SNAP_STORE, "readwrite");
+      const store = tx.objectStore(SNAP_STORE);
+      let lastKept = -Infinity, removed = 0;
+      const req = store.openCursor();
+      req.onsuccess = (e) => {
+        const c = e.target.result;
+        if (c) {
+          const ts = c.value && c.value.ts;
+          if (Number.isFinite(ts) && ts - lastKept < SNAP_MIN_GAP) { c.delete(); removed++; }
+          else lastKept = ts;
+          c.continue();
+        }
+      };
+      tx.oncomplete = () => { db.close(); res(removed); };
+      tx.onerror = () => { db.close(); res(-1); };
+    });
+  } catch(e) { return -1; }
+}
+
 async function snapshotsRange(fromTs) {
   try {
     const db = await openDB();
@@ -3383,10 +3423,8 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
   const fxOk = eurusd > 0.5 && eurusd < 2;
   checks.push({ k:"Taux EUR/USD", ok: fxOk, detail: fxOk ? eurusd.toFixed(3) : "hors bornes → secours" });
 
-  // Snapshots lisibles (asynchrone, à la demande)
-  const countSnaps = async () => {
-    try { const all = await snapshotsRange(0); setSnapN(all.length); } catch(e){ setSnapN(-1); }
-  };
+  // Snapshots : simple comptage, sans charger les données
+  const countSnaps = async () => { setSnapN(await snapshotsCount()); };
   useEffect(() => { countSnaps(); }, []);
   checks.push({ k:"Historique (snapshots)", ok: snapN != null && snapN >= 0,
     detail: snapN == null ? "lecture…" : snapN < 0 ? "illisible" : `${snapN} enregistrés` });
@@ -3435,7 +3473,9 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
 // INDICATEUR DE CALIBRATION — suit la progression vers l'auto-correction du moteur
 function CalibrationStatus() {
   const [snaps, setSnaps] = useState(null);
-  useEffect(() => { snapshotsRange(0).then(setSnaps).catch(()=>setSnaps([])); }, []);
+  // La calibration compare des prévisions espacées de 15 à 75 jours :
+  // inutile de charger toute la base, une fenêtre de 200 jours suffit largement.
+  useEffect(() => { snapshotsRange(Date.now() - 200*86400000).then(setSnaps).catch(()=>setSnaps([])); }, []);
 
   if(snaps === null) return (
     <div className="card"><div className="cd-ti"><h3>Calibration du moteur</h3></div>
@@ -3846,6 +3886,12 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
       <div className="card">
         <div className="cd-ti"><h3>Maintenance</h3></div>
         <button className="bn bn-w" style={{width:"100%",marginBottom:6}} onClick={onClearCache}>🗑 Vider le cache prix</button>
+        <button className="bn bn-w" style={{width:"100%",marginBottom:6}} onClick={async ()=>{
+          const n = await snapshotsCount();
+          if(!confirm(`Alléger l'historique ?\n\n${n} enregistrements actuellement.\nLes points espacés de moins de 30 min seront fusionnés (un seul conservé).\nLes courbes et la calibration ne perdent rien d'utile.`)) return;
+          const removed = await thinSnapshots();
+          alert(removed < 0 ? "Échec de l'allègement." : `✓ ${removed} enregistrements supprimés. Rouvre l'app pour voir la différence.`);
+        }}>📉 Alléger l'historique</button>
         <div className="dim" style={{fontSize:10,textAlign:"center",marginTop:6}}>
           Données stockées localement (localStorage + IndexedDB). Aucun envoi serveur.
         </div>
@@ -4512,9 +4558,11 @@ function App() {
     if (changed) { setAlerts(next); saveAlerts(next); }
   }, [port]);
 
-  // Charger snapshots
+  // Charger snapshots — borné à la fenêtre de conservation (400 j).
+  // Équivalent à « tout », mais la lecture passe par l'index de la base
+  // au lieu de balayer chaque enregistrement.
   const reloadSnapshots = useCallback(async () => {
-    const s = await snapshotsRange(0);
+    const s = await snapshotsRange(Date.now() - SNAP_KEEP_MS);
     setSnapshots(s.sort((a,b)=>a.ts-b.ts));
   }, []);
   useEffect(() => { reloadSnapshots(); }, [reloadSnapshots]);
@@ -4553,7 +4601,10 @@ function App() {
 
       // Snapshot historique (max 1 par 5min)
       const last = snapshots[snapshots.length-1];
-      if (!last || now - last.ts > 5*60*1000) {
+      // Un snapshot toutes les 30 min (au lieu de 5) : la base reste 6× plus légère
+      // sans rien perdre d'utile — la calibration compare des écarts de 15 à 75 JOURS,
+      // et les courbes d'historique sont quotidiennes.
+      if (!last || now - last.ts > SNAP_MIN_GAP) {
         // Stocker les prévisions pour le suivi de précision
         const fcMap = {};
         enriched.forEach(p => {
