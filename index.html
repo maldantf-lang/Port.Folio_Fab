@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.2-2026-08-28-001";
+const BUILD = "v16.2-2026-08-28-002";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -194,7 +194,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"avLHBDvS+PK2TNdRFrzojw==","iv":"SLLuCFhaRIoj3Lc8","data":"xqvOpWBU653VKYYXaxJRfTED9tJbmvAao16rLnFxtHTf8ckb9npUbLUUL0zkeCyJO9eT3OxC2EmcusUHAZEfV/SSA+6gz3J51GLBsatFKNNCQEFmxylZe5Dl80YFOn0jO1dsHYqLganvdRKRjwNs5X7FC1PJfyQ4d5wMCHAxjJxgYUmWX6TLdHXqnTfMjVNjbiJuYJ7TIuZ3PS/I+TYjmvf4KimjuBmziRxwA+o2nIlRgS80Zlsm0AcxcXXIKNK1mw14tpgQuW2ObCqQP9fc0CVUqDVTil7FOwJsqVmbtT6Xk83Vt3lgLYhPeJiGSv/mGZMQPn/gb3HPfYddWOdZWtJX7tK5hbU/sqGgVBDEB+0VEcQ7b9ZN7vKMAl+HuaLFPQ0IldsN/C9XsrIjJT7IS97zH5SSTa1v/cHhQ6HaTNLRXg+zkJ8L8BxwhXH+YvLMe+5licYK3gM0t0EgXDlyzALorsYNbxig0V9F12VRwoqDpjTk+ovcffOVw5OOoj6izroRjwz4PYWCdUG6iiCMUP8WXUxiiFZ1n2jiM/Fr0lK3yFB7XJwIDd/hUCIg8SoIpAvA4gsl+F7NQ0uuBlL0vSXKPVgNc7IYIetqCX0FiAcVuFYe9EWP74LxnahQ+zXG25D5YobtQ5mmgJv6EfZRov49Gft1+bUNrM6gLA8qyja8fEonNU8XH9tqFBBvTFm9moOiSzhsv14taIwX0LAh/9ZrDZ9lBFSqF5IJ1B1RMI14goS/srpOFzss6JiMruxxHJm/lRAZqFVNk/JTZjyMuyvuwZv4OQceKIGKWiq1g3CqeOQgO1UJ+InNY8tGQqN1d1ZLnVpLRmz1alfatoHCTJBHOror6k5+QLDdNBNjwF8zKAW6DYQ3X/dndmgxffkoGdNlhOJi+jSu0kuh+m4e9W0ayS4quWFlvprFCbstCO6JbCidc23CWphTS0j26b1h7TawkpOPrzv6EiHGvGQtXQAbe2Cixa44NUE0429z7LTyS02R+ft6Ap64WArA7jK29QWdu8wlIzpnbreJzoMq0RoMVHcyEThbRQ/1qjLHxQn2m7uM1H48UWakQpA87r6q9yPKa+57DL9Rwi/xZ2V9pT4ITgMMK4PFURPw0aJmRZc6NJ7RSRRTzk7G2A7iCia2AT1sCXyqVSJt1OYmISwYtKQ="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -500,7 +500,9 @@ async function fetchQuarterlyHistory(yfsym) {
   const cache = loadHist3y();
   if(cache[yfsym] && Date.now()-cache[yfsym].ts < HIST3Y_TTL) return cache[yfsym].data;
   const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yfsym)}?interval=1wk&range=3y`;
+  const wurl = getWorkerUrl();
   const proxUrls = [
+    ...(wurl ? [`${wurl}${wurl.includes("?")?"&":"?"}q=${encodeURIComponent(yUrl)}`] : []),
     `https://api.allorigins.win/raw?url=${encodeURIComponent(yUrl)}`,
     `https://cors.x2u.in/${yUrl}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yUrl)}`
@@ -1352,7 +1354,9 @@ async function fetchEarningsDate(yfsym) {
   const cache = loadEarnCache();
   if(cache[yfsym] && Date.now()-cache[yfsym].ts < EARN_TTL) return cache[yfsym].data;
   const yUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yfsym)}?modules=calendarEvents`;
+  const wurl = getWorkerUrl();
   const proxUrls = [
+    ...(wurl ? [`${wurl}${wurl.includes("?")?"&":"?"}q=${encodeURIComponent(yUrl)}`] : []),
     `https://api.allorigins.win/raw?url=${encodeURIComponent(yUrl)}`,
     `https://cors.x2u.in/${yUrl}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yUrl)}`
