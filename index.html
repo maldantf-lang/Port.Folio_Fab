@@ -110,10 +110,11 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.1-2026-08-27-001";
+const BUILD = "v16.2-2026-08-28-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
+const WORKER_KEY = "fab-worker-url"; // URL du relais Cloudflare (source principale des cours)
 const DB_NAME = "fab-pf-history";
 const DB_VERSION = 1;
 const SNAP_STORE = "snapshots";
@@ -193,7 +194,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"w9px4yhrj79bpdxRWPb8lw==","iv":"vzGJWALefNMlzPR9","data":"jKUNXtGsOQB1wOOvKK0TFtNJNGG7F2Hg/Rze52hdU8R4U9i4PITKWAeWbVGbvqRDzdBHmftDlCpT/RnPXyzMtsqD5drWKKkNuAJb8fAT/qXcmgqU/wvbvLqHoHoKs0LHjnQD5JXos90vbtu0ryC9RlgZ3+Xbwqx6QxJqL20NbROx0k5kd593X2t80542IHQ/5r5U8NkI0aFjillzbT4Ny6WU8EqqYNN4bEYUKGhKi8V3zhPoDZ6sZIOlyGidjRuqf6cdJMN+piGWwaDWo4w0HUt5NUn76pgj+/o3g9dxmL9yBFeLAfwEVOZLjxvkbWfTNUmBUVyICr57aRDXUFUr8nYoebuRpysR0u89+mv/VbN402rhFbsCSqdjPABqoQx/qMol3MiK+xGyZKY3DpsBI8ekugJ1LqX27mc2IGaFNcYW7F5bKwTzB+B4e/sg4cV88SVaw5t/w806y9UOWv4q31gAYAvqfdFtyeZc1Clc6O4579UvT1t6FDRBu/Hy4XrTJQkHvBO7T3ak4WYvlDEeWHMdc2JzZC2JKqrAOWzv/3TNCuqBvPP5AJP793sOs7/CQlP79dKXXkRaB64AHi22rTYDx6SquMqrecfT+U2MILUvbpe5Pq3VSNfZvzaGXlp29dXlRXd6a2hXqlI+MxRUs3mo45BlwEH1tvmol3lwwiKuH6mx0qX6ACA90KlA+JHtDTuMqcyLXECYkIVyBHwJwb7ZMxfzMp+yPClGTYSZVzo3hF4bEI8KaePbHerAW1LdsBjhfqiGMVmMrdb9gKcXoCqqlZr3meo8EylCPbLH2Kz46tgLj92LRHTDLELIqcCR84nKT6S4bwTgNlKdRAUgYhhbnBkywfF5osr1YyQaFZ+QyKxRcjpdzvZuPIJjrhWjdFcJLnqWau/TeQc9DeaQLNoXzfU0PlIyoOSL7owXbVZ+ra6yrE4XncidiDDfUenh4eStTNjWNSn3hFd+GAFkamAE3k7V2DPnDbJvTDSXhjdiHDCSsqu3rLg5KEZaRR4o00wZ4EU3sehWY5pFJm3ZPa+09IBG9+kuNKUadJRwVxmza8TuO9hxTebpjfgd5YCj2XZuh52M1sm+h7HbAhqyCIDrDNzmdPOHZeFtPmgEq2++K1akmZjRLYTJDq8IT2XMpuJvVIaSqqKEObtVmd9qtwE="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -797,34 +798,69 @@ async function fetchPriceFile() {
   }
 }
 
+// Relais Cloudflare : URL configurée par l'utilisateur (Réglages → Santé du système), en local.
+function getWorkerUrl() {
+  try { const u = (localStorage.getItem(WORKER_KEY) || "").trim(); return /^https:\/\//.test(u) ? u : ""; }
+  catch(e) { return ""; }
+}
+async function fetchViaWorker(url) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 9000);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, headers: { "Accept":"application/json" }, cache:"no-store" });
+    clearTimeout(to);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    if (j && j.error) throw new Error(j.error);
+    return j;   // { prices:{TICKER:px}, eurusd, count, ... }
+  } catch(e) { clearTimeout(to); throw e; }
+}
+
 async function fetchAllPrices(fast) {
   const tickers = Object.keys(YF);
   const results = {};
   const ts = {};
   let eurusd = null;
 
-  // 1) Base instantanée depuis le fichier same-origin (jamais bloqué)
-  try {
-    const f = await fetchPriceFile();
-    Object.assign(results, f.prices);
-    Object.assign(ts, f.tsMap);
-    if (f.eurusd) eurusd = f.eurusd;
-  } catch(e) { DBG && console.warn("[Prices] fichier indisponible", e.message); }
+  // 0) RELAIS Cloudflare (source PRINCIPALE) — cours frais À LA DEMANDE, sans CORS ni cron.
+  //    Le navigateur appelle TON Worker, qui va chercher Yahoo (secours Stooq) côté serveur.
+  //    S'il répond, il couvre tous les tickers → ni fichier ni proxies nécessaires.
+  const wurl = getWorkerUrl();
+  if (wurl) {
+    try {
+      const w = await fetchViaWorker(wurl);
+      if (w && w.prices && Object.keys(w.prices).length) {
+        Object.assign(results, w.prices);
+        const nowW = Date.now();
+        Object.keys(w.prices).forEach(t => { ts[t] = nowW; });
+        if (w.eurusd) eurusd = w.eurusd;
+      }
+    } catch(e) { DBG && console.warn("[Relais] indisponible", e.message); }
+  }
+  const workerOk = Object.keys(results).length > 0;
 
-  // 2) Rafraîchissement optionnel via proxies — best effort, n'écrase jamais une base
-  //    valide en cas d'échec. AU BOOT (fast) : si le fichier a fourni des cours (même
-  //    anciens), on les affiche IMMÉDIATEMENT et on saute la boucle proxy bloquante.
-  //    Le rafraîchissement périodique (60 s) sollicitera les proxies en arrière-plan.
-  //    Corrige le "trou noir" de 60-70 s où l'app attendait des proxies morts alors
-  //    qu'un fichier valide existait déjà (tout s'affichait en "secours figé").
-  const fileHasPrices = PRICE_FILE_STATE.ok === true && Object.keys(results).length > 0;
-  if (!(fast && fileHasPrices)) {
-    const BATCH = 3;
-    for (let i = 0; i < tickers.length; i += BATCH) {
-      await Promise.all(tickers.slice(i, i + BATCH).map(async t => {
-        try { const px = await fetchSymbol(YF[t].y); results[t] = px; ts[t] = Date.now(); }
-        catch(e) { DBG && console.warn("[Fetch]", t, "→", YF[t].y, "fail"); }
-      }));
+  // SECOURS (relais absent ou en échec) : ancien chemin fichier + proxies, inchangé.
+  if (!workerOk) {
+    // 1) Base instantanée depuis le fichier same-origin (jamais bloqué)
+    try {
+      const f = await fetchPriceFile();
+      Object.assign(results, f.prices);
+      Object.assign(ts, f.tsMap);
+      if (f.eurusd) eurusd = f.eurusd;
+    } catch(e) { DBG && console.warn("[Prices] fichier indisponible", e.message); }
+
+    // 2) Rafraîchissement optionnel via proxies — best effort, n'écrase jamais une base
+    //    valide. AU BOOT (fast) : si le fichier a fourni des cours, on les affiche tout de
+    //    suite et on saute la boucle proxy bloquante (le tick 60 s sollicitera les proxies).
+    const fileHasPrices = PRICE_FILE_STATE.ok === true && Object.keys(results).length > 0;
+    if (!(fast && fileHasPrices)) {
+      const BATCH = 3;
+      for (let i = 0; i < tickers.length; i += BATCH) {
+        await Promise.all(tickers.slice(i, i + BATCH).map(async t => {
+          try { const px = await fetchSymbol(YF[t].y); results[t] = px; ts[t] = Date.now(); }
+          catch(e) { DBG && console.warn("[Fetch]", t, "→", YF[t].y, "fail"); }
+        }));
+      }
     }
   }
 
@@ -3358,6 +3394,10 @@ function BioSettings({ pinActive }) {
 function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
   const [net, setNet] = useState("idle");   // idle | testing | ok | fail
   const [snapN, setSnapN] = useState(null);
+  const [wurl, setWurl] = useState(() => { try { return localStorage.getItem(WORKER_KEY) || ""; } catch(e){ return ""; } });
+  const [wSaved, setWSaved] = useState(() => !!getWorkerUrl());
+  const [wTest, setWTest] = useState("idle");   // idle | testing | ok | fail
+  const [wMsg, setWMsg] = useState("");
 
   const checks = [];
   // Stockage local accessible ?
@@ -3371,8 +3411,11 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
   // Source principale : fichier prices.json publié par GitHub Actions
   const pf = PRICE_FILE_STATE;
   const pfAge = pf.updated ? Math.round((Date.now()-pf.updated)/60000) : null;
-  checks.push({ k:"Fichier de cours (GitHub)", ok: pf.ok === true, warn: pf.ok === true && pfAge > 60,
-    detail: pf.ok === null ? "non testé" : pf.ok === false ? "absent — voir installation"
+  checks.push({ k:"Fichier de cours (GitHub)",
+    ok: wSaved ? true : pf.ok === true,
+    warn: wSaved ? false : (pf.ok === true && pfAge > 60),
+    detail: wSaved ? "inactif — relais principal"
+      : pf.ok === null ? "non testé" : pf.ok === false ? "absent — voir installation"
       : `${pf.count} cours · ${pfAge < 1 ? "à l'instant" : "il y a "+pfAge+" min"}` });
 
   checks.push({ k:"Cours reçus", ok: fresh > 0, warn: fresh > 0 && fresh < port.length,
@@ -3409,6 +3452,27 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
     else { setNet("fail"); setNetMsg("Aucune source ne répond — réseau ou proxies indisponibles. Les cours de secours restent affichés."); }
   };
 
+  const saveWurl = () => {
+    const u = wurl.trim();
+    try {
+      if (u === "") { localStorage.removeItem(WORKER_KEY); setWSaved(false); setWTest("idle"); setWMsg("Relais retiré — retour au fichier/proxies."); return; }
+      if (!/^https:\/\//.test(u)) { setWTest("fail"); setWMsg("L'URL doit commencer par https://"); return; }
+      localStorage.setItem(WORKER_KEY, u); setWSaved(true); setWTest("idle");
+      setWMsg("Enregistré. Les cours passeront par le relais au prochain rafraîchissement.");
+    } catch(e){ setWMsg("Impossible d'enregistrer (stockage bloqué ?)"); }
+  };
+  const testWurl = async () => {
+    const u = wurl.trim();
+    if (!/^https:\/\//.test(u)) { setWTest("fail"); setWMsg("URL invalide (https:// requis)."); return; }
+    setWTest("testing"); setWMsg(""); const t0 = Date.now();
+    try {
+      const j = await fetchViaWorker(u);
+      const n = j && j.prices ? Object.keys(j.prices).length : 0;
+      if (n > 0) { setWTest("ok"); setWMsg("✓ " + n + " cours reçus en " + (Date.now()-t0) + " ms · EUR/USD " + j.eurusd); }
+      else { setWTest("fail"); setWMsg("Le relais répond mais 0 cours — vérifie les logs du Worker."); }
+    } catch(e){ setWTest("fail"); setWMsg("Le relais ne répond pas : " + (e.message || e)); }
+  };
+
   const dot = c => c.ok ? (c.warn ? "🟡" : "🟢") : "🔴";
 
   return (
@@ -3429,6 +3493,26 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
         </button>
       </div>
       {netMsg && <div style={{fontSize:10,color:net==="ok"?"#2ecc8f":"#e85d5d",marginTop:4,lineHeight:1.4}}>{netMsg}</div>}
+
+      {/* RELAIS Cloudflare — source PRINCIPALE des cours (frais à l'ouverture) */}
+      <div style={{borderTop:"1px solid rgba(255,255,255,.06)",marginTop:8,paddingTop:8}}>
+        <div className="row" style={{padding:"2px 0"}}>
+          <span style={{fontSize:11}}>{wSaved ? (wTest==="fail"?"🔴":"🟢") : "⚪"} Relais de cours (Cloudflare)</span>
+          <span className="mono" style={{fontSize:10,color:"#8892a8"}}>{wSaved ? "configuré" : "non configuré"}</span>
+        </div>
+        <input value={wurl} onChange={e=>setWurl(e.target.value)} placeholder="https://….workers.dev"
+          spellCheck={false} autoCapitalize="off" autoCorrect="off"
+          style={{width:"100%",boxSizing:"border-box",background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,color:"#dde3f0",fontSize:11,padding:"7px 9px",marginTop:5,fontFamily:"'SF Mono',Consolas,monospace"}}/>
+        <div style={{display:"flex",gap:6,marginTop:6}}>
+          <button className="bn bn-b" style={{fontSize:10,padding:"4px 12px",flex:1}} onClick={saveWurl}>Enregistrer</button>
+          <button className="bn bn-b" style={{fontSize:10,padding:"4px 12px",flex:1}} onClick={testWurl} disabled={wTest==="testing"}>{wTest==="testing"?"…":"Tester"}</button>
+        </div>
+        {wMsg && <div style={{fontSize:10,color:wTest==="ok"?"#2ecc8f":wTest==="fail"?"#e85d5d":"#8892a8",marginTop:5,lineHeight:1.4}}>{wMsg}</div>}
+        <div style={{fontSize:9,color:"#3a4560",marginTop:6,lineHeight:1.4}}>
+          Ton relais gratuit va chercher les cours à l'ouverture (frais et fiable). Colle ici l'URL de ton Worker Cloudflare, puis Enregistrer.
+        </div>
+      </div>
+
       <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.4}}>
         🟢 OK · 🟡 à surveiller · 🔴 problème. Les proxies gratuits sont parfois saturés : un échec ponctuel est normal, les cours de secours prennent le relais.
       </div>
