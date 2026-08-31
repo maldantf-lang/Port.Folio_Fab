@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.2-2026-08-28-002";
+const BUILD = "v16.3-2026-08-28-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -194,7 +194,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"Qgn4zLNBdexp1Sg+BCaDcw==","iv":"ot1nDUsRFx4/9+tt","data":"L5c+s/Ha1L5cHbWN0Bg9hlPA/zIP0w9kebnfKCcz4GaNiUKGaFEjCMKOMhzmQP9WXHQhTD8Q3asPa7+NfGrCqxeTVKKp2kZ0don/kPuvFAy24PB6E68fQzn7fPWPJ/0/Uir21XEF8HWCSyoRK6Z8MTdUSKxzif2T3zeqSSXNsIqJzRo5/n3ncVTKcYXUDENtijwbbVUOCHOUp1cA+7wVMkMTs3GdzU+faTR0hWsQs4821+bfbkPh7wtrQU6tqXkOePd3689rcDiQ0vOxXRtNbgjD6PKIHUoKz6vyaCr9s4lifdG1Ww6qxVbkupEykbue5ai3cJgiFwawBNB0Y52S9HnrbHNSeYEs9jefxpbeF4CWNAdNjay1pW3APC1+svusRQh003m3TFLARTYRTAcUPIZEk5Vle5YOgeZRhUhcKi4NcB0Ozstmxfc4T6BcL0jM/v3SAibUeL3UegHd6372MD8a+cjwH122+lr4G4AWZEp2QuvyFQGK/6JI1zf+8e1khd4460FoeHMOu6TWvRvdM0W8PZHFWVWxorykjewu0V/kjtBMYb9O/KoLTwc2AdYo1NnqA8/oDXd/4F/QaM9ym7xgxwY+SU9c/mSPUqiV/Y4TCqEt1ehvw0X4Ne/m3kVAigm9vPeorWEJiWDqJMYV5yXKvKayyUZZdia1+OfvStkVy5J+8I5epYmrD2+b5x3XsUCMjoeySqNd+avwoTDLnrRm7wAgPekkUxxA1Efywr67hdy+QFmcW5MZA9hYu0KDErjKsxMy189iDFpQuu56mbP68hHUKOIBnkTQPygT0NzLoYVBDx2kbIDfMiZd1eMwnxkimMxoFfwiYeYEPd5MO4aX1fvD+0x6fpAQJtTrm25A682Yr9rji9aGEzEyMFn6G7GHS4VHdeMenmVaoSBzyDRKKyTat3SVCq4/HbCvDEPEg5M931r+4wX9J1yzXWR8XIu80Ef1eroZWALKhKnrjg6P9PxsvzSGuuNPvUXxWYYPwOn4k+y+yrk8x/6Dob31dxr8e4rDKo3Oa7D2KcUV0r0h4gYXCO9E/8TOck2p3pAQxyuPBfrcRYuj42A28ymZ3jBMx9uWCRXE7pGkwODUhrp2lYdb5WEl3e8bdyVRSVbN0nVdenDPLN7vJ+iRo5kznCQDVPG51x9Q2FlSslhLb0o="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -501,12 +501,7 @@ async function fetchQuarterlyHistory(yfsym) {
   if(cache[yfsym] && Date.now()-cache[yfsym].ts < HIST3Y_TTL) return cache[yfsym].data;
   const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yfsym)}?interval=1wk&range=3y`;
   const wurl = getWorkerUrl();
-  const proxUrls = [
-    ...(wurl ? [`${wurl}${wurl.includes("?")?"&":"?"}q=${encodeURIComponent(yUrl)}`] : []),
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(yUrl)}`,
-    `https://cors.x2u.in/${yUrl}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yUrl)}`
-  ];
+  const proxUrls = wurl ? [`${wurl}${wurl.includes("?")?"&":"?"}q=${encodeURIComponent(yUrl)}`] : [];
   for(const proxy of proxUrls) {
     try {
       const ctrl = new AbortController();
@@ -548,10 +543,14 @@ async function fetchMacroCtx() {
   const ctx = {};
   await Promise.all(pairs.map(async ([k,sym]) => {
     try {
-      const spot = await fetchSymbol(sym);
-      ctx[k] = spot;
-      // Percentile vs 3 ans (historique hebdo Yahoo, déjà mis en cache 24h) → seuil auto-calibré
-      try { const h = await fetchQuarterlyHistory(sym); const pr = pctRank(h, spot); if(pr!=null) ctx[k+"Pct"] = pr; } catch(e) {}
+      // Historique hebdo 3 ans via le relais ; le dernier point sert de niveau courant.
+      const h = await fetchQuarterlyHistory(sym);
+      if (h && h.length) {
+        const spot = h[h.length - 1].px;
+        ctx[k] = spot;
+        const pr = pctRank(h, spot);            // position dans la fourchette 3 ans (auto-calibré)
+        if (pr != null) ctx[k+"Pct"] = pr;
+      }
     } catch(e) {}
   }));
   if(Object.keys(ctx).length > 0) saveMacroCtx(ctx);
@@ -680,73 +679,30 @@ async function snapshotsRange(fromTs) {
 }
 
 /* ============== FETCH PRIX ==============
-   Sources vérifiées (août 2026) :
-   - corsproxy.io RETIRÉ : son offre gratuite est désormais limitée à localhost,
-     donc structurellement inutilisable depuis github.io (2 sources mortes sur 6).
-   - allorigins : ~20 requêtes/minute — d'où l'importance de limiter le nombre d'appels.
-   - codetabs : ~5 requêtes/seconde.
-   - cors.x2u.in : ~100 requêtes/heure, utile quand les autres bloquent.
-   Le taux EUR/USD ne passe plus par un proxy (voir fetchEurUsd). */
-const YQ = s => `https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`;
-const YQ2 = s => `https://query2.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1d`;
-const PROXIES = [
-  s => `https://api.allorigins.win/raw?url=${encodeURIComponent(YQ(s))}`,
-  s => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(YQ(s))}`,
-  s => `https://cors.x2u.in/${YQ(s)}`,
-  s => `https://api.allorigins.win/raw?url=${encodeURIComponent(YQ2(s))}`,
-  s => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(YQ2(s))}`,
-  s => `https://api.allorigins.win/get?url=${encodeURIComponent(YQ(s))}`
-];
-const PROXY_NAMES = ["allorigins","codetabs","cors.x2u.in","allorigins·q2","codetabs·q2","allorigins·get"];
+   Source unique : le relais Cloudflare (voir getWorkerUrl / fetchViaWorker). Il récupère
+   Yahoo (secours Stooq) côté serveur, sans CORS ni proxy. Les anciens proxies gratuits et
+   le fichier GitHub prices.json ont été retirés (dépendances fragiles remplacées par le
+   relais). Le taux EUR/USD passe par Frankfurter (BCE), sans proxy. */
 
-async function fetchOne(url, isWrap) {
+// Prix courant d'un symbole Yahoo via le relais (passe-plat ?q=). Utilisé pour le contexte
+// macro, la watchlist et le secours EUR/USD. Sans relais → erreur (le cache prend le relais).
+async function fetchSymbol(sym) {
+  const wurl = getWorkerUrl();
+  if (!wurl) throw new Error("relais non configuré");
+  const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`;
   const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 6000);   // 9s → 6s : on n'attend plus un proxy mort
+  const to = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const r = await fetch(url, { signal: ctrl.signal });
+    const r = await fetch(`${wurl}${wurl.includes("?")?"&":"?"}q=${encodeURIComponent(yUrl)}`, { signal: ctrl.signal });
     clearTimeout(to);
     if (!r.ok) throw new Error("http " + r.status);
     const j = await r.json();
-    const data = isWrap ? JSON.parse(j.contents) : j;
-    const px = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-    if (!isFinite(px) || px <= 0) throw new Error("invalid price");
+    const px = j?.chart?.result?.[0]?.meta?.regularMarketPrice;
+    if (!isFinite(px) || px <= 0) throw new Error("prix invalide");
+    const b = PRICE_BOUNDS[sym];
+    if (b && (px < b[0] || px > b[1])) throw new Error("prix hors bornes: " + sym + " " + px);
     return px;
   } catch(e) { clearTimeout(to); throw e; }
-}
-
-// Mémoire du proxy qui a répondu en dernier : on le réessaie en premier au cycle suivant.
-let BEST_PROXY = 0;
-// Ordre d'essai : le gagnant précédent d'abord, puis les autres.
-function proxyOrder() {
-  const idx = PROXIES.map((_,i)=>i);
-  return [BEST_PROXY, ...idx.filter(i=>i!==BEST_PROXY)];
-}
-
-async function fetchSymbol(sym) {
-  // Stratégie économe : on tente D'ABORD la source qui a marché la dernière fois, SEULE.
-  // Les proxies gratuits sont limités (~20 req/min) : multiplier les appels les fait
-  // basculer en blocage. On n'élargit que si la première tentative échoue.
-  const order = proxyOrder();
-  const waves = [[order[0]], [order[1], order[2]], [order[3], order[4], order[5]]];
-  let px = null, lastErr = null;
-  for (const wave of waves) {
-    const ids = wave.filter(i => i != null);
-    if (!ids.length) continue;
-    try {
-      const r = await Promise.any(ids.map(i =>
-        fetchOne(PROXIES[i](sym), i === 5).then(v => ({ v, i }))
-      ));
-      px = r.v; BEST_PROXY = r.i;    // on retient la source qui a marché
-      break;
-    } catch(e) { lastErr = e; }
-  }
-  if (px == null) throw lastErr || new Error("toutes les sources ont échoué");
-  const b = PRICE_BOUNDS[sym];
-  if (b && (px < b[0] || px > b[1])) {
-    DBG && console.warn("[Fetch] prix hors bornes, rejeté", sym, px, b);
-    throw new Error("price out of bounds: " + sym + " " + px);
-  }
-  return px;
 }
 
 // Taux EUR/USD SANS proxy : Frankfurter (Banque centrale européenne) autorise le CORS,
@@ -765,40 +721,8 @@ async function fetchEurUsd() {
   } catch(e) { clearTimeout(to); throw e; }
 }
 
-/* SOURCE PRINCIPALE : prices.json, publié par GitHub Actions toutes les 15 min.
-   Servi depuis le MÊME domaine que l'app → aucun CORS, aucun proxy, aucune limite
-   de débit : c'est instantané et ça marche même quand tous les proxies sont bloqués.
-   Les proxies ne servent plus qu'à rafraîchir entre deux mises à jour du fichier. */
-const PRICE_FILE = "./prices.json";
-let PRICE_FILE_STATE = { ok:null, updated:null, count:0 };
+/* Le fichier prices.json (GitHub Actions) a été retiré : le relais Cloudflare le remplace. */
 
-async function fetchPriceFile() {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 5000);
-  try {
-    const r = await fetch(PRICE_FILE + "?t=" + Date.now(), { cache:"no-store", signal: ctrl.signal });
-    clearTimeout(to);
-    if (!r.ok) throw new Error("http " + r.status);
-    const j = await r.json();
-    if (!j || !j.prices || typeof j.prices !== "object") throw new Error("format inattendu");
-    const ts = j.updated ? new Date(j.updated).getTime() : Date.now();
-    if (!Number.isFinite(ts)) throw new Error("date invalide");
-    const prices = {}, tsMap = {};
-    Object.entries(j.prices).forEach(([k, v]) => {
-      const b = PRICE_BOUNDS[k];
-      if (!Number.isFinite(+v) || +v <= 0) return;
-      if (b && (+v < b[0] || +v > b[1])) return;        // même garde-fou que côté proxy
-      prices[k] = +v; tsMap[k] = ts;
-    });
-    const eurusd = (Number.isFinite(+j.eurusd) && +j.eurusd > 0.5 && +j.eurusd < 2) ? +j.eurusd : null;
-    PRICE_FILE_STATE = { ok:true, updated:ts, count:Object.keys(prices).length };
-    return { prices, tsMap, eurusd, ts };
-  } catch(e) {
-    clearTimeout(to);
-    PRICE_FILE_STATE = { ok:false, updated:null, count:0 };
-    throw e;
-  }
-}
 
 // Relais Cloudflare : URL configurée par l'utilisateur (Réglages → Santé du système), en local.
 function getWorkerUrl() {
@@ -819,14 +743,12 @@ async function fetchViaWorker(url) {
 }
 
 async function fetchAllPrices(fast) {
-  const tickers = Object.keys(YF);
   const results = {};
   const ts = {};
   let eurusd = null;
 
-  // 0) RELAIS Cloudflare (source PRINCIPALE) — cours frais À LA DEMANDE, sans CORS ni cron.
-  //    Le navigateur appelle TON Worker, qui va chercher Yahoo (secours Stooq) côté serveur.
-  //    S'il répond, il couvre tous les tickers → ni fichier ni proxies nécessaires.
+  // Source UNIQUE : le relais Cloudflare. Il va chercher Yahoo (secours Stooq) côté serveur
+  // et couvre tous les tickers. Sans relais/en échec : le cache local et PRICE_DEF prennent le relais.
   const wurl = getWorkerUrl();
   if (wurl) {
     try {
@@ -840,40 +762,11 @@ async function fetchAllPrices(fast) {
     } catch(e) { DBG && console.warn("[Relais] indisponible", e.message); }
   }
   const workerOk = Object.keys(results).length > 0;
+  if (!workerOk) DBG && console.warn("[Relais] aucun cours reçu — cache/PRICE_DEF conservés");
 
-  // SECOURS (relais absent ou en échec) : ancien chemin fichier + proxies, inchangé.
-  if (!workerOk) {
-    // 1) Base instantanée depuis le fichier same-origin (jamais bloqué)
-    try {
-      const f = await fetchPriceFile();
-      Object.assign(results, f.prices);
-      Object.assign(ts, f.tsMap);
-      if (f.eurusd) eurusd = f.eurusd;
-    } catch(e) { DBG && console.warn("[Prices] fichier indisponible", e.message); }
-
-    // 2) Rafraîchissement optionnel via proxies — best effort, n'écrase jamais une base
-    //    valide. AU BOOT (fast) : si le fichier a fourni des cours, on les affiche tout de
-    //    suite et on saute la boucle proxy bloquante (le tick 60 s sollicitera les proxies).
-    const fileHasPrices = PRICE_FILE_STATE.ok === true && Object.keys(results).length > 0;
-    if (!(fast && fileHasPrices)) {
-      const BATCH = 3;
-      for (let i = 0; i < tickers.length; i += BATCH) {
-        await Promise.all(tickers.slice(i, i + BATCH).map(async t => {
-          try { const px = await fetchSymbol(YF[t].y); results[t] = px; ts[t] = Date.now(); }
-          catch(e) { DBG && console.warn("[Fetch]", t, "→", YF[t].y, "fail"); }
-        }));
-      }
-    }
-  }
-
-  // 3) Taux de change : fichier > Frankfurter (direct) > Yahoo (proxy) > secours.
-  //    Au boot on ne bloque pas sur le réseau : fichier ou FALLBACK, l'intervalle affine.
+  // Taux de change : le relais le renvoie déjà. Secours (rare) : Frankfurter (BCE, sans proxy).
   if (eurusd == null && !fast) {
-    try { eurusd = await fetchEurUsd(); }
-    catch(e) {
-      try { const r = await fetchSymbol("EURUSD=X"); if (r > 0.5 && r < 2) eurusd = r; }
-      catch(e2) { DBG && console.warn("[Fetch] EURUSD fail, fallback", FALLBACK_EURUSD); }
-    }
+    try { eurusd = await fetchEurUsd(); } catch(e) { DBG && console.warn("[Fetch] EURUSD fallback", FALLBACK_EURUSD); }
   }
   return { prices: results, priceTsMap: ts, eurusd: eurusd || FALLBACK_EURUSD };
 }
@@ -1355,12 +1248,7 @@ async function fetchEarningsDate(yfsym) {
   if(cache[yfsym] && Date.now()-cache[yfsym].ts < EARN_TTL) return cache[yfsym].data;
   const yUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yfsym)}?modules=calendarEvents`;
   const wurl = getWorkerUrl();
-  const proxUrls = [
-    ...(wurl ? [`${wurl}${wurl.includes("?")?"&":"?"}q=${encodeURIComponent(yUrl)}`] : []),
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(yUrl)}`,
-    `https://cors.x2u.in/${yUrl}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yUrl)}`
-  ];
+  const proxUrls = wurl ? [`${wurl}${wurl.includes("?")?"&":"?"}q=${encodeURIComponent(yUrl)}`] : [];
   for(const proxy of proxUrls) {
     try {
       const ctrl = new AbortController();
@@ -3396,7 +3284,6 @@ function BioSettings({ pinActive }) {
 
 // AUTO-DIAGNOSTIC — vérifie en direct l'état des dépendances de l'appli
 function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
-  const [net, setNet] = useState("idle");   // idle | testing | ok | fail
   const [snapN, setSnapN] = useState(null);
   const [wurl, setWurl] = useState(() => { try { return localStorage.getItem(WORKER_KEY) || ""; } catch(e){ return ""; } });
   const [wSaved, setWSaved] = useState(() => !!getWorkerUrl());
@@ -3412,15 +3299,6 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
 
   // Cours RÉELLEMENT reçus du réseau (un prix de secours ne compte pas comme reçu)
   const fresh = port.filter(p => priceTsMap && priceTsMap[p.t]).length;
-  // Source principale : fichier prices.json publié par GitHub Actions
-  const pf = PRICE_FILE_STATE;
-  const pfAge = pf.updated ? Math.round((Date.now()-pf.updated)/60000) : null;
-  checks.push({ k:"Fichier de cours (GitHub)",
-    ok: wSaved ? true : pf.ok === true,
-    warn: wSaved ? false : (pf.ok === true && pfAge > 60),
-    detail: wSaved ? "inactif — relais principal"
-      : pf.ok === null ? "non testé" : pf.ok === false ? "absent — voir installation"
-      : `${pf.count} cours · ${pfAge < 1 ? "à l'instant" : "il y a "+pfAge+" min"}` });
 
   checks.push({ k:"Cours reçus", ok: fresh > 0, warn: fresh > 0 && fresh < port.length,
     detail: fresh === 0 ? "aucun — tout en secours" : `${fresh}/${port.length} en direct` });
@@ -3443,23 +3321,10 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
     detail: snapN == null ? "lecture…" : snapN < 0 ? "illisible" : `${snapN} enregistrés` });
 
   // Test réseau à la demande : identifie QUELLE source répond, et en combien de temps
-  const [netMsg, setNetMsg] = useState("");
-  const testNet = async () => {
-    setNet("testing"); setNetMsg("");
-    const t0 = Date.now();
-    let okCount = 0; const names = PROXY_NAMES;
-    for(let i=0;i<PROXIES.length;i++){
-      try { const px = await fetchOne(PROXIES[i]("AMZN"), i===5); if(px>0){ okCount++; if(okCount===1) setNetMsg(names[i]+" répond en "+(Date.now()-t0)+" ms"); } }
-      catch(e){}
-    }
-    if(okCount>0){ setNet("ok"); setNetMsg(m => m + " · " + okCount + "/" + PROXIES.length + " sources actives"); }
-    else { setNet("fail"); setNetMsg("Aucune source ne répond — réseau ou proxies indisponibles. Les cours de secours restent affichés."); }
-  };
-
   const saveWurl = () => {
     const u = wurl.trim();
     try {
-      if (u === "") { localStorage.removeItem(WORKER_KEY); setWSaved(false); setWTest("idle"); setWMsg("Relais retiré — retour au fichier/proxies."); return; }
+      if (u === "") { localStorage.removeItem(WORKER_KEY); setWSaved(false); setWTest("idle"); setWMsg("Relais retiré — l'app utilise le dernier cours connu en local."); return; }
       if (!/^https:\/\//.test(u)) { setWTest("fail"); setWMsg("L'URL doit commencer par https://"); return; }
       localStorage.setItem(WORKER_KEY, u); setWSaved(true); setWTest("idle");
       setWMsg("Enregistré. Les cours passeront par le relais au prochain rafraîchissement.");
@@ -3488,15 +3353,6 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
           <span className="mono" style={{fontSize:10,color:"#8892a8"}}>{c.detail}</span>
         </div>
       ))}
-      <div className="row" style={{padding:"5px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
-        <span style={{fontSize:11}}>
-          {net==="ok"?"🟢":net==="fail"?"🔴":net==="testing"?"🟡":"⚪"} Accès aux cours (proxies)
-        </span>
-        <button className="bn bn-b" style={{fontSize:10,padding:"3px 10px"}} onClick={testNet} disabled={net==="testing"}>
-          {net==="idle"?"Tester":net==="testing"?"…":net==="ok"?"OK ✓":"Échec — réessayer"}
-        </button>
-      </div>
-      {netMsg && <div style={{fontSize:10,color:net==="ok"?"#2ecc8f":"#e85d5d",marginTop:4,lineHeight:1.4}}>{netMsg}</div>}
 
       {/* RELAIS Cloudflare — source PRINCIPALE des cours (frais à l'ouverture) */}
       <div style={{borderTop:"1px solid rgba(255,255,255,.06)",marginTop:8,paddingTop:8}}>
@@ -3518,7 +3374,7 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
       </div>
 
       <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.4}}>
-        🟢 OK · 🟡 à surveiller · 🔴 problème. Les proxies gratuits sont parfois saturés : un échec ponctuel est normal, les cours de secours prennent le relais.
+        🟢 OK · 🟡 à surveiller · 🔴 problème. Les cours arrivent par ton relais Cloudflare ; s'il est indisponible, l'app affiche les dernières valeurs connues.
       </div>
     </div>
   );
