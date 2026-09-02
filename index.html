@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.4-2026-08-31-001";
+const BUILD = "v16.4-2026-08-31-004";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -195,7 +195,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"dus+FaOUiAKuZioHxLRCvw==","iv":"z0IelxL3IcR8Nlyb","data":"Uajqv9msSUKbqNmr1ly6U4KYoTSNioqL3gFHCXOiVH4HdQXU8t2T01pgNtQ6F+Q+kYuMPSvgo0DoEhTHqSBLE9xNCDJRn/mdfRlSfp2bYQtaBvW09mCxJ3F28982P3i1sWwixwrTMjp8Ggo8hkdUM03wQMAxkEx5g/GFeSn7Ddg807rvgt/qggjr9NvvNt3pp9B5EXZKkvpuiDxuuslO6gvtsMkp2I9Wlzvq//QzOIxYalGJAobi5NidOD6RnXu02repmsd95ydxM36Hrq92d8a0Tj03k9cPFNLxqdb8Wa065mQkxQXsVkufXw/hTw9ZTGH0r/LQIoKbpyAWommvqbGvui0O33svecLgTzuCqzVgdO0CRXYtSbisQkRMbBhRWtMzwpUZ2JQ2/UpxpVpB1aW7CLE44t691+2qGJ3a31GWm2rWbS7WqF6YVTamFbuNoiQzuLwsoO5ipRUTv9A8u5R67nKhk6Rty2O8nSX81CpLclngSfw7bfbtyM/EsMAAdD0K6mIddlmuhUHxvzr9WFt5b0N1vqk53RbkLpmMT+hS/VR86kgsLy8i0Bv14KzaJ73egjA8KueWy6VUUvuT0AQjvgiIGKoVmJR/EzWYX943/bh7l37RuFSZx2z0Uee2gxCWoNq11qiDMOvHLgA6z7e2L2RirfSG2rVBfvCfUHtKBZ3b0oYiO2vHQ4wyuUdTos53Plpb12/yn9ESQeuY8fVpVd9rg6DRISgx7AmwiAKyen5NVcsFTo6OVVQW1S0pVPBc3h/WWtFPSMvfUCMNjAYBPC5Dlw+EkDECFUiMc8Gh5fX9I7l9yaPs8TtpsfT5wO+WL77/zcWqqHuqvvYO/KdR5gJkCEnIWpBJaPqImN9AT5xBS6FNopSt2UtB9pAqJSIXfwrw1tnspdckl8jEsZQ/Roa2UDihYxQElDUY0bGRVRQT5BzKN4jKbmSoKrt6g0NqNHgS/e/YaAT6qbNQlGGm8fJXbcnBua4Xs2ze5VBwGXKLHWZ2IYCh/bbEPBf14kesfBOjhQNcv9t3i+MejsJJhrhcP/yZ/eJjv03zLTPJc1+QB5+W3bDCGI+CDFdodkqD7zvxdTb9CmDLLILC1QePVgeIqjF+6sqm4jxhW/Ioo1GNmV2g0OaBfWgrHx33I7xE+Jj/I1ZR5zGrmxu0ROg="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -824,8 +824,10 @@ function enrich(port, prices, eurusd, priceTsMap, convMap, qHistMap) {
     };
     const eff = effectiveSignal(p.t, prices, qHistMap && qHistMap[p.t]);
     const pxNative = (prices && prices[p.t] != null) ? prices[p.t] : null;
-    const rvol = realizedVol(qHistMap && qHistMap[p.t]);   // volatilité observée 3 ans
-    return { ...p, inv, pxE, val, pnl, pct, priceAge, dynConv, pxNative, rvol,
+    const qh = qHistMap && qHistMap[p.t];
+    const rvol = realizedVol(qh);   // volatilité observée 3 ans
+    const wret = weeklyLogRets(qh); // rendements hebdo réels (cône bootstrap)
+    return { ...p, inv, pxE, val, pnl, pct, priceAge, dynConv, pxNative, rvol, wret,
       effSig:eff.sig, effBase:eff.base, effDrift:eff.drift, effReason:eff.reason, rsiLive:eff.rsi };
   });
   const tot = items.reduce((s,p) => s + (p.val || 0), 0);
@@ -958,7 +960,8 @@ function metrics(port) {
     if (p.val == null) { miss++; return; }
     if (isStale(p.priceAge)) stale++;
     tot += p.val; pnl += p.pnl;
-    wv2 += Math.pow((p.v||20) * p.wt/100, 2);
+    const volPct = (p.rvol != null && p.rvol > 0) ? p.rvol*100 : (p.v||20);   // volatilité RÉELLE observée 3 ans, repli sur estimation
+    wv2 += Math.pow(volPct * p.wt/100, 2);
     wp  += (p.pct||0) * p.wt / 100;
   });
   const wv = Math.sqrt(wv2) * Math.sqrt(1.5);
@@ -1413,6 +1416,49 @@ function realizedVol(qHist) {
   return Math.max(0.10, Math.min(1.20, annual));       // borné anti-aberration
 }
 
+// Rendements hebdo log (additifs) pour le cône bootstrap. null si historique trop court.
+function weeklyLogRets(qHist) {
+  const px = (qHist||[]).map(d=>d.px).filter(v=>v>0);
+  if(px.length < 20) return null;
+  const r = [];
+  for(let i=1;i<px.length;i++) r.push(Math.log(px[i]/px[i-1]));
+  return r;
+}
+
+// Cône par BOOTSTRAP des rendements hebdo RÉELS : on rééchantillonne `weeks` semaines au hasard
+// (avec remise), on somme (log additif) → un rendement simulé sur l'horizon. Répété N fois, ça
+// donne une distribution empirique qui capture NATURELLEMENT les queues épaisses et l'asymétrie
+// (les krachs du passé sont dans l'échantillon), contrairement à une courbe en cloche.
+// Déterministe (graine dérivée des données) → le cône ne « tremble » pas d'un rendu à l'autre.
+// Renvoie les décalages P10/P90 autour de la médiane empirique (rendement simple sur l'horizon).
+function bootstrapShape(logRets, weeks, N) {
+  if(!logRets || logRets.length < 20) return null;
+  N = N || 1200;
+  let s = (logRets.length*2654435761) >>> 0;
+  for(let i=0;i<logRets.length;i++) s = (s*31 + Math.round(logRets[i]*1e6)) >>> 0;
+  const rnd = () => { s = (s*1664525 + 1013904223) >>> 0; return s / 4294967296; };
+  const sims = new Array(N); const L = logRets.length;
+  for(let k=0;k<N;k++){ let sum=0; for(let w=0;w<weeks;w++){ sum += logRets[(rnd()*L)|0]; } sims[k]=Math.exp(sum)-1; }
+  sims.sort((a,b)=>a-b);
+  const q = p => sims[Math.min(N-1, Math.max(0, Math.floor(p*N)))];
+  const p10=q(0.10), p50=q(0.50), p90=q(0.90);
+  return { lo:p10-p50, hi:p90-p50, med:p50 };
+}
+
+// Écart-type d'une somme pondérée avec CORRÉLATIONS : sqrt(ΣΣ v_i v_j ρ_ij).
+// ρ manquant → 0,5 (corrélation actions typique). Sert au cône portefeuille : additionner les
+// queues (ρ=1) surestime le risque ; ceci reflète la vraie diversification (tech corrélée reste
+// risquée, défensives diversifient).
+function corrAggregate(vals, tickers, mat) {
+  let v = 0;
+  for(let i=0;i<tickers.length;i++) for(let j=0;j<tickers.length;j++){
+    let rho = 1;
+    if(i!==j){ const r = mat && mat[tickers[i]] && mat[tickers[i]][tickers[j]]; rho = (r==null||!isFinite(r)) ? 0.5 : r; }
+    v += vals[i]*vals[j]*rho;
+  }
+  return Math.sqrt(Math.max(0, v));
+}
+
 // CALIBRATION ADAPTATIVE — le moteur mesure son erreur passée et se corrige.
 // Pour chaque prévision stockée, on la compare au prix réel atteint plus tard,
 // en RAMENANT la prévision 12M à l'horizon réellement écoulé (√temps).
@@ -1452,6 +1498,17 @@ function calcCalibration(snapshots) {
   return { sigMult, muBias, samples:pairs.length, cov:+cov.toFixed(2), ready:true };
 }
 
+// Fraîcheur de l'avis analyste : 1 (≤90 j) → 0,3 (≥270 j), linéaire entre les deux. Plus la
+// revue vieillit, moins la prévision s'ancre sur la projection/objectif analyste (elle s'appuie
+// alors davantage sur le prix réel et le momentum). Re-vérifier les objectifs remet à 1.
+function analystFreshness(lu) {
+  if(!lu) return 0.5;
+  const ageDays = (Date.now() - new Date(lu).getTime()) / 86400000;
+  if(!isFinite(ageDays) || ageDays < 0) return 1;
+  if(ageDays <= 90) return 1;
+  if(ageDays >= 270) return 0.3;
+  return 1 - 0.7 * (ageDays - 90) / 180;
+}
 function forecast(pos, mac) {
   const an = AN[pos.t] || {};
   // 10 facteurs (compactés) : conviction, momentum sectoriel, signal, volatilité, position cycle, etc.
@@ -1469,19 +1526,27 @@ function forecast(pos, mac) {
   const ref = (pos.pxNative != null && pos.pxNative > 0) ? pos.pxNative
             : (pos.pxE != null && pos.pxE > 0) ? pos.pxE : pos.b;
   const f10 = (an.tgt && ref > 0) ? (an.tgt.a / ref - 1) * 0.3 : 0;
-  let mu12 = f3*0.5 + (f1-0.5)*0.10 + f2*0.06 + f4*0.04 + f6*0.08 + f7 + f8 + f9 + f10*0.4;
+  const fresh = analystFreshness(an.lu);   // décote l'influence analyste selon l'âge de la revue (lu)
+  let mu12 = f3*0.5*fresh + (f1-0.5)*0.10 + f2*0.06 + f4*0.04 + f6*0.08 + f7 + f8 + f9 + f10*0.4*fresh;
   // Volatilité RÉELLE si disponible (largeur du cône ancrée sur le comportement observé)
   const baseVol = (pos.rvol != null && pos.rvol > 0) ? pos.rvol : (pos.v || 25)/100 * 1.2;
   // Calibration adaptative : correction de largeur (sigMult) et de biais (muBias) apprise du passé
   mu12 += (CALIB.muBias || 0);
   const sigma12 = Math.max(0.10, baseVol * (CALIB.sigMult || 1));
-  // P10/P50/P90
+  // Cône : bootstrap des rendements hebdo RÉELS (queues épaisses + asymétrie) si historique
+  // suffisant, sinon repli gaussien. La calibration (sigMult) module toujours la largeur.
+  const sm = CALIB.sigMult || 1;
+  const shape = bootstrapShape(pos.wret, 52, 1200);
+  let p10, p90;
+  if(shape){ p10 = mu12 + shape.lo * sm; p90 = mu12 + shape.hi * sm; }
+  else { p10 = mu12 - 1.28 * sigma12; p90 = mu12 + 1.28 * sigma12; }
+  const sigmaEq = Math.max(0.01, (p90 - p10) / (2 * 1.28));   // sigma symétrique-équiv (consommateurs d'horizon)
   return {
-    p10: mu12 - 1.28 * sigma12,
-    p50: mu12,
-    p90: mu12 + 1.28 * sigma12,
-    sigma: sigma12,
+    p10, p50: mu12, p90,
+    sigma: sigmaEq,
     calibrated: CALIB.ready,
+    fresh: +fresh.toFixed(2),
+    fat: !!shape,
     factors: { f1,f2,f3,f4,f5,f6,f7,f8,f9,f10 }
   };
 }
@@ -2164,7 +2229,9 @@ function HistoryView({ snapshots, port, eurusd, qHistMap, spyHist }) {
   const [period, setPeriod] = useState("30j");
   const days = period === "7j" ? 7 : period === "30j" ? 30 : period === "90j" ? 90 : 99999;
   const cutoff = Date.now() - days * 86400000;
-  const data = snapshots.filter(s => s.ts >= cutoff).map(s => ({
+  // On ignore les snapshots à valeur nulle/invalide (pris avant chargement des cours) :
+  // ils créaient une fausse rampe 0→valeur, un « plus-bas » à 0 € et un drawdown de −100 %.
+  const data = snapshots.filter(s => s.ts >= cutoff && Number.isFinite(s.tot) && s.tot > 0).map(s => ({
     ts: s.ts,
     date: new Date(s.ts).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"}),
     val: s.tot, pnl: s.pnl, inv: s.inv
@@ -2677,7 +2744,7 @@ function AnalysisView({ port, onSelect }) {
   );
 }
 
-function ScenariosView({ port, m }) {
+function ScenariosView({ port, m, qHistMap }) {
   const [horizon, setHorizon] = useState(12);
   const [sInfo, setSInfo] = useState(false);
   const [activeStress, setActiveStress] = useState(null);
@@ -2714,12 +2781,21 @@ function ScenariosView({ port, m }) {
       val: p.val,
       p10: p.val * (1 + f.p10 * h),
       p50: p.val * (1 + f.p50 * h),
-      p90: p.val * (1 + f.p90 * h)
+      p90: p.val * (1 + f.p90 * h),
+      lo: p.val * (f.p50 - f.p10) * h,   // distance € du centre vers P10
+      hi: p.val * (f.p90 - f.p50) * h    // distance € du centre vers P90
     };
   }).filter(Boolean);
-  const tot10 = items.reduce((s,x)=>s+x.p10,0);
   const tot50 = items.reduce((s,x)=>s+x.p50,0);
-  const tot90 = items.reduce((s,x)=>s+x.p90,0);
+  // Queues agrégées AVEC corrélations réelles (au lieu d'additionner = supposer ρ=1). Reflète la
+  // vraie diversification : la grappe tech reste risquée, les défensives amortissent.
+  const pfCorr = calcHistCorrelations(port, qHistMap);
+  const pfMat = pfCorr ? pfCorr.mat : null;
+  const tks = items.map(x=>x.t);
+  const sLo = pfMat ? corrAggregate(items.map(x=>x.lo), tks, pfMat) : items.reduce((s,x)=>s+x.lo,0);
+  const sHi = pfMat ? corrAggregate(items.map(x=>x.hi), tks, pfMat) : items.reduce((s,x)=>s+x.hi,0);
+  const tot10 = tot50 - sLo;
+  const tot90 = tot50 + sHi;
 
   // Calcul impacts portefeuille avec chocs dynamiques (sectoriel + change EUR/USD)
   const stressImpact = useMemo(() => {
@@ -2998,7 +3074,7 @@ function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx }) {
         <>
           <EarningsCalendar port={port} onSelect={onSelect}/>
           <MacroView prices={prices} qHistMap={qHistMap} macroCtx={macroCtx}/>
-          <ScenariosView port={port} m={m}/>
+          <ScenariosView port={port} m={m} qHistMap={qHistMap}/>
           <AnalysisView port={port} onSelect={onSelect}/>
         </>
       ) : (
@@ -4507,9 +4583,10 @@ function App() {
         saveStore({ port: portRef.current, prices: mergedPrices, eurusd: ne, priceTs: now, priceTsMap: mergedTsMap });
       }
 
-      // Snapshot historique (max 1 par 5min)
+      // Snapshot historique (max 1 par 5min) — jamais de snapshot vide (cours pas encore
+      // chargés / portefeuille non configuré) : il polluerait les courbes et le drawdown.
       const last = snapshots[snapshots.length-1];
-      if (!last || now - last.ts > 5*60*1000) {
+      if (m.tot > 0 && (!last || now - last.ts > 5*60*1000)) {
         // Stocker les prévisions pour le suivi de précision
         const fcMap = {};
         enriched.forEach(p => {
