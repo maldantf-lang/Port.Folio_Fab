@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.4-2026-08-31-004";
+const BUILD = "v16.5-2026-09-01-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -195,7 +195,8 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"yU/c+sgTzjpL2BfXXhToTg==","iv":"8RWCJe+G3ZqMiVOC","data":"HFy0BGuPM9MagekOcXb7HAdVkILYvUxHwbPmj4lEhCcwVq3HESPgO4NMA9FQ8TH4jccOoGr1QKvro8jwOAqZbPiM+IcqNMB4L3nb0dPn4/yCbKl17L4BVCXc8R5WiLCkaCQ0lf9LV4HP8QsnSK3aTDwXdsk0+OgdCY2NBdwlyfeH1s8UhyDTo2sAx7mf4sgSzPPYFbeooLornQ77e/r5kYjsb0SBXAhq7E8AXdMfr+TzrLlifd6EgWfGz3AZ4lJ3Ps9eq9M6OWH6a/eseck6RZrqiev426FpDcQ8u+urHNeoMNj4SRU/lwmp6anu7t+SiXsG3w2qExgnxRelBkPn4cKzdmTbUpP021BqZ+cPjFk7BVFm6G9XV5lBwbapcBnUpYpSUU2b5Ju3/fiy2D1cnLsaHpl2SUQ4SKFggqBgQ9vhdUVtmuczhu5s51Feb4wxztTJthuhP2wAcpxB3PxJTNQixO4TCH2jFtazUsvQVVlpd4ntcjQQXCAzHIaz+9uQzJl5LJZzNO8p7jdx8R+JQgCUqMtj/r/Ggcwepwfbo6iFUriQtaRaQiNrVC0ywL1LYeMAhy75Kgub/reravnmVCO6+8UMsVgpbwN8M3sShrt7T8AyEcQxgyWVcUTeYdO3yqoDxft2/aAoQHqBpao653CEa7WIqYLGP2BFdOImJ4hy6srQkjWLREc8l2OWxvYJX3JFaTc1dwWC2iRjroMdxHiYV3oPUywHEuJHp80XKJRDlgddVfhiihOLdtMSo5gHPfBNjrdOZ1sQr3uEYwOi6luacpENw9ghf4l1GOwPJdb48b6IkowkH8+P6hq7EdlCEaJwvGLgOk6sT2MdX+PAaAJlrpIMsGF0HZGZStS+Wcx2x931X0WMg2Gk7Kq4qYCo3/42uK4k+7EL2nG5fZu/YBnPyMU0M2+kYkcDNfUfZ3WTbp1c+hUNGgfiO5zV3fB8d4gsnn4X/uY0KjcHODWKv9UfcRQFVGt6fWplejJn1ZU7H4l3GElzCEG2C/NZesry9Ck8z2MjeV7PoD0IH8pzJXjgbjjVWGalp2TRobG31dBq6F0GKO3vfloyrIP0KgxNiXKPehyjpa4lM0lsFcp07o68yoI2z7iQJmjWq/TM7cOQjdrWadTcI/6j+2r9fPkGWvGFQi6lBdvuk88KFLJPo+c="};
+const PORT_ENC = null;
+
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
   { t:"FTI",  n:"TechnipFMC",        q:0, b:0, s:"Énergie", sig:"sell", v:28, acct:"CTO" },
@@ -837,31 +838,11 @@ function enrich(port, prices, eurusd, priceTsMap, convMap, qHistMap) {
 
 // 1. Boussole contrarian : humeur de foule par position (-100 euphorie → +100 capitulation)
 // Positif = foule trop pessimiste (opportunité d'achat), négatif = foule euphorique (prudence).
-function crowdCompass(p) {
-  const an = AN[p.t];
-  const rsi = p.rsiLive;
-  let score = 0; const notes = [];
-  if(rsi != null){
-    if(rsi >= 70){ score -= (rsi-70)*2; notes.push("RSI élevé"); }
-    else if(rsi <= 30){ score += (30-rsi)*2; notes.push("RSI bas"); }
-  }
-  const pxN = p.pxNative != null ? p.pxNative : null;
-  if(an && an.tgt && pxN != null){
-    if(pxN >= an.tgt.h){ score -= 30; notes.push("au-dessus objectif haut"); }
-    else if(pxN <= an.tgt.l){ score += 30; notes.push("sous objectif bas"); }
-  }
-  score = Math.max(-100, Math.min(100, Math.round(score)));
-  const mood = score >= 40 ? "Capitulation" : score >= 15 ? "Pessimisme"
-    : score <= -40 ? "Euphorie" : score <= -15 ? "Optimisme" : "Neutre";
-  const advice = score >= 40 ? "Fenêtre d'achat probable — la foule sur-vend"
-    : score <= -40 ? "Prudence — la foule est euphorique, anticiper l'allègement"
-    : score >= 15 ? "Léger excès de pessimisme" : score <= -15 ? "Léger excès d'optimisme" : "Sentiment équilibré";
-  return { score, mood, advice, notes };
-}
-
-// 2. Score de timing 0-100 (mauvais → excellent moment pour agir) par position
-// Décompose le score de timing en étapes lisibles (pour l'exemple pédagogique en direct)
-function explainTiming(p) {
+// Jauge de TIMING unifiée (remplace boussole + score + explication : c'était le même signal en
+// trois formes). Part de 50 (neutre), corrige selon le RSI (rythme récent) et la position du cours
+// dans la fourchette d'objectifs analystes. Renvoie t100 (0-100, "moment pour agir"), mood100
+// (-100..+100, sentiment de foule), label (action), mood (mot), advice, et steps (pour le "i").
+function timingGauge(p) {
   const rsi = p.rsiLive, an = AN[p.t], pxN = p.pxNative;
   if(rsi == null && !(an && an.tgt && pxN != null)) return null;
   const steps = [];
@@ -882,26 +863,15 @@ function explainTiming(p) {
       s += d;
     }
   }
-  const total = Math.max(0, Math.min(100, Math.round(s)));
-  return { steps, total, label: total>=70?"Bon moment":total>=45?"Neutre":"Patienter" };
-}
-
-function timingScore(p) {
-  const rsi = p.rsiLive;
-  let s = 50; const parts = [];
-  if(rsi != null){
-    if(rsi <= 30){ s += 25; parts.push("survendu"); }
-    else if(rsi >= 70){ s -= 25; parts.push("suracheté"); }
-    else { s += (50-rsi)*0.3; }
-  }
-  const an = AN[p.t]; const pxN = p.pxNative;
-  if(an && an.tgt && pxN != null){
-    const band = an.tgt.h - an.tgt.l;
-    if(band > 0){ const pos = (pxN - an.tgt.l)/band; s += (0.5 - pos)*30; parts.push(pos<0.5?"sous médiane":"au-dessus médiane"); }
-  }
-  s = Math.max(0, Math.min(100, Math.round(s)));
-  const label = s>=70?"Bon moment":s>=45?"Neutre":"Patienter";
-  return { score:s, label, parts };
+  const t100 = Math.max(0, Math.min(100, Math.round(s)));   // 0-100 : mauvais → bon moment pour agir
+  const mood100 = Math.round((t100 - 50) * 2);              // -100..+100 : sentiment de foule
+  const label = t100>=70?"Bon moment":t100>=45?"Neutre":"Patienter";
+  const mood = mood100 >= 40 ? "Capitulation" : mood100 >= 15 ? "Pessimisme"
+    : mood100 <= -40 ? "Euphorie" : mood100 <= -15 ? "Optimisme" : "Neutre";
+  const advice = mood100 >= 40 ? "Fenêtre d'achat probable — la foule sur-vend"
+    : mood100 <= -40 ? "Prudence — la foule est euphorique, anticiper l'allègement"
+    : mood100 >= 15 ? "Léger excès de pessimisme" : mood100 <= -15 ? "Léger excès d'optimisme" : "Sentiment équilibré";
+  return { t100, mood100, label, mood, advice, steps };
 }
 
 // 3. Simulateur d'impact : effet d'un achat de eurAmount € sur une position
@@ -953,18 +923,59 @@ function hiddenClusters(port, corrMat) {
 }
 
 function metrics(port) {
-  let tot=0, inv=0, pnl=0, wv2=0, wp=0, miss=0, stale=0;
+  let tot=0, inv=0, pnl=0, wv2=0, wp=0, miss=0, stale=0, maxW=0, maxT=null;
   port.forEach(p => {
     inv += p.inv;
     if (p.val == null) { miss++; return; }
     if (isStale(p.priceAge)) stale++;
     tot += p.val; pnl += p.pnl;
+    if((p.wt||0) > maxW){ maxW = p.wt; maxT = p.t; }
     const volPct = (p.rvol != null && p.rvol > 0) ? p.rvol*100 : (p.v||20);   // volatilité RÉELLE observée 3 ans, repli sur estimation
     wv2 += Math.pow(volPct * p.wt/100, 2);
     wp  += (p.pct||0) * p.wt / 100;
   });
   const wv = Math.sqrt(wv2) * Math.sqrt(1.5);
-  return { tot, inv, pnl, wv, wp, sh: wv > 0 ? (wp - 3.5) / wv : 0, miss, stale };
+  return { tot, inv, pnl, wv, wp, sh: wv > 0 ? (wp - 3.5) / wv : 0, miss, stale, conc: +maxW.toFixed(1), concT: maxT };
+}
+
+// VRAI Sharpe : rendements JOURNALIERS réalisés (série de snapshots), annualisés. Ancien calcul
+// = rendement total depuis l'achat ÷ vol annuelle → gonflé et non comparable. null tant que <~10
+// jours d'historique (honnête). rf annuel par défaut 3,5%.
+function realizedSharpe(snapshots, rf) {
+  rf = (rf==null) ? 0.035 : rf;
+  const valid = (snapshots||[]).filter(s => Number.isFinite(s.tot) && s.tot>0).sort((a,b)=>a.ts-b.ts);
+  const byDay = {};
+  valid.forEach(s => { byDay[new Date(s.ts).toISOString().slice(0,10)] = s.tot; }); // 1 valeur/jour (la dernière)
+  const days = Object.keys(byDay).sort();
+  if(days.length < 11) return null;
+  const vals = days.map(d=>byDay[d]);
+  const rets = [];
+  for(let i=1;i<vals.length;i++) rets.push(vals[i]/vals[i-1]-1);
+  const mean = rets.reduce((a,b)=>a+b,0)/rets.length;
+  const varc = rets.reduce((a,b)=>a+(b-mean)*(b-mean),0)/Math.max(1,rets.length-1);
+  const sd = Math.sqrt(varc);
+  if(sd===0) return null;
+  const annRet = mean*252, annVol = sd*Math.sqrt(252);
+  const raw = (annRet - rf)/annVol;
+  return { sh: +Math.max(-9.99, Math.min(9.99, raw)).toFixed(2), n: rets.length };
+}
+
+// Perte potentielle du PORTEFEUILLE au P10 sur l'horizon h (fraction d'année), € et %. Utilise
+// le cône par position + agrégation des queues AVEC corrélations (vraie diversification).
+function portfolioDownside(port, qHistMap, h) {
+  const items = (port||[]).map(p => {
+    if(p.val == null) return null;
+    const f = forecast(p, MACRO);
+    return { t:p.t, val:p.val, lo: p.val*(f.p50 - f.p10)*h, mid: p.val*(1+f.p50*h) };
+  }).filter(Boolean);
+  if(!items.length) return null;
+  const cur = items.reduce((s,x)=>s+x.val,0);
+  const c50 = items.reduce((s,x)=>s+x.mid,0);
+  const hc = calcHistCorrelations(port, qHistMap);
+  const sLo = hc ? corrAggregate(items.map(x=>x.lo), items.map(x=>x.t), hc.mat) : items.reduce((s,x)=>s+x.lo,0);
+  const p10Val = c50 - sLo;
+  const loss = Math.max(0, cur - p10Val);
+  return { loss, pct: cur>0 ? loss/cur*100 : 0, p10Val };
 }
 
 /* ============== SCORE DE SANTÉ ============== */
@@ -1586,7 +1597,11 @@ function Header({ countdownPct, status, lastTs, paused, onPillClick, onSettings 
 }
 
 function Strip({ m, alertCount }) {
+  const [info, setInfo] = useState(false);
+  const iBtn = { width:15,height:15,borderRadius:8,border:"1px solid",color:info?"#4f83f5":"#8892a8",borderColor:info?"#4f83f5":"#3a4560",fontSize:9,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",fontStyle:"italic",fontFamily:"Georgia,serif" };
+  const b = t => <strong style={{color:"#dde3f0"}}>{t}</strong>;
   return (
+    <>
     <div className="strip">
       <div className="met">
         <div className="lb">Valeur</div>
@@ -1610,15 +1625,38 @@ function Strip({ m, alertCount }) {
       </div>
       <div className="met">
         <div className="lb">Sharpe</div>
-        <div className="vl" style={{color: m.sh>=1.5?"#2ecc8f":m.sh>=1?"#f0a020":"#e85d5d"}}>{m.sh.toFixed(2)}</div>
-        <div className="sb">{m.sh>=1.5?"Excellent":m.sh>=1?"Bon":m.sh>=0.5?"OK":"Faible"}</div>
+        <div className="vl" style={{color: m.sh==null?"#8892a8":m.sh>=1.5?"#2ecc8f":m.sh>=1?"#f0a020":"#e85d5d"}}>{m.sh==null?"—":m.sh.toFixed(2)}</div>
+        <div className="sb">{m.sh==null?"≥10 j requis":`${m.shN} j · ${m.sh>=1.5?"Excellent":m.sh>=1?"Bon":m.sh>=0.5?"OK":"Faible"}`}</div>
+      </div>
+      <div className="met">
+        <div className="lb">Concentration</div>
+        <div className="vl" style={{color: m.conc>=35?"#e85d5d":m.conc>=25?"#f0a020":"#2ecc8f"}}>{m.conc!=null?m.conc.toFixed(0)+"%":"—"}</div>
+        <div className="sb">{m.concT?`${m.concT} · 1re ligne`:"—"}</div>
+      </div>
+      <div className="met">
+        <div className="lb">Perte pot. 3M</div>
+        <div className="vl" style={{color:"#e85d5d"}}>{m.dd3m==null?"—":"−"+fe(m.dd3m)}</div>
+        <div className="sb">{m.dd3mPct==null?"scénario P10":`P10 · −${m.dd3mPct.toFixed(0)}%`}</div>
       </div>
       <div className="met">
         <div className="lb">Alertes</div>
         <div className="vl" style={{color: alertCount>0?"#e85d5d":"#dde3f0"}}>{alertCount}</div>
         <div className="sb">à alléger</div>
       </div>
+      <div className="met" onClick={()=>setInfo(v=>!v)} style={{cursor:"pointer",minWidth:38,alignItems:"center",justifyContent:"center"}}>
+        <span style={iBtn}>{info?"×":"i"}</span>
+      </div>
     </div>
+    {info && (
+      <div className="card" style={{fontSize:10,color:"#8892a8",lineHeight:1.6,marginTop:-4,marginBottom:9}}>
+        <div>{b("Valeur")} : valeur live. {b("P&L")} : gain/perte vs PRU (prix de revient).</div>
+        <div>{b("Perf annu.")} : performance pondérée, à comparer à la cible 10–20 %/an.</div>
+        <div>{b("Sharpe")} : rendement ajusté du risque, sur tes rendements journaliers réels (≥10 j). &gt;1 = bon. « — » tant que l'historique est court.</div>
+        <div>{b("Concentration")} : poids de ta plus grosse ligne. &gt;35 % = risque élevé (un seul titre décide de ton portefeuille).</div>
+        <div>{b("Perte pot. 3M")} : perte au scénario pessimiste (P10) à 3 mois, corrélations incluses. Un ordre de grandeur du risque, pas une prédiction.</div>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -1675,8 +1713,10 @@ function DecisionSupport({ port, qHistMap, onSelect }) {
     const hc = calcHistCorrelations(port, qHistMap);
     return hc ? hiddenClusters(port, hc.mat) : [];
   }, [port, qHistMap]);
-  const compass = port.filter(p=>p.val!=null).map(p=>({p, c:crowdCompass(p), t:timingScore(p)}))
-    .sort((a,b)=> Math.abs(b.c.score) - Math.abs(a.c.score));
+  const compass = port.filter(p=>p.val!=null).map(p=>{
+    const g = timingGauge(p);
+    return g ? { p, c:{score:g.mood100, mood:g.mood}, ex:{steps:g.steps, total:g.t100, label:g.label}, label:g.label, tScore:g.t100 } : null;
+  }).filter(Boolean).sort((a,b)=> Math.abs(b.c.score) - Math.abs(a.c.score));
   const plan = cash ? rebalancePlan(port, +cash) : null;
   const moodCol = s => s>=15 ? "#2ecc8f" : s<=-15 ? "#e85d5d" : "#8892a8";
   return (
@@ -1693,7 +1733,7 @@ function DecisionSupport({ port, qHistMap, onSelect }) {
       </div>
       {tInfo && (() => {
         // Exemple réel : on prend la position la plus parlante (score le plus éloigné de 50)
-        const cand = compass.map(x => ({ t:x.p.t, n:x.p.n, ex:explainTiming(x.p) }))
+        const cand = compass.map(x => ({ t:x.p.t, n:x.p.n, ex:x.ex }))
           .filter(x => x.ex && x.ex.steps.length)
           .sort((a,b) => Math.abs(b.ex.total-50) - Math.abs(a.ex.total-50))[0];
         const exCol = cand ? (cand.ex.total>=70?"#2ecc8f":cand.ex.total>=45?"#f0a020":"#8892a8") : "#8892a8";
@@ -1738,7 +1778,7 @@ function DecisionSupport({ port, qHistMap, onSelect }) {
         </div>
         );
       })()}
-      {compass.slice(0,5).map(({p,c,t})=>(
+      {compass.slice(0,5).map(({p,c,label,tScore})=>(
         <div key={p.t} onClick={()=>onSelect&&onSelect(p.t)} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.04)",cursor:"pointer"}}>
           <strong className="tk" style={{minWidth:44}}>{p.t}</strong>
           <span style={{fontSize:10,color:moodCol(c.score),minWidth:78}}>{c.mood}</span>
@@ -1747,7 +1787,7 @@ function DecisionSupport({ port, qHistMap, onSelect }) {
             <div style={{position:"absolute",top:0,bottom:0,borderRadius:3,background:moodCol(c.score),
               left: c.score>=0?"50%":(50+c.score/2)+"%", width: Math.abs(c.score)/2+"%"}}/>
           </div>
-          <span style={{fontSize:10,color:t.score>=70?"#2ecc8f":t.score>=45?"#f0a020":"#8892a8",minWidth:64,textAlign:"right"}}>timing {t.score}</span>
+          <span style={{fontSize:10,fontWeight:700,color:tScore>=70?"#2ecc8f":tScore>=45?"#f0a020":"#8892a8",minWidth:64,textAlign:"right"}}>{label}</span>
         </div>
       ))}
       <div className="dim" style={{fontSize:8,marginTop:4,marginBottom:10}}>Vert = foule trop pessimiste (fenêtre d'achat) · Rouge = euphorie (prudence).</div>
@@ -3919,11 +3959,13 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   const dynConv = useMemo(() => calcDynamicConviction(ticker, p, snapshots, qHist), [ticker, p.pxE, qHist, snapshots, reviewBump]);
   const ec = dynConv.value;
 
-  // RSI depuis snapshots 90j
+  // RSI 14 hebdo — MÊME source que la vue globale (rsiLive, historique hebdo Yahoo), pour une
+  // valeur IDENTIQUE partout. Repli sur qHist si rsiLive pas encore chargé. (Avant : calculé sur
+  // les snapshots 90 j de l'app → valeur différente et peu fiable.)
   const rsi = useMemo(() => {
-    if(!history||history.length<16) return null;
-    return calcRSI(history.map(h=>h.px).filter(x=>x!=null));
-  }, [history]);
+    if(p.rsiLive != null) return p.rsiLive;
+    return (qHist && qHist.length>=16) ? calcRSI(qHist.map(d=>d.px),14) : null;
+  }, [p.rsiLive, qHist]);
 
   // Beta réel vs SPY (trimestriel 3A)
   const beta = useMemo(() => {
@@ -4257,7 +4299,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
           {/* RSI */}
           {rsi!=null ? (
             <div>
-              <div className="lbl">RSI 14</div>
+              <div className="lbl">RSI 14 sem.</div>
               <div style={{position:"relative",height:22,background:"#161c2a",borderRadius:4,overflow:"hidden",marginTop:4}}>
                 <div style={{position:"absolute",left:"30%",right:"30%",top:0,bottom:0,background:"rgba(255,255,255,.04)"}}/>
                 <div style={{position:"absolute",left:rsi+"%",top:3,width:3,height:16,background:rsi<30?"#2ecc8f":rsi>70?"#e85d5d":"#f0a020",borderRadius:2,transform:"translateX(-50%)"}}/>
@@ -4270,8 +4312,8 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
             </div>
           ) : (
             <div>
-              <div className="lbl">RSI 14</div>
-              <div className="dim" style={{fontSize:10,marginTop:4}}>Disponible après 15+ snapshots ({history?history.length:0} disponibles)</div>
+              <div className="lbl">RSI 14 sem.</div>
+              <div className="dim" style={{fontSize:10,marginTop:4}}>Disponible dès le chargement de l'historique hebdo (Yahoo).</div>
             </div>
           )}
           {/* Beta */}
@@ -4668,7 +4710,12 @@ function App() {
   useEffect(() => { convMapRef.current = convMap; }, [convMap]);
 
   const enriched = useMemo(() => enrich(port, prices, eurusd, priceTsMap, convMap, qHistMap), [port, prices, eurusd, priceTsMap, convMap, qHistMap]);
-  const m = useMemo(() => metrics(enriched), [enriched]);
+  const m = useMemo(() => {
+    const base = metrics(enriched);
+    const rs = realizedSharpe(snapshots);                 // vrai Sharpe (snapshots), null si <~10j
+    const dd = portfolioDownside(enriched, qHistMap, 0.25); // perte potentielle au P10 à 3 mois
+    return { ...base, sh: rs ? rs.sh : null, shN: rs ? rs.n : 0, dd3m: dd ? dd.loss : null, dd3mPct: dd ? dd.pct : null };
+  }, [enriched, snapshots, qHistMap]);
   const sells = enriched.filter(p => p.sig === "sell").length;
 
   // Update countdown depuis lastTs
