@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.5-2026-09-01-001";
+const BUILD = "v16.6-2026-09-02-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -195,7 +195,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"B1qV1YaxadElcgHACJUb1Q==","iv":"RVGANdXI1J9ieqcz","data":"lvM0XtI6rCP524D/SxRWNwqbWWAW9DBYP9qT4JMe5X9cV9IdjFEqz4laBkW7WMz7HHudNCBljDinDD8uTqGvl8dLRaglIvS23/IuiyTjxOb/FJxYQvPB5Z8zNelZveKvvsjUlik6kNCNGJ6C7bqhVZ9cuK9HTGPpeX8iRQsoS3l5HY9dnN/90yd1OaV6lYA9O3p8TPM/yuSIvLq+QmdwDioHZWZrPfo/dqBNeLRR6o0k1C3oDN1BEuMWPgMKBCpNk4DfREyOTzS/nPni8JWCn2sxUlfEpweITTH1ZS1UgbH14K89CEzlK2g4+ru9A+qOBnrii+nZrgQauj3heChWYJCk+QhU+OnXY3ViqI+keI3GnBrFQ+jKhcemBNltcOuNbKaFNOQC14QOLrSdteAkWa1oWjRyAykMOWZ1BDRuio2zar05iWDEaW3KL+BmkgxpFkXsblMEf2+AygAxB0uORjPHZin1Jw5P7nhcJuFHORDxtf+ljl1lTJ7TuDGqcsbr/9JxjIggrI8dC2eLQMqB+Sv/ga79eLxZvEjJozYTgJEEhABm6noNitgBI6cxGhu/DVfadhlcluDBTARoreaZO3u5GpByvNogE4vWDr+OOJplXN18dtQyof2LjTRScDEt9mUha+z2DcUk6iCMbcZW4rOuw0fYl2bMg5g6qJ8Mb7x0yyhF8hEZYAtn+7vpjn6htVpcvK7SaTE304SN5PiA1VGblOdd2T3s+p+k8KZ0hu+oSDi2Pqt1IgFXvqw4POONY0DLAmPtpG0WTOJTrRVAd/1Fd5jY/VBaHSFcChR9Kx7FgUBZCGoRdu7UtmuIvrczXf6PiVmHgp0maifLYm+ayW8IgcBKvuisVXEzKvZsStfpdz8CXiFXr9itQv/P4AaMhn5HvvNPnsCr4VHHJB4suBBcPWkOxIxuYRWgc3wECGv2SLe56tPe3UUzpdyy7Wwwhn4JwhFLmr18JPGgT56MoMCAX7oU7nWiNzZNYCOHUVoizmBZpDtkLEBsTMchlWj9gmUHrcVXp3q3sqRg/jphNtFNSvq5VqIICHOfJr9UoBgFppaZzOWSnt45lLWMqjxTDpHtCTECvzU5OQGXU2CBP8cpE5EpkQqayy0Vqdh4QhVhSDN7uu76r6Ss8L0y3401l7VFwST8mrdqgQTTPOmvfMI="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -1856,17 +1856,24 @@ const SEC_COL = { Tech:"#4f83f5", Luxe:"#8b7cf5", "Défense":"#2ecc8f", "Énergi
 const secCol = s => SEC_COL[s] || "#8892a8";
 
 // Mini-courbe 90 jours (≈13 points hebdo) pour la liste des positions
-function Sparkline({ hist, w, h }) {
+function Sparkline({ hist, w, h, id }) {
   const W = w || 52, H = h || 18;
   const pts = (hist || []).slice(-13).map(d => d.px).filter(v => v > 0);
   if(pts.length < 4) return <div style={{width:W,height:H}}/>;
   const min = Math.min(...pts), max = Math.max(...pts), range = (max - min) || 1;
   const up = pts[pts.length-1] >= pts[0];
   const col = up ? "#2ecc8f" : "#e85d5d";
-  const d = pts.map((v,i) => (i===0?"M":"L") + (i/(pts.length-1)*W).toFixed(1) + "," + (H - ((v-min)/range)*H).toFixed(1)).join(" ");
+  const xy = pts.map((v,i) => [i/(pts.length-1)*W, H - ((v-min)/range)*H]);
+  const line = xy.map((p,i) => (i===0?"M":"L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+  const area = line + ` L${W.toFixed(1)},${H} L0,${H} Z`;
+  const gid = "spk_" + (id || "x");
   return (
     <svg width={W} height={H} style={{display:"block"}} aria-hidden="true">
-      <path d={d} fill="none" stroke={col} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
+      <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor={col} stopOpacity="0.30"/><stop offset="100%" stopColor={col} stopOpacity="0"/>
+      </linearGradient></defs>
+      <path d={area} fill={`url(#${gid})`} stroke="none"/>
+      <path d={line} fill="none" stroke={col} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
     </svg>
   );
 }
@@ -2215,10 +2222,12 @@ function PositionsView({ port, m, eurusd, qHistMap = {}, onSelect, onTabChange, 
         <div className="cd-ti"><h3>Positions ({port.length})</h3>
           <span className="dim mono" style={{fontSize:10}}>EUR/USD {eurusd?eurusd.toFixed(4):"—"}</span>
         </div>
-        {port.map(p => (
+        {port.map(p => {
+          const sc = {buy:"#2ecc8f",hold:"#f0a020",sell:"#e85d5d",spec:"#8b7cf5"}[p.effSig||p.sig] || "transparent";
+          return (
           <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}
-            style={{borderLeft: p.wt>35 ? "2px solid #f0a020" : "2px solid transparent", paddingLeft:6}}
-            title={p.wt>35 ? "Position concentrée (>35 %)" : undefined}>
+            style={{borderLeft:`3px solid ${sc}`, paddingLeft:6}}
+            title={`Verdict : ${p.effSig||p.sig}${p.wt>35?" · position concentrée (>35 %)":""}`}>
             <div style={{flex:"0 0 33%"}}>
               <div className="tk">{p.t} <span className={"chip "+(p.effSig||p.sig)} style={{marginLeft:6}}>{p.effSig||p.sig}</span>
                 {p.effDrift && <span style={{marginLeft:4,fontSize:9,color:"#8b7cf5"}} title={"Analyste : "+p.effBase+" · ajusté au prix : "+p.effReason}>↻</span>}
@@ -2227,7 +2236,7 @@ function PositionsView({ port, m, eurusd, qHistMap = {}, onSelect, onTabChange, 
               <div className="nm">{p.n}</div>
             </div>
             <div style={{flex:"0 0 15%",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <Sparkline hist={qHistMap && qHistMap[p.t]}/>
+              <Sparkline hist={qHistMap && qHistMap[p.t]} id={p.t}/>
             </div>
             <div className="num" style={{flex:"0 0 26%"}}>
               <div>{p.pxE!=null?fe(p.pxE):"—"}</div>
@@ -2238,7 +2247,8 @@ function PositionsView({ port, m, eurusd, qHistMap = {}, onSelect, onTabChange, 
               <div style={{fontSize:10}}><span style={{color:cl(p.pct)}}>{fp(p.pct)}</span> • <span style={{color:p.wt>35?"#f0a020":"#8892a8",fontWeight:p.wt>35?700:400}}>{fp(p.wt,0)}</span></div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
       <BuySimulatorCard port={port} onSelect={onSelect}/>
       <div className="card">
@@ -2783,6 +2793,19 @@ function AnalysisView({ port, onSelect }) {
   );
 }
 
+function FanTip({ active, payload, label }) {
+  if(!active || !payload || !payload.length) return null;
+  const d = payload[0] && payload[0].payload; if(!d) return null;
+  return (
+    <div style={{background:"#0f1420",border:"1px solid rgba(255,255,255,.12)",borderRadius:6,padding:"6px 9px",fontSize:10,lineHeight:1.5}}>
+      <div style={{color:"#dde3f0",fontWeight:700,marginBottom:2}}>À {label}</div>
+      <div style={{color:"#2ecc8f"}}>Optimiste (P90) : {fe(d.p90)}</div>
+      <div style={{color:"#4f83f5"}}>Médian (P50) : {fe(d.p50)}</div>
+      <div style={{color:"#e85d5d"}}>Pessimiste (P10) : {fe(d.p10)}</div>
+    </div>
+  );
+}
+
 function ScenariosView({ port, m, qHistMap }) {
   const [horizon, setHorizon] = useState(12);
   const [sInfo, setSInfo] = useState(false);
@@ -2835,6 +2858,19 @@ function ScenariosView({ port, m, qHistMap }) {
   const sHi = pfMat ? corrAggregate(items.map(x=>x.hi), tks, pfMat) : items.reduce((s,x)=>s+x.hi,0);
   const tot10 = tot50 - sLo;
   const tot90 = tot50 + sHi;
+
+  // Éventail portefeuille : P10/P50/P90 à plusieurs échéances (0→12M) pour le graphe en éventail.
+  const fcs = port.filter(p=>p.val!=null).map(p => ({ t:p.t, val:p.val, f: forecast(p, MACRO) }));
+  const curVal = fcs.reduce((s,x)=>s+x.val, 0);
+  const fanTks = fcs.map(x=>x.t);
+  const fan = [0,1,2,3,6,9,12].map(mo => {
+    const hh = mo/12;
+    const c50 = fcs.reduce((s,x)=>s + x.val*(1+x.f.p50*hh), 0);
+    const sl = pfMat ? corrAggregate(fcs.map(x=>x.val*(x.f.p50-x.f.p10)*hh), fanTks, pfMat) : fcs.reduce((s,x)=>s+x.val*(x.f.p50-x.f.p10)*hh,0);
+    const sh2 = pfMat ? corrAggregate(fcs.map(x=>x.val*(x.f.p90-x.f.p50)*hh), fanTks, pfMat) : fcs.reduce((s,x)=>s+x.val*(x.f.p90-x.f.p50)*hh,0);
+    const p10v = c50 - sl, p90v = c50 + sh2;
+    return { mo: mo+"M", p10:+p10v.toFixed(0), p50:+c50.toFixed(0), p90:+p90v.toFixed(0), base:+p10v.toFixed(0), span:+(p90v-p10v).toFixed(0) };
+  });
 
   // Calcul impacts portefeuille avec chocs dynamiques (sectoriel + change EUR/USD)
   const stressImpact = useMemo(() => {
@@ -2979,7 +3015,24 @@ function ScenariosView({ port, m, qHistMap }) {
           <div className="num" style={{fontSize:11,color:"#2ecc8f"}}>{fp((tot90/m.tot-1)*100,0)}</div>
         </div>
       </div>
-      {/* PÉDAGOGIE — comprendre les 3 scénarios futurs (replié derrière un i) */}
+      <div className="card">
+        <div className="cd-ti"><h3>Cône en éventail</h3><span className="dim" style={{fontSize:9}}>0 → 12 mois</span></div>
+        <div style={{height:190}}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={fan} margin={{top:8,right:10,left:0,bottom:0}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.05)"/>
+              <XAxis dataKey="mo" tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false} width={44} tickFormatter={v=>"€"+Math.round(v)}/>
+              <Tooltip content={<FanTip/>}/>
+              <ReferenceLine y={curVal} stroke="#8892a8" strokeDasharray="4 3" strokeOpacity={0.6}/>
+              <Area type="monotone" dataKey="base" stackId="cone" stroke="none" fill="transparent" isAnimationActive={false} connectNulls/>
+              <Area type="monotone" dataKey="span" stackId="cone" stroke="none" fill="rgba(79,131,245,.18)" isAnimationActive={false} connectNulls/>
+              <Line type="monotone" dataKey="p50" stroke="#4f83f5" strokeWidth={2} dot={false} isAnimationActive={false}/>
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+        <div style={{fontSize:9,color:"#3a4560",marginTop:6,textAlign:"center",lineHeight:1.4}}>Zone bleue = fourchette P10–P90 (corrélations incluses). Ligne = trajectoire médiane. Pointillé = valeur actuelle {fe(curVal)}.</div>
+      </div>
       <div className="card">
         <div className="cd-ti" style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}} onClick={()=>setSInfo(v=>!v)}>
           <h3>Comment lire ces 3 scénarios ?</h3>
@@ -3931,6 +3984,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   const [history, setHistory] = useState(null);
   const [qHist, setQHist] = useState(null); // historique trimestriel 3A
   const [spyQHist, setSpyQHist] = useState(null); // SPY trimestriel pour beta
+  const [adv, setAdv] = useState(false);           // repli des indicateurs techniques (beta, Kelly)
   const [earnDate, setEarnDate] = useState(undefined); // undefined=chargement, null=aucune, {ts,date}=ok
   const [horizon, setHorizon] = useState(12);
   const [reviewBump, setReviewBump] = useState(0);
@@ -4294,7 +4348,9 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 
       {/* RSI + BETA + KELLY + CONVICTION DECAY */}
       <div className="card">
-        <div className="cd-ti"><h3>Indicateurs de marché</h3></div>
+        <div className="cd-ti"><h3>Indicateurs de marché</h3>
+          <span onClick={()=>setAdv(v=>!v)} style={{cursor:"pointer",fontSize:9,fontWeight:800,letterSpacing:".04em",color:adv?"#4f83f5":"#8892a8",border:"1px solid",borderColor:adv?"#4f83f5":"#3a4560",borderRadius:5,padding:"2px 7px"}}>{adv?"AVANCÉ ▲":"AVANCÉ ▾"}</span>
+        </div>
         <div className="g2" style={{marginBottom:10}}>
           {/* RSI */}
           {rsi!=null ? (
@@ -4316,8 +4372,8 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
               <div className="dim" style={{fontSize:10,marginTop:4}}>Disponible dès le chargement de l'historique hebdo (Yahoo).</div>
             </div>
           )}
-          {/* Beta */}
-          {beta!=null ? (
+          {/* Beta (avancé) */}
+          {adv && (beta!=null ? (
             <div>
               <div className="lbl">Beta vs S&amp;P 500</div>
               <div className="mono" style={{fontSize:16,fontWeight:800,color:beta>1.3?"#e85d5d":beta<0.7?"#2ecc8f":"#f0a020",marginTop:4}}>{beta.toFixed(2)}</div>
@@ -4330,8 +4386,9 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
               <div className="lbl">Beta vs S&amp;P 500</div>
               <div className="dim" style={{fontSize:10,marginTop:4}}>Données 3 ans insuffisantes</div>
             </div>
-          )}
+          ))}
         </div>
+        {adv && (
         <div className="g2" style={{marginBottom:10}}>
           {/* Kelly */}
           {kellyPct!=null ? (
@@ -4350,6 +4407,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
             </div>
           )}
         </div>
+        )}
         {/* Fiscal */}
         {fiscal && (
           <div style={{paddingTop:8,borderTop:"1px solid rgba(255,255,255,.04)"}}>
