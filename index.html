@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.6-2026-09-02-001";
+const BUILD = "v16.6-2026-09-02-002";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -195,7 +195,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"Ha2PkCQD7NWblhxjI8YdsA==","iv":"xBBLhjbEIKOu8qhM","data":"no5PFdwkITiPUGGCXeYAkWnv3bV2RbTIbMk0pBK1NOFGLH0eBqen4dPKq9Hghp+yWKtY6KyNuo2dOh8FwPqgmCBiZetqc4QtSpMemp+H7ZoT0y58wdjim2viYuRoFVMxIc5yeXnMvMXWI5ofXNIwncHxa5I4pJcDtA2dGmXU1lV8Ve3j1Oj1GNmt9rFwTNPG1XSjeoD19vUxOcEwghe011eKjRhR3nTMHfhQJlTCyiFxTsQW4PhRUA/7INpHAn3/mIL4rwFJw55BRrNOvv9UjIu03kevhZxPM2G/rKCCvBdcJrXgCTc/wmOc5xuqS3rMA46H4krJvQNP2F4Ch0rIQ9lZPc5lmnX5Vvx19+94B8IPWYACG/y3UjXJuDbj5CFhnqgYBDsHQG2ImQ6MbqOrrEfEAIQUYiV7mU45I47CKNkb7Z2bjjMqp2CGkHd7h1Nfwt4JkYHQOF7O9udNBiHnj+XakjrgqPS3pf4MrIZTMXvMLfh0tlrFPAPmdw974Ofu5LTG0zziHeZ17JawMe8PeOa1eCNHdwl1d06LIqMAoXjgsInh/5FmkNhHy1Oqv2rOS6U8xuMRqE3pxaw/lV+1DJPm0dkoBf0deZ90zyTw5+mrW8lZujxHXDOngWqXwxUglivZh4F5Per2yIdJiLNUAuhHVYSyQZvgiQKS2ay2XduSC5Mbz+CLuWEqX/RK2oqKOBl7FBS57JKhyBMk83jLYIjlQr2Kfc8qIYfiDKbdJbYic4t+5XEFfye+HGQE8bY+0krr2zhHa7pYVkJdBGefZycYXJ54rcsO7lapjFUdQt18DO8B6swGaYTK/9fYb4ay3aQq3UWi1L8aR38n7gHSdoR8Up6pia80HhJluOgtpSJs8kF+q3/zpdwNpq9SMdbJIP5tG6hkPqrhzzRrl4w3YxahEKENFphegJXTNgYSQ5x4PZOoJ8MglmwA4n1HQMRENRVRpfekLTamX9G2qTEDXgfU5FChhT9oSP7bHB4i7LH2QBsKMi+oZaaEawTDgz+aY/aOkmHiZUnKXS+XoPah0nOHbbxJjpZb53fMYS21rXSJGAABfIsrl7uuVV2vu2NgZaC8abDgC8tvBNFhmfAUAvD78pJzh9CjM9m4wlLtfByOumVukBKv9HhGkMRgJ/9PMPC4cDnvdx7J40QYJJ8QPEU="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -2223,11 +2223,12 @@ function PositionsView({ port, m, eurusd, qHistMap = {}, onSelect, onTabChange, 
           <span className="dim mono" style={{fontSize:10}}>EUR/USD {eurusd?eurusd.toFixed(4):"—"}</span>
         </div>
         {port.map(p => {
-          const sc = {buy:"#2ecc8f",hold:"#f0a020",sell:"#e85d5d",spec:"#8b7cf5"}[p.effSig||p.sig] || "transparent";
+          const sc = {buy:"#2ecc8f",hold:"#f0a020",sell:"#e85d5d",spec:"#8b7cf5"}[p.effSig||p.sig];
           return (
           <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}
-            style={{borderLeft:`3px solid ${sc}`, paddingLeft:6}}
+            style={{position:"relative", paddingLeft:12}}
             title={`Verdict : ${p.effSig||p.sig}${p.wt>35?" · position concentrée (>35 %)":""}`}>
+            {sc && <div style={{position:"absolute",left:0,top:10,bottom:10,width:3,borderRadius:3,background:sc,opacity:0.5}}/>}
             <div style={{flex:"0 0 33%"}}>
               <div className="tk">{p.t} <span className={"chip "+(p.effSig||p.sig)} style={{marginLeft:6}}>{p.effSig||p.sig}</span>
                 {p.effDrift && <span style={{marginLeft:4,fontSize:9,color:"#8b7cf5"}} title={"Analyste : "+p.effBase+" · ajusté au prix : "+p.effReason}>↻</span>}
