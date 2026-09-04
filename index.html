@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.6-2026-09-02-002";
+const BUILD = "v16.7-2026-09-03-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -195,7 +195,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"z3pDyaz3sdShx497KIMWjA==","iv":"qJsjOzqjDxf3rqGa","data":"qnUPU4g8pHDLNbDm6DI/8wCmAl+YQF81QizAIYTU/bD62R8P840eGDdAV4ICUj/8mhUB7biYZB3Mu8ic8D/QHsR2Xwz4n00+qVSaUX/x3trYnSjNCOVqaeqa0fdHkYBf8rK6uAVnoYFoxsGjmM4i1APjMRkVdpA9oZcHFN6DeKRATlYSBblO2z6cmVyie0tRWsD6rplSbUh/YKPrFuiYwL31pyVxJd3fhe3LCHvljaJHsVQ4mGsVdThIetlKNgb2mHprRHmyub70Cb5iquNeQ/n4Mq4KlgCyTpgJg2heejsXxmhOCjDplQtaPOV5p6Kqs0oCCh6rKMjtSw5V25m8XcIysr8BnDUxkSLbgxx1KKPfBtqcdfXoqQ6qJ2P7LBkwtoAv/3gj5JKoKZD9Yob4cpDxcKu6MiquAyIGzX/vLv78Irixe77Lx9KMKxw71A4uMLygE+qHyLCwaiZ+kp9mip3Pv66dxYnZ5aHX3c5tG7it4P9TERnm5ve/PYQMH7Zo7rdP0ACNyBmJkXwtfU83rJglHYMIuwe2CvvGzsLr9o1P15Catl1mrVeLDxlwd3CwWQrTyNpxpSYtDXzZO8Yj7y19O/O66BGC4ZObZ9ZsVUW8H7b5yuk536ovGwNUT30VEhFEDNZ9so9RfsId5JWLqxriA7xseI3bh7YpTZqQ5z82dGtLBb7GAe1a8EL/AK6o6V/sA0Fy/d3NFeDS48DZTj4XUTYNukoSSM7Q4KwHqWU5bSR5Z+7737J/S9+NyZ0ge7SFTKGI20fi50KEcV25j8AjE6QLI73CqoR+H5raE5Yw+C+ILXnEkQcgj/yfDOSugVj7JAxg+RtzsVIuhUZG5z438e+nsY6wl/nqiMfhPYq/Nvwprw21rioAF27Z6nutCd7waaqiCMNCoyDjJ+P0BPJilpSiRyUoBCOJLuY4nn6efWByawr0T453LzrEIS8K6i3JkqfS0JBfRHSd5xyDwCtfeda05S+L9kKjPQRGZPvsUtrKqwAsKrgtq04n+ti1zSbFPW2BDfhJad1VNIAlDGaouYHhhcKrPTS4Dc2k8SFFjNYTAI/5j3SFiJaERlmdGoZGcMKIV8EO9Rj007GKex98yUZVFZVMP7OUP21XQQl2OUeq1coStibH0FDdTmX61lKJ0q6nw+TKNt1/HNVaEYM="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -250,48 +250,48 @@ function sanitizePort(arr) {
 const AN = {
   FTI:{r:"ALLÉGER",c:85,p:5,sig:"sell",lu:"2026-07-06",tgt:{l:45,a:76,h:90},
     th:"Cours dépasse consensus analystes. Concentration importante du portefeuille = risque de drawdown asymétrique. Recommandation : alléger 50-60% sur force, réinvestir sur convictions IA/défense.",
-    cat:["Backlog offshore +12 Md$","Rebond capex pétrolier","Cycle haut Brent"],
-    ris:["Concentration extrême","Volatilité brent","Cyclicité offshore"],
+    cat:["Backlog offshore — carnet de commandes record, visibilité pluriannuelle sur les projets sous-marins","Rebond capex pétrolier — reprise des investissements des majors dans l'offshore profond","Cycle haut du Brent — un baril élevé soutient les nouveaux projets et les marges"],
+    ris:["Concentration extrême — ~45 % du portefeuille sur une seule ligne, drawdown asymétrique","Volatilité du Brent — le cours suit les cycles du pétrole, sensible aux retournements","Cyclicité offshore — activité dépendante du cycle d'investissement, peu récurrente"],
     act:"Vendre 50-60% sur force",edg:"Le marché récompense déjà la thèse — marge de surprise positive faible."},
   HPE:{r:"CONSERVER",c:65,p:22,sig:"hold",lu:"2026-06-30",tgt:{l:38,a:58,h:72},
     th:"Re-rating IA réalisé (~+90% depuis mai) : intégration Juniper, serveurs IA, accords Vultr/NVIDIA. Consensus analystes ~65-70$ (UBS 65, Argus 70, Zacks). Conserver — valorisation revenue raisonnable après le run.",
-    cat:["Serveurs IA + networking","Stack souverain IA","Synergies Juniper"],
-    ris:["Volatilité après +90%","Concurrence Cisco/Dell","Marges serveurs"],
+    cat:["Serveurs IA + réseau — demande d'infrastructure IA, offre GPU et réseau haute performance","Stack souverain IA — contrats d'IA nationale/entreprise sur infrastructure dédiée","Synergies Juniper — intégration du rachat, montée en gamme réseau et marges"],
+    ris:["Volatilité après +90 % — fort re-rating déjà réalisé, risque de digestion du gain","Concurrence Cisco/Dell — pression sur les parts de marché serveurs et réseau","Marges serveurs — matériel à faible marge, exposé aux prix des composants"],
     act:"Conserver",edg:"Le re-rating attendu sur l'infra IA s'est matérialisé — surveiller la digestion du gain."},
   AMZN:{r:"RENFORCER FORT",c:90,p:35,sig:"buy",lu:"2026-07-06",tgt:{l:230,a:315,h:370},
     th:"AWS (70% des profits), Advertising en accélération, CapEx >100 Md$. Seul mégacap où la croissance +40% YoY n'est pas encore dans le multiple.",
-    cat:["AWS Bedrock","Ads +25% YoY","Marges retail"],
-    ris:["Régulation FTC","Concurrence Azure","CapEx élevé"],
+    cat:["AWS Bedrock — brique IA générative d'AWS, relais de réaccélération du cloud","Publicité +25 %/an — 3ᵉ pilier très rentable, moteur de marge sous-estimé","Marges retail — automatisation logistique et effet d'échelle sur la rentabilité"],
+    ris:["Régulation FTC — procédures antitrust visant la position dominante","Concurrence Azure/GCP — parts de marché cloud disputées par Microsoft et Google","CapEx élevé — >100 Md$/an de data centers, pression sur le cash-flow libre"],
     act:"Renforcer agressivement",edg:"Marché sous-estime la marge AWS sur l'inférence IA."},
   ABUS:{r:"MAINTENIR SPEC",c:45,p:15,sig:"spec",lu:"2026-07-07",tgt:{l:4,a:5.2,h:7},
     th:"Pari binaire settlement Moderna ~950 M$ (juil. 2026). ~190 M$ net = 54% market cap. Position spéculative.",
-    cat:["Settlement Moderna juillet","Royalties LNP","Pipeline HBV"],
-    ris:["Décision défavorable","Cash burn","Faible market cap"],
+    cat:["Settlement Moderna — issue du litige propriété LNP, catalyseur binaire attendu","Royalties LNP — redevances potentielles sur la technologie de nanoparticules lipidiques","Pipeline HBV — candidats contre l'hépatite B chronique, valeur optionnelle"],
+    ris:["Décision défavorable — un jugement négatif effondrerait la thèse (pari binaire)","Cash burn — consommation de trésorerie récurrente, besoin de financement","Faible capitalisation — micro-cap illiquide, forte volatilité"],
     act:"Maintenir taille spéculative",edg:"Le marché actualise une probabilité de victoire trop faible."},
   NVDA:{r:"PRIORITÉ #1",c:95,p:55,sig:"buy",lu:"2026-07-06",tgt:{l:180,a:300,h:400},
     th:"Infrastructure centrale de l'IA mondiale. Contrainte = capacité TSMC pas demande. Inférence > training en volumes 2027. Souverains IA = backlog absent des estimations.",
-    cat:["Blackwell Ultra","Souverains IA (UAE, Saoudie)","Inférence x10"],
-    ris:["Restrictions Chine","Cycle CapEx hyperscalers","Concurrence custom"],
+    cat:["Blackwell Ultra — nouvelle génération GPU, montée en puissance et marges","Souverains IA — commandes d'États (Golfe, Europe) absentes des estimations","Inférence ×10 — bascule training → inférence, volumes structurellement supérieurs"],
+    ris:["Restrictions Chine — contrôles export limitant l'accès au marché chinois","Cycle CapEx hyperscalers — dépendance aux budgets d'investissement des géants du cloud","Concurrence puces maison — ASIC internes (Google, Amazon) et AMD grignotent la part"],
     act:"Priorité absolue, accumuler les replis",edg:"Marché pricé pour le training, ignore l'inférence."},
   MSFT:{r:"RENFORCER FORT",c:92,p:45,sig:"buy",lu:"2026-07-06",tgt:{l:425,a:560,h:700},
     th:"Seul Big Tech ayant monétisé l'IA immédiatement. Copilot M365 (400M+ users), Azure +37% YoY. Correction = opportunité d'entrée.",
-    cat:["Copilot adoption","Azure AI workloads","OpenAI deal"],
-    ris:["CapEx massif","Régulation","Concurrence Google/AWS"],
+    cat:["Adoption Copilot — déploiement M365 Copilot sur la base installée, relais de revenus","Charges IA sur Azure — croissance du cloud tirée par les workloads d'IA","Partenariat OpenAI — accès privilégié aux modèles de pointe et intégration produit"],
+    ris:["CapEx massif — investissements data centers pesant sur les marges à court terme","Régulation — surveillance antitrust sur les bundles et l'IA","Concurrence Google/AWS — bataille cloud et IA sur les grands comptes"],
     act:"Renforcer sous 340€",edg:"Institutionnels sous-pondérés post-correction."},
   MC:{r:"CONSERVER",c:60,p:30,sig:"hold",lu:"2026-07-06",tgt:{l:420,a:590,h:680},
     th:"P/E ~18x vs historique 25-30x. Ralentissement Chine cyclique pas structurel. Marque irremplaçable.",
-    cat:["Reprise Chine 2026","Pricing power","Marges 25%"],
-    ris:["Récession EU","Tourisme chinois","FX yen"],
+    cat:["Reprise Chine — normalisation de la demande du consommateur chinois","Pricing power — capacité à relever les prix sans perdre en volume","Marges ~25 % — rentabilité structurelle élevée du luxe haut de gamme"],
+    ris:["Récession en Europe — ralentissement de la consommation discrétionnaire","Tourisme chinois — dépenses à l'étranger encore en deçà d'avant-Covid","Effet de change (yen) — un yen faible pèse sur les ventes converties"],
     act:"Conserver, cible 24M",edg:"Le marché extrapole le ralentissement Chine — bias court-termiste."},
   NATO:{r:"RENFORCER",c:80,p:25,sig:"buy",lu:"2026-07-07",tgt:{l:18,a:23,h:28},
     th:"Biais européen (Rheinmetall, Safran, BAE). Europe rachète sa souveraineté militaire. ETF UCITS Acc à combiner avec GAD.",
-    cat:["NATO 5% PIB 2035","Réarmement EU","Cyber budgets"],
-    ris:["Cessation conflits","Budgets contraints","Concentration top 10"],
+    cat:["OTAN vers 5 % du PIB — trajectoire de dépenses militaires en forte hausse d'ici 2035","Réarmement européen — reconstitution des stocks et souveraineté militaire de l'UE","Budgets cyber — montée des dépenses en cybersécurité et défense numérique"],
+    ris:["Cessation des conflits — une désescalade réduirait l'urgence des budgets","Budgets contraints — arbitrages publics limitant les hausses","Concentration top 10 — ETF dépendant de quelques valeurs (Rheinmetall, Safran…)"],
     act:"Renforcer + DCA mensuel",edg:"Cycle pluridécennal pas pricé au-delà 12 mois."},
   GAD:{r:"RENFORCER",c:82,p:22,sig:"buy",lu:"2026-07-07",tgt:{l:7,a:9,h:11},
     th:"Supercycle dépenses militaires globales. Biais US (LMT, RTX, NOC, GD). Commandes pluriannuelles visibles.",
-    cat:["Budget DoD record","Aerospace défense civil","Contrats Indo-Pacific"],
-    ris:["Shutdown US","Cycle pacifique","Coûts programmes F-35"],
+    cat:["Budget DoD record — dépenses de défense américaines au plus haut","Aéronautique civile — reprise du trafic aérien soutenant le segment aérospatial","Contrats Indo-Pacifique — programmes pluriannuels liés aux tensions régionales"],
+    ris:["Shutdown US — blocages budgétaires retardant les commandes","Cycle pacifique — une accalmie géopolitique freinerait le secteur","Coûts programmes (F-35) — dépassements et retards sur les grands programmes"],
     act:"Renforcer + DCA",edg:"ETF mondial bénéficie même si un pays sous-performe."}
 };
 
@@ -1883,9 +1883,10 @@ function Sparkline({ hist, w, h, id }) {
 function reviewQuestions(ticker) {
   const an = AN[ticker]; if(!an) return [];
   const qs = [];
-  (an.cat||[]).forEach(c => qs.push({ k:"cat", label:c, q:"réalisé, toujours attendu, ou tombé à l'eau ?" }));
-  (an.ris||[]).forEach(r => qs.push({ k:"ris", label:r, q:"s'est-il matérialisé depuis ?" }));
-  if(an.tgt) qs.push({ k:"tgt", label:`Objectifs ${an.tgt.l} / ${an.tgt.a} / ${an.tgt.h}`, q:"toujours crédibles au vu des derniers résultats ?" });
+  const split = s => { const i = s.indexOf(" — "); return i<0 ? [s, ""] : [s.slice(0,i), s.slice(i+3)]; };
+  (an.cat||[]).forEach(c => { const [label,d] = split(c); qs.push({ k:"cat", label, q:d }); });
+  (an.ris||[]).forEach(r => { const [label,d] = split(r); qs.push({ k:"ris", label, q:d }); });
+  if(an.tgt) qs.push({ k:"tgt", label:`Objectifs ${an.tgt.l} / ${an.tgt.a} / ${an.tgt.h}`, q:"cible analyste — toujours crédible au vu des derniers résultats ?" });
   return qs;
 }
 
@@ -1955,7 +1956,7 @@ function ThesisReview({ port, items, onReviewed, onSelect }) {
                   </span>
                   <span style={{flex:1,fontSize:10,lineHeight:1.4}}>
                     <strong style={{color:"#dde3f0"}}>{q.label}</strong>
-                    <span style={{color:"#8892a8"}}> — {q.q}</span>
+                    {q.q && <span style={{color:"#8892a8"}}> — {q.q}</span>}
                   </span>
                 </div>
               ))}
@@ -3017,7 +3018,7 @@ function ScenariosView({ port, m, qHistMap }) {
         </div>
       </div>
       <div className="card">
-        <div className="cd-ti"><h3>Cône en éventail</h3><span className="dim" style={{fontSize:9}}>0 → 12 mois</span></div>
+        <div className="cd-ti"><h3>Cône en éventail</h3><span className="dim" style={{fontSize:9}}>0 → 12 mois · repère {horizon}M</span></div>
         <div style={{height:190}}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={fan} margin={{top:8,right:10,left:0,bottom:0}}>
@@ -3026,13 +3027,14 @@ function ScenariosView({ port, m, qHistMap }) {
               <YAxis tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false} width={44} tickFormatter={v=>"€"+Math.round(v)}/>
               <Tooltip content={<FanTip/>}/>
               <ReferenceLine y={curVal} stroke="#8892a8" strokeDasharray="4 3" strokeOpacity={0.6}/>
+              <ReferenceLine x={horizon+"M"} stroke="#4f83f5" strokeDasharray="3 2" strokeOpacity={0.85} label={{value:horizon+"M",fill:"#4f83f5",fontSize:10,position:"top"}}/>
               <Area type="monotone" dataKey="base" stackId="cone" stroke="none" fill="transparent" isAnimationActive={false} connectNulls/>
               <Area type="monotone" dataKey="span" stackId="cone" stroke="none" fill="rgba(79,131,245,.18)" isAnimationActive={false} connectNulls/>
               <Line type="monotone" dataKey="p50" stroke="#4f83f5" strokeWidth={2} dot={false} isAnimationActive={false}/>
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-        <div style={{fontSize:9,color:"#3a4560",marginTop:6,textAlign:"center",lineHeight:1.4}}>Zone bleue = fourchette P10–P90 (corrélations incluses). Ligne = trajectoire médiane. Pointillé = valeur actuelle {fe(curVal)}.</div>
+        <div style={{fontSize:9,color:"#3a4560",marginTop:6,textAlign:"center",lineHeight:1.4}}>Zone bleue = fourchette P10–P90 (corrélations incluses). Ligne = trajectoire médiane. Trait bleu = ton horizon {horizon}M. Pointillé = valeur actuelle {fe(curVal)}.</div>
       </div>
       <div className="card">
         <div className="cd-ti" style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}} onClick={()=>setSInfo(v=>!v)}>
@@ -4534,11 +4536,11 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
         <div className="g2">
           <div className="card">
             <div className="cd-ti"><h3 style={{color:"#2ecc8f"}}>Catalyseurs</h3></div>
-            {a.cat.map((c,i)=><div key={i} className="row" style={{padding:"6px 0"}}>{c}</div>)}
+            {a.cat.map((c,i)=>{const j=c.indexOf(" — ");return <div key={i} className="row" style={{padding:"6px 0",fontSize:11,lineHeight:1.45}}>{j<0?c:<span><strong style={{color:"#dde3f0"}}>{c.slice(0,j)}</strong><span style={{color:"#8892a8"}}>{c.slice(j)}</span></span>}</div>;})}
           </div>
           <div className="card">
             <div className="cd-ti"><h3 style={{color:"#e85d5d"}}>Risques</h3></div>
-            {a.ris.map((r,i)=><div key={i} className="row" style={{padding:"6px 0"}}>{r}</div>)}
+            {a.ris.map((r,i)=>{const j=r.indexOf(" — ");return <div key={i} className="row" style={{padding:"6px 0",fontSize:11,lineHeight:1.45}}>{j<0?r:<span><strong style={{color:"#dde3f0"}}>{r.slice(0,j)}</strong><span style={{color:"#8892a8"}}>{r.slice(j)}</span></span>}</div>;})}
           </div>
         </div>
       )}
