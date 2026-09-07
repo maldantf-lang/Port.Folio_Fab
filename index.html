@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.7-2026-09-03-001";
+const BUILD = "v16.9-2026-09-05-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -195,7 +195,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"qHA2ZqWZiai24o81zKYnlg==","iv":"mlDHRyDU6dFI49cY","data":"eQwt0NtBWEJehgLwF2yCVrzpS07bsPXhiRWzjUr99mZMEYIn94Azn+hpmotrqXx9OQby/bsgzreyA6FHFye+P3cdLeBJ/IKtpEFvxoNLyFYbqQRIfdXu4/fVipdcZKR+288lSNClxBIoPdpfjHQg21vGdwYhzbYemO+xxqZ1D5s15670+iUcQpPvujq36ColL64/7SyAJPBDmsETPmMHmg6xdFK1RuFrCo7z4LOalA4HMC/Ngjnqz16kl0vLtvhmnNBarU4JfZMdKoQcPpOnpb7jKdNsbCRxxr5vxHr7UwcAVkQocJ3RpwafG0HBd5ECo68JRACoOkDP6kcE9h+In3R+G701/rWwmGKvq4Z6KQxM0xuBvyVdiKYdvH3iUSPNtP299ZxoUCZW8s4uUjPq6rd4jaEHknIHtsJG4i54UiBxQpxSjYSImWdlCy67AIdKDf5eRz4XoTh7nj9KbXL46Py70xFGMCfBT1erXpFDlz4XvTgtPLeJx+MjeQr9/7CCo2IDWkI7/jjERjWte3SSBXcV+QrRd6LyLOalV33/iyLlwIiux30hNXvdmSetSwZULI+aX0wtJgNMBMj55hF9p3TJwdNiYANpcn+98geFJjn7pkTOWxk4StlB/fTQBgagVw1e7lHgb8JmgdYVGrVzcHsDcOHgg5NRgARxhhhEYW/kG1inENZMc6zN9cxOTyYA3rLsnxuaOHWNdaSaWHcJbxywfbpsF4e0XOPFfxeM5s877SYy0IJgeXuhW3JklS4m+4QRrXbLxKpwPlCI1ectEPX9WHF9JpPMiDNdpQ2VMnfDlBZJEuYQrm4kSQ/c99jvuGY3tO76XtHHAFyclg0R5hEv6BdZOJd9b5ttplvUaebBJNobd9WqwneRtx/VjN2zX+eRDjrfDM9IVEvMR+AjqT7kNvSL0wJ9iZN8/mYoNS6qisvFItYWP02DQVflBJmTIEhLa7Ywm1XGLRFRZco148WltIus/EX6vjmxKr7TTwkENsrfDLqZXMDROXPTMg2NhNFt5kSzL/4ESOoFBY3H6Em5hcB2eUUdoYM7pc09zLKWmGX6OqrGvhLLfouiy5rIQ0yw+bCs8zKbE39NCuiUC5c/S4DGOsj/fTBEEHNIAraPf0+I5sXXqmJIEI7/ulJPGOeA0jvytuIpphW9khVxYHY="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -2152,8 +2152,92 @@ function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, q
   );
 }
 
+// ===== Treemap : rectangles dimensionnés par valeur (algorithme squarified) =====
+function squarify(data, X, Y, W, H) {
+  const total = data.reduce((s,d)=>s+d.value,0) || 1;
+  const scaled = data.map(d=>({ ...d, area: d.value/total*(W*H) }));
+  const result = [];
+  let rect = { x:X, y:Y, w:W, h:H };
+  const sum = row => row.reduce((a,r)=>a+r.area,0);
+  const worst = (row, len) => {
+    if(!row.length) return Infinity;
+    const s = sum(row), mx = Math.max(...row.map(r=>r.area)), mn = Math.min(...row.map(r=>r.area));
+    return Math.max((len*len*mx)/(s*s), (s*s)/(len*len*mn));
+  };
+  const layout = (row) => {
+    const horizontal = rect.w >= rect.h, s = sum(row);
+    if(horizontal){ const rh = s/rect.w; let cx = rect.x;
+      row.forEach(r=>{ const rw = r.area/rh; result.push({ ...r, x:cx, y:rect.y, w:rw, h:rh }); cx+=rw; });
+      rect.y += rh; rect.h -= rh;
+    } else { const rw = s/rect.h; let cy = rect.y;
+      row.forEach(r=>{ const rh = r.area/rw; result.push({ ...r, x:rect.x, y:cy, w:rw, h:rh }); cy+=rh; });
+      rect.x += rw; rect.w -= rw;
+    }
+  };
+  const items = [...scaled].sort((a,b)=>b.area-a.area);
+  let row = [];
+  while(items.length){
+    const len = rect.w >= rect.h ? rect.w : rect.h;
+    if(!row.length || worst([...row,items[0]], len) <= worst(row, len)){ row.push(items[0]); items.shift(); }
+    else { layout(row); row = []; }
+  }
+  if(row.length) layout(row);
+  return result;
+}
+function Treemap({ port, onSelect }) {
+  const data = port.filter(p=>p.val>0).map(p=>({ t:p.t, value:p.val, pct:p.pct||0, wt:p.wt||0 }));
+  if(!data.length) return <div className="dim" style={{fontSize:11,padding:12}}>Pas encore de données.</div>;
+  const W=350, H=210, rects = squarify(data, 0, 0, W, H);
+  const col = pct => pct>=10?"#1e7a4e":pct>=3?"#2a6350":pct>=0?"#33544e":pct>=-3?"#5e4040":pct>=-10?"#7a3838":"#9a2f2f";
+  return (
+    <div style={{position:"relative", width:"100%", paddingTop:(H/W*100)+"%", borderRadius:8, overflow:"hidden"}}>
+      {rects.map(r=>{
+        const big = r.w>60 && r.h>36;
+        return (
+          <div key={r.t} onClick={()=>onSelect&&onSelect(r.t)}
+            style={{position:"absolute", left:(r.x/W*100)+"%", top:(r.y/H*100)+"%", width:(r.w/W*100)+"%", height:(r.h/H*100)+"%",
+              background:col(r.pct), border:"1px solid #080b11", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", cursor:"pointer", overflow:"hidden"}}>
+            <div style={{fontSize:big?13:10, fontWeight:800, color:"#fff", lineHeight:1.1}}>{r.t}</div>
+            {big && <div style={{fontSize:10, color:"rgba(255,255,255,.9)", fontWeight:700}}>{fp(r.pct,0)}</div>}
+            {r.w>44 && r.h>26 && <div style={{fontSize:8, color:"rgba(255,255,255,.6)"}}>{fp(r.wt,0)} du pf</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ===== Série continue portefeuille vs SPY (base 100), historique hebdo réel =====
+function benchmarkSeries(port, qHistMap, spyHist, eurusd, weeks) {
+  if(!spyHist || spyHist.length<8 || !port || !port.length || !(eurusd>0)) return null;
+  const holdings = port.filter(p => p.q>0 && qHistMap && qHistMap[p.t] && qHistMap[p.t].length>=8);
+  if(!holdings.length) return null;
+  const spy = spyHist.slice(-(weeks||52));
+  const out = [];
+  for(const sp of spy){
+    let val = 0, ok = true;
+    for(const p of holdings){
+      const px = findNearestQuarterPx(qHistMap[p.t], sp.ts, 10*86400000);
+      if(px==null){ ok=false; break; }
+      const meta = YF[p.t];
+      const pxEUR = (meta && meta.ccy==="EUR") ? px : px/eurusd;
+      val += p.q * pxEUR;
+    }
+    if(ok && val>0) out.push({ ts:sp.ts, date:sp.date, portVal:val, spyPx:sp.px });
+  }
+  if(out.length<4) return null;
+  const p0 = out[0].portVal, s0 = out[0].spyPx;
+  return out.map(o => ({ date:o.date, port:+(o.portVal/p0*100).toFixed(1), spy:+(o.spyPx/s0*100).toFixed(1) }));
+}
+
+// ===== Journal des décisions (localStorage) =====
+const JOURNAL_KEY = "fab-journal";
+function loadJournal() { try{ const s=localStorage.getItem(JOURNAL_KEY); const a=s?JSON.parse(s):[]; return Array.isArray(a)?a:[]; }catch(e){ return []; } }
+function saveJournal(arr) { try{ localStorage.setItem(JOURNAL_KEY, JSON.stringify(arr.slice(0,200))); }catch(e){} }
+
 function PositionsView({ port, m, eurusd, qHistMap = {}, onSelect, onTabChange, onRefresh, lastTs }) {
   const [showHealth, setShowHealth] = useState(false);
+  const [posView, setPosView] = useState("liste");
   const health = useMemo(() => calcHealth(port, m), [port, m]);
   const hcol = health.total >= 70 ? "#2ecc8f" : health.total >= 50 ? "#f0a020" : "#e85d5d";
   const sectors = useMemo(() => {
@@ -2221,9 +2305,16 @@ function PositionsView({ port, m, eurusd, qHistMap = {}, onSelect, onTabChange, 
       </div>
       <div className="card">
         <div className="cd-ti"><h3>Positions ({port.length})</h3>
-          <span className="dim mono" style={{fontSize:10}}>EUR/USD {eurusd?eurusd.toFixed(4):"—"}</span>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span className="dim mono" style={{fontSize:10}}>EUR/USD {eurusd?eurusd.toFixed(4):"—"}</span>
+            <div style={{display:"flex",gap:2,background:"#0f1420",borderRadius:6,padding:2}}>
+              {["liste","carte"].map(v=>(
+                <span key={v} onClick={()=>setPosView(v)} style={{fontSize:9,fontWeight:700,padding:"3px 9px",borderRadius:4,cursor:"pointer",textTransform:"capitalize",color:posView===v?"#fff":"#8892a8",background:posView===v?"#4f83f5":"transparent"}}>{v}</span>
+              ))}
+            </div>
+          </div>
         </div>
-        {port.map(p => {
+        {posView==="carte" ? <Treemap port={port} onSelect={onSelect}/> : port.map(p => {
           const sc = {buy:"#2ecc8f",hold:"#f0a020",sell:"#e85d5d",spec:"#8b7cf5"}[p.effSig||p.sig];
           return (
           <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}
@@ -2280,6 +2371,7 @@ function HistoryView({ snapshots, port, eurusd, qHistMap, spyHist }) {
   const [period, setPeriod] = useState("30j");
   const days = period === "7j" ? 7 : period === "30j" ? 30 : period === "90j" ? 90 : 99999;
   const cutoff = Date.now() - days * 86400000;
+  const bench = useMemo(()=>benchmarkSeries(port, qHistMap, spyHist, eurusd, 52), [port, qHistMap, spyHist, eurusd]);
   // On ignore les snapshots à valeur nulle/invalide (pris avant chargement des cours) :
   // ils créaient une fausse rampe 0→valeur, un « plus-bas » à 0 € et un drawdown de −100 %.
   const data = snapshots.filter(s => s.ts >= cutoff && Number.isFinite(s.tot) && s.tot > 0).map(s => ({
@@ -2368,6 +2460,30 @@ function HistoryView({ snapshots, port, eurusd, qHistMap, spyHist }) {
               </AreaChart>
             </ResponsiveContainer>
           </div>
+        </div>
+      )}
+
+      {bench && bench.length>=4 && (
+        <div className="card">
+          <div className="cd-ti"><h3>Portefeuille vs S&amp;P 500</h3><span className="dim" style={{fontSize:9}}>base 100 · ~1 an</span></div>
+          <div style={{height:200}}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={bench} margin={{top:8,right:10,left:0,bottom:0}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.05)"/>
+                <XAxis dataKey="date" tick={{fontSize:9,fill:"#8892a8"}} axisLine={false} tickLine={false} minTickGap={28}/>
+                <YAxis tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false} width={34} domain={['auto','auto']}/>
+                <Tooltip contentStyle={{background:"#0f1420",border:"1px solid rgba(255,255,255,.1)",borderRadius:6,fontSize:11}}/>
+                <ReferenceLine y={100} stroke="rgba(255,255,255,.15)" strokeDasharray="3 3"/>
+                <Line type="monotone" dataKey="port" name="Portefeuille" stroke="#4f83f5" strokeWidth={2} dot={false} isAnimationActive={false}/>
+                <Line type="monotone" dataKey="spy" name="S&P 500" stroke="#8892a8" strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false}/>
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+          {(()=>{ const last=bench[bench.length-1]; const alpha=+(last.port-last.spy).toFixed(1);
+            return <div style={{fontSize:10,color:"#8892a8",marginTop:6,textAlign:"center",lineHeight:1.4}}>
+              <span style={{color:"#4f83f5"}}>■</span> Portefeuille <strong style={{color:cl(last.port-100)}}>{fp(last.port-100,1)}</strong> · <span style={{color:"#8892a8"}}>▬</span> S&amp;P 500 <strong style={{color:cl(last.spy-100)}}>{fp(last.spy-100,1)}</strong> → <strong style={{color:cl(alpha)}}>{alpha>=0?"surperformance ":"sous-performance "}{fp(alpha,1)}</strong>
+            </div>;
+          })()}
         </div>
       )}
 
@@ -2795,6 +2911,25 @@ function AnalysisView({ port, onSelect }) {
   );
 }
 
+// Radar (étoile) du score de risque : chaque axe = un facteur (vol, RSI, beta, concentration, P10).
+function RiskRadar({ parts, col }) {
+  if(!parts || parts.length < 3) return null;
+  const N = parts.length, R = 40, cx = 70, cy = 58;
+  const ang = i => (-90 + i*360/N) * Math.PI/180;
+  const pt = (i, r) => [ +(cx + Math.cos(ang(i))*r).toFixed(1), +(cy + Math.sin(ang(i))*r).toFixed(1) ];
+  const ring = f => parts.map((_,i)=>pt(i, R*f).join(",")).join(" ");
+  const poly = parts.map((p,i)=>pt(i, R*Math.min(1, p.score/p.max)).join(",")).join(" ");
+  const short = { vol:"Volatilité", rsi:"RSI", beta:"Beta", conc:"Concentr.", down:"Downside" };
+  return (
+    <svg viewBox="0 0 140 118" width="100%" height="150" style={{maxWidth:230,margin:"2px auto 8px",display:"block"}} aria-hidden="true">
+      {[0.25,0.5,0.75,1].map((f,i)=><polygon key={i} points={ring(f)} fill="none" stroke="rgba(255,255,255,.06)" strokeWidth="0.6"/>)}
+      {parts.map((_,i)=>{const[x,y]=pt(i,R);return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke="rgba(255,255,255,.06)" strokeWidth="0.6"/>;})}
+      <polygon points={poly} fill={col+"33"} stroke={col} strokeWidth="1.5" strokeLinejoin="round"/>
+      {parts.map((p,i)=>{const[x,y]=pt(i,R+12);return <text key={i} x={x} y={y} fill="#8892a8" fontSize="7" textAnchor="middle" dominantBaseline="middle">{short[p.k]||p.label}</text>;})}
+    </svg>
+  );
+}
+
 function FanTip({ active, payload, label }) {
   if(!active || !payload || !payload.length) return null;
   const d = payload[0] && payload[0].payload; if(!d) return null;
@@ -3180,6 +3315,50 @@ function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx }) {
 }
 
 // MÉMOIRE — le passé : historique de valeur, P&L, contributions, fiabilité du moteur
+function JournalCard({ port }) {
+  const [entries, setEntries] = useState(()=>loadJournal());
+  const [type, setType] = useState("Achat");
+  const [tk, setTk] = useState("");
+  const [note, setNote] = useState("");
+  const inp = {background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"6px 8px",outline:"none"};
+  const typeCol = { "Achat":"#2ecc8f","Allègement":"#e85d5d","Revue":"#4f83f5","Note":"#8892a8" };
+  const add = () => {
+    if(!note.trim() && !tk) return;
+    const next = [{ ts:Date.now(), type, ticker:tk||null, note:note.trim() }, ...entries];
+    setEntries(next); saveJournal(next); setNote("");
+  };
+  const del = ts => { const next = entries.filter(e=>e.ts!==ts); setEntries(next); saveJournal(next); };
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Journal des décisions</h3><span className="dim" style={{fontSize:9}}>{entries.length} entrée{entries.length>1?"s":""}</span></div>
+      <div style={{display:"flex",gap:6,marginBottom:7}}>
+        <select value={type} onChange={e=>setType(e.target.value)} style={{...inp,flex:1}}>
+          {["Achat","Allègement","Revue","Note"].map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        <select value={tk} onChange={e=>setTk(e.target.value)} style={{...inp,flex:1}}>
+          <option value="">— ticker —</option>
+          {port.map(p=><option key={p.t} value={p.t}>{p.t}</option>)}
+        </select>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:10}}>
+        <input value={note} onChange={e=>setNote(e.target.value)} placeholder="Pourquoi cette décision ?" style={{...inp,flex:1}}/>
+        <button className="bn bn-b" style={{fontSize:11,padding:"6px 12px"}} onClick={add}>Ajouter</button>
+      </div>
+      {entries.length===0 && <div className="dim" style={{fontSize:10,lineHeight:1.4}}>Note tes achats, allègements et revues de thèse — et relis plus tard ta performance de décideur.</div>}
+      {entries.slice(0,40).map(e=>(
+        <div key={e.ts} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
+          <span style={{fontSize:9,color:typeCol[e.type]||"#8892a8",fontWeight:700,minWidth:70}}>{e.type}{e.ticker?" · "+e.ticker:""}</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:10,color:"#dde3f0",lineHeight:1.4}}>{e.note||"—"}</div>
+            <div style={{fontSize:8,color:"#3a4560",marginTop:1}}>{new Date(e.ts).toLocaleDateString("fr-FR",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+          </div>
+          <span onClick={()=>del(e.ts)} title="Supprimer" style={{cursor:"pointer",color:"#3a4560",fontSize:12,padding:"0 2px"}}>✕</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
   const precision = useMemo(()=>calcMotorPrecision(snapshots),[snapshots]);
   const [backtest, setBacktest] = useState(null);
@@ -3199,6 +3378,7 @@ function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
   return (
     <>
       <HistoryView snapshots={snapshots} port={port} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/>
+      <JournalCard port={port}/>
       {precision ? (
         <div className="card">
           <div className="cd-ti"><h3>Précision moteur</h3><span className="dim" style={{fontSize:9}}>{precision.count} mesures</span></div>
@@ -4327,6 +4507,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
       {/* SCORE DE RISQUE — décomposition */}
       <div className="card">
         <div className="cd-ti"><h3>Décomposition du risque</h3><span className="dim" style={{fontSize:9}}>{risk.total}/100</span></div>
+        <RiskRadar parts={risk.parts} col={hcol}/>
         {risk.parts.map(pt=>{
           const pct = pt.score/pt.max;
           const col = pct>=0.7?"#e85d5d":pct>=0.4?"#f0a020":"#2ecc8f";
@@ -4521,6 +4702,26 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
             <div><div className="lbl">Médian</div><div className="mono"><strong>{fd(a.tgt.a)}</strong></div></div>
             <div><div className="lbl">Haut</div><div className="mono">{fd(a.tgt.h)}</div></div>
           </div>
+          {p.pxNative!=null && (()=>{
+            const lo=a.tgt.l, med=a.tgt.a, hi=a.tgt.h, px=p.pxNative, span=(hi-lo)||1;
+            const pos=Math.max(0,Math.min(1,(px-lo)/span));
+            const upMed=(med/px-1)*100;
+            const zone = px>=hi?"au-dessus de l'objectif haut — cher":px<=lo?"sous l'objectif bas — décoté":px>=med?"au-dessus du médian":"sous le médian — potentiel restant";
+            return (
+              <div style={{marginTop:12}}>
+                <div className="lbl" style={{marginBottom:8}}>Distance à l'action</div>
+                <div style={{position:"relative",height:12}}>
+                  <div style={{position:"absolute",top:4,left:0,right:0,height:4,background:"linear-gradient(90deg,#2ecc8f,#f0a020,#e85d5d)",borderRadius:2,opacity:.55}}/>
+                  <div style={{position:"absolute",top:0,left:Math.max(0,Math.min(100,(med-lo)/span*100))+"%",width:1,height:12,background:"#8892a8"}}/>
+                  <div style={{position:"absolute",top:-1,left:pos*100+"%",transform:"translateX(-50%)",width:11,height:11,borderRadius:6,background:"#4f83f5",border:"2px solid #080b11"}}/>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#3a4560",marginTop:3}}>
+                  <span>bas {fd(lo)}</span><span>médian</span><span>haut {fd(hi)}</span>
+                </div>
+                <div style={{fontSize:10,color:"#8892a8",marginTop:7,lineHeight:1.4}}>Cours {zone}. Objectif médian à <strong style={{color:upMed>=0?"#2ecc8f":"#e85d5d"}}>{fp(upMed,0)}</strong>{px>=hi?" · zone d'allègement":px<=lo?" · zone d'accumulation":""}.</div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
