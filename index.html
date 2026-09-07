@@ -110,7 +110,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v16.9-2026-09-05-001";
+const BUILD = "v17.1-2026-09-06-002";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -195,7 +195,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"+cNl99JpNHeReMly+UVN9A==","iv":"6EUXZ9Y5U6KJnO92","data":"83AL6BQHRu91M1/Bt6BYH14hgBjmEqKToYizCxuf9KycR/TCvE35M7vcpNMQwhuwfIx1sUe74/iXeYMDp62yVUs6fpxO3m5pqnm6yN+i6ZIPlzKu25NLchTme39JOHKVIiYrOhLEeoGVxpb00ll0qJeDVCj8I+NkS/irB2cjfByhY2sCB5JVlBcxb1y5o0KXts25JUTR6omqWZkmuztt7Qc6yIoU3Vl8WkLeJwU8wWX1MmRmujKaXtN3VeMHd2pHnoYPe4M9ehbGp/L3ZzFDon8NC1vh/Vc00u43xDcAFvuT0MAoufb97HXjH/TVobTtNMaYZxj08t8EWY6uPQsqKTbT+Mgz6MsPHMybiK2/5Mfm3VQq/HsOCBOM02J4OhsmIPVJ9j/01kbSuI/9+bTqCbjvDCQ1Dlr5nz2lB6/C6VYajPp5bTVOzMOUM6LTO3Tetx+Vm4mCwH0teiVEyYXFfX+DtI3CjxnrvBaVHlaK3ootpqE6ciAy63NWT4JvUx+buK+O4J5oVnApfUC3dryvSTm1VnMz6g0dk07wbdtFhhI9UoQNJWmBK+CVGk0dHyCdmEDqa+8R2Cr8UPD6iu/sDrPVG4AibcpFn8wKm5fC4Ps2cw27ikKNUO6XmXU9LKAZ+aE5ld85uiRzC3IJnaUih9UuEasiU8k0l1QYFs9CAR8Xub3NbJL7dtP5Td9fgBsbExo85HswrWT9lgOXAWduZL0Bj8hmb4qxwL7NYI8t2la0uSP7LhPr5NTM4WgatfKs879FzlPaomaWB/ex914CZhGVcaTAQOsLHrvDC1cWyEEJm+wPe90dRHs+aqtPW8JaNse9BZK3HCwjJcqlQCLPyAtbLjq2Uc9p370eqLtEB6huZrjqdwqom6NkKqWVGNPUuoNW5/eSkh0JV7aQnPibVRfmOAb6UHOPL88kCOTG9zarhPdm/kT4dxNEppdbkP62Eeup7ejUmBzPVcqawMQuFK2wIAI4G3qf+/qWHvhbj9uqdK7OVrJgi2GmEIFgLH50xPDsmyt0MOt5o6VxdrKq1TDQ8aBH+VhqmPm3yOXvZYyMAfIOH3FojtAUCb/gxlNAR1XJh++JNaMHiBv36Bn1S/MmxvxHJI1zZU5lbJVAJbVQlIhVFc2BYKlM8lmkq1B95kRj282MOUI1f1GvdcWn27s="};
+const PORT_ENC = null;
 
 // Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
 const PORT_SKEL = [
@@ -2033,7 +2033,6 @@ function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, q
           </div>
         </div>
       )}
-      <DecisionSupport port={port} qHistMap={qHistMap} onSelect={onSelect}/>
       {/* MARCHÉS */}
       {Object.keys(macroCtx).length>0 && (
         <div className="card" style={{marginBottom:9}}>
@@ -2148,62 +2147,8 @@ function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, q
           </div>
         </div>
       </div>
+      <DecisionSupport port={port} qHistMap={qHistMap} onSelect={onSelect}/>
     </>
-  );
-}
-
-// ===== Treemap : rectangles dimensionnés par valeur (algorithme squarified) =====
-function squarify(data, X, Y, W, H) {
-  const total = data.reduce((s,d)=>s+d.value,0) || 1;
-  const scaled = data.map(d=>({ ...d, area: d.value/total*(W*H) }));
-  const result = [];
-  let rect = { x:X, y:Y, w:W, h:H };
-  const sum = row => row.reduce((a,r)=>a+r.area,0);
-  const worst = (row, len) => {
-    if(!row.length) return Infinity;
-    const s = sum(row), mx = Math.max(...row.map(r=>r.area)), mn = Math.min(...row.map(r=>r.area));
-    return Math.max((len*len*mx)/(s*s), (s*s)/(len*len*mn));
-  };
-  const layout = (row) => {
-    const horizontal = rect.w >= rect.h, s = sum(row);
-    if(horizontal){ const rh = s/rect.w; let cx = rect.x;
-      row.forEach(r=>{ const rw = r.area/rh; result.push({ ...r, x:cx, y:rect.y, w:rw, h:rh }); cx+=rw; });
-      rect.y += rh; rect.h -= rh;
-    } else { const rw = s/rect.h; let cy = rect.y;
-      row.forEach(r=>{ const rh = r.area/rw; result.push({ ...r, x:rect.x, y:cy, w:rw, h:rh }); cy+=rh; });
-      rect.x += rw; rect.w -= rw;
-    }
-  };
-  const items = [...scaled].sort((a,b)=>b.area-a.area);
-  let row = [];
-  while(items.length){
-    const len = rect.w >= rect.h ? rect.w : rect.h;
-    if(!row.length || worst([...row,items[0]], len) <= worst(row, len)){ row.push(items[0]); items.shift(); }
-    else { layout(row); row = []; }
-  }
-  if(row.length) layout(row);
-  return result;
-}
-function Treemap({ port, onSelect }) {
-  const data = port.filter(p=>p.val>0).map(p=>({ t:p.t, value:p.val, pct:p.pct||0, wt:p.wt||0 }));
-  if(!data.length) return <div className="dim" style={{fontSize:11,padding:12}}>Pas encore de données.</div>;
-  const W=350, H=210, rects = squarify(data, 0, 0, W, H);
-  const col = pct => pct>=10?"#1e7a4e":pct>=3?"#2a6350":pct>=0?"#33544e":pct>=-3?"#5e4040":pct>=-10?"#7a3838":"#9a2f2f";
-  return (
-    <div style={{position:"relative", width:"100%", paddingTop:(H/W*100)+"%", borderRadius:8, overflow:"hidden"}}>
-      {rects.map(r=>{
-        const big = r.w>60 && r.h>36;
-        return (
-          <div key={r.t} onClick={()=>onSelect&&onSelect(r.t)}
-            style={{position:"absolute", left:(r.x/W*100)+"%", top:(r.y/H*100)+"%", width:(r.w/W*100)+"%", height:(r.h/H*100)+"%",
-              background:col(r.pct), border:"1px solid #080b11", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", cursor:"pointer", overflow:"hidden"}}>
-            <div style={{fontSize:big?13:10, fontWeight:800, color:"#fff", lineHeight:1.1}}>{r.t}</div>
-            {big && <div style={{fontSize:10, color:"rgba(255,255,255,.9)", fontWeight:700}}>{fp(r.pct,0)}</div>}
-            {r.w>44 && r.h>26 && <div style={{fontSize:8, color:"rgba(255,255,255,.6)"}}>{fp(r.wt,0)} du pf</div>}
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -2237,7 +2182,6 @@ function saveJournal(arr) { try{ localStorage.setItem(JOURNAL_KEY, JSON.stringif
 
 function PositionsView({ port, m, eurusd, qHistMap = {}, onSelect, onTabChange, onRefresh, lastTs }) {
   const [showHealth, setShowHealth] = useState(false);
-  const [posView, setPosView] = useState("liste");
   const health = useMemo(() => calcHealth(port, m), [port, m]);
   const hcol = health.total >= 70 ? "#2ecc8f" : health.total >= 50 ? "#f0a020" : "#e85d5d";
   const sectors = useMemo(() => {
@@ -2305,16 +2249,9 @@ function PositionsView({ port, m, eurusd, qHistMap = {}, onSelect, onTabChange, 
       </div>
       <div className="card">
         <div className="cd-ti"><h3>Positions ({port.length})</h3>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span className="dim mono" style={{fontSize:10}}>EUR/USD {eurusd?eurusd.toFixed(4):"—"}</span>
-            <div style={{display:"flex",gap:2,background:"#0f1420",borderRadius:6,padding:2}}>
-              {["liste","carte"].map(v=>(
-                <span key={v} onClick={()=>setPosView(v)} style={{fontSize:9,fontWeight:700,padding:"3px 9px",borderRadius:4,cursor:"pointer",textTransform:"capitalize",color:posView===v?"#fff":"#8892a8",background:posView===v?"#4f83f5":"transparent"}}>{v}</span>
-              ))}
-            </div>
-          </div>
+          <span className="dim mono" style={{fontSize:10}}>EUR/USD {eurusd?eurusd.toFixed(4):"—"}</span>
         </div>
-        {posView==="carte" ? <Treemap port={port} onSelect={onSelect}/> : port.map(p => {
+        {port.map(p => {
           const sc = {buy:"#2ecc8f",hold:"#f0a020",sell:"#e85d5d",spec:"#8b7cf5"}[p.effSig||p.sig];
           return (
           <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)}
@@ -2911,25 +2848,6 @@ function AnalysisView({ port, onSelect }) {
   );
 }
 
-// Radar (étoile) du score de risque : chaque axe = un facteur (vol, RSI, beta, concentration, P10).
-function RiskRadar({ parts, col }) {
-  if(!parts || parts.length < 3) return null;
-  const N = parts.length, R = 40, cx = 70, cy = 58;
-  const ang = i => (-90 + i*360/N) * Math.PI/180;
-  const pt = (i, r) => [ +(cx + Math.cos(ang(i))*r).toFixed(1), +(cy + Math.sin(ang(i))*r).toFixed(1) ];
-  const ring = f => parts.map((_,i)=>pt(i, R*f).join(",")).join(" ");
-  const poly = parts.map((p,i)=>pt(i, R*Math.min(1, p.score/p.max)).join(",")).join(" ");
-  const short = { vol:"Volatilité", rsi:"RSI", beta:"Beta", conc:"Concentr.", down:"Downside" };
-  return (
-    <svg viewBox="0 0 140 118" width="100%" height="150" style={{maxWidth:230,margin:"2px auto 8px",display:"block"}} aria-hidden="true">
-      {[0.25,0.5,0.75,1].map((f,i)=><polygon key={i} points={ring(f)} fill="none" stroke="rgba(255,255,255,.06)" strokeWidth="0.6"/>)}
-      {parts.map((_,i)=>{const[x,y]=pt(i,R);return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke="rgba(255,255,255,.06)" strokeWidth="0.6"/>;})}
-      <polygon points={poly} fill={col+"33"} stroke={col} strokeWidth="1.5" strokeLinejoin="round"/>
-      {parts.map((p,i)=>{const[x,y]=pt(i,R+12);return <text key={i} x={x} y={y} fill="#8892a8" fontSize="7" textAnchor="middle" dominantBaseline="middle">{short[p.k]||p.label}</text>;})}
-    </svg>
-  );
-}
-
 function FanTip({ active, payload, label }) {
   if(!active || !payload || !payload.length) return null;
   const d = payload[0] && payload[0].payload; if(!d) return null;
@@ -3240,8 +3158,8 @@ function ScenariosView({ port, m, qHistMap }) {
 function TodayView(props) {
   return (
     <>
-      <DashboardView {...props} />
       <PositionsView {...props} />
+      <DashboardView {...props} />
     </>
   );
 }
@@ -3302,9 +3220,9 @@ function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx }) {
       </div>
       {sub==="prev" ? (
         <>
+          <ScenariosView port={port} m={m} qHistMap={qHistMap}/>
           <EarningsCalendar port={port} onSelect={onSelect}/>
           <MacroView prices={prices} qHistMap={qHistMap} macroCtx={macroCtx}/>
-          <ScenariosView port={port} m={m} qHistMap={qHistMap}/>
           <AnalysisView port={port} onSelect={onSelect}/>
         </>
       ) : (
@@ -4507,27 +4425,36 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
       {/* SCORE DE RISQUE — décomposition */}
       <div className="card">
         <div className="cd-ti"><h3>Décomposition du risque</h3><span className="dim" style={{fontSize:9}}>{risk.total}/100</span></div>
-        <RiskRadar parts={risk.parts} col={hcol}/>
+        <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:12}}>Score global sur 100 — <strong style={{color:hcol}}>plus il est haut, plus la ligne est risquée</strong>. Il additionne 5 facteurs ; chacun éclaire une facette du risque, expliquée ci-dessous.</div>
         {risk.parts.map(pt=>{
           const pct = pt.score/pt.max;
           const col = pct>=0.7?"#e85d5d":pct>=0.4?"#f0a020":"#2ecc8f";
+          const v = pt.val;
+          const info = {
+            vol:  { what:"Volatilité : l'amplitude des variations de prix. Plus c'est haut, plus le cours bouge fort — risque, mais aussi opportunité.",
+                    read: v!=null?`${v.toFixed(0)} %/an — ${v>=40?"très agité":v>=25?"modéré":"plutôt calme"}`:"—" },
+            rsi:  { what:"RSI : la force récente du cours, de 0 à 100. Au-dessus de 70 = suracheté (risque de correction), sous 30 = survendu (rebond possible), autour de 50 = neutre.",
+                    read: v!=null?`RSI ${v} — ${v>=70?"suracheté, il vient de bien monter":v<=30?"survendu, sort d'un creux":"zone neutre"}`:"historique insuffisant" },
+            beta: { what:"Beta : la sensibilité au marché. 1 = bouge comme le marché ; au-dessus = amplifie ses mouvements ; en dessous = amortit ; négatif = évolue à l'inverse.",
+                    read: v!=null?`β ${v.toFixed(2)} — ${v>1.3?"amplifie le marché":v<0?"évolue à l'inverse":v<0.7?"plus stable que le marché":"proche du marché"}`:"historique insuffisant" },
+            conc: { what:"Concentration : le poids de cette ligne dans ton portefeuille. Trop élevé = une seule valeur décide de ton résultat.",
+                    read: v!=null?`${v.toFixed(0)} % du portefeuille — ${v>=35?"concentration critique":v>=20?"à surveiller":"raisonnable"}`:"—" },
+            down: { what:"Downside : la perte estimée au scénario pessimiste (P10, environ 1 cas sur 10) à 12 mois. Plus c'est négatif, plus une forte baisse est plausible.",
+                    read: v!=null?`${fp(v*100,0)} au pire — ${v<=-0.3?"baisse marquée possible":v<=-0.15?"repli modéré possible":"downside limité"}`:"—" }
+          }[pt.k] || { what:"", read:"" };
           return (
-            <div key={pt.k} style={{marginBottom:8}}>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3}}>
-                <span style={{color:"#8892a8"}}>{pt.label}</span>
-                <span className="mono" style={{color:col,fontWeight:700}}>
-                  {pt.k==="vol"?(pt.val!=null?pt.val+"%":"—"):
-                   pt.k==="rsi"?(pt.val!=null?pt.val:"n/d"):
-                   pt.k==="beta"?(pt.val!=null?pt.val.toFixed(2):"n/d"):
-                   pt.k==="conc"?(pt.val!=null?pt.val.toFixed(0)+"%":"—"):
-                   (pt.val!=null?fp(pt.val*100,0):"—")}
-                </span>
+            <div key={pt.k} style={{marginBottom:14,paddingBottom:14,borderBottom:"1px solid rgba(255,255,255,.04)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+                <span style={{fontSize:12,fontWeight:700,color:"#dde3f0"}}>{pt.label}</span>
+                <span className="mono" style={{fontSize:11,color:col,fontWeight:800}}>{pt.score.toFixed(0)}/{pt.max}</span>
               </div>
-              <div className="bar"><span style={{width:(pt.score/pt.max*100)+"%",background:col}}/></div>
+              <div className="bar" style={{marginBottom:6}}><span style={{width:pct*100+"%",background:col}}/></div>
+              <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:3}}>{info.what}</div>
+              <div style={{fontSize:11,color:col,fontWeight:600}}>→ {info.read}</div>
             </div>
           );
         })}
-        <div className="dim" style={{fontSize:9,marginTop:6,fontStyle:"italic"}}>RSI et Beta nécessitent respectivement 15+ et 5+ points de données historiques.</div>
+        <div className="dim" style={{fontSize:9,marginTop:2,fontStyle:"italic"}}>Le badge X/25 (ou /20, /15) = combien ce facteur pèse dans le score. RSI et Beta demandent 15+ et 5+ points d'historique.</div>
       </div>
 
       {/* RSI + BETA + KELLY + CONVICTION DECAY */}
