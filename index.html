@@ -97,7 +97,19 @@ input:focus,select:focus{outline:none;border-color:#4f83f5}
 <script>
 window.onerror = function(msg,src,line,col,err){
   var el = document.getElementById("root");
-  if(el) el.innerHTML = '<div style="padding:20px;color:#e85d5d;font-family:monospace;font-size:11px;background:#080b11;min-height:100vh"><div style="font-size:16px;margin-bottom:12px;color:#dde3f0">❌ Erreur JS</div><div style="color:#f0a020">'+msg+'</div><div style="color:#8892a8;font-size:10px;margin-top:8px">'+src+':'+line+'</div><pre style="margin-top:10px;font-size:9px;color:#8892a8;white-space:pre-wrap">'+(err&&err.stack?err.stack:'')+'</pre></div>';
+  // Écran de secours (avant que React ne soit monté). Construit par le DOM, sans innerHTML :
+  // un message d'erreur contenant du HTML ne peut donc pas être interprété.
+  if(el) {
+    el.textContent = "";
+    const box = document.createElement("div");
+    box.setAttribute("style","padding:20px;color:#e85d5d;font-family:monospace;font-size:11px;background:#080b11;min-height:100vh");
+    const mk = (tag, style, text) => { const n = document.createElement(tag); n.setAttribute("style", style); n.textContent = text; return n; };
+    box.appendChild(mk("div","font-size:16px;margin-bottom:12px;color:#dde3f0","\u274C Erreur JS"));
+    box.appendChild(mk("div","color:#f0a020", String(msg)));
+    box.appendChild(mk("div","color:#8892a8;font-size:10px;margin-top:8px", String(src)+":"+String(line)));
+    box.appendChild(mk("pre","margin-top:10px;font-size:9px;color:#8892a8;white-space:pre-wrap", (err&&err.stack)?String(err.stack):""));
+    el.appendChild(box);
+  }
   return true;
 };
 window.addEventListener("unhandledrejection",function(e){
@@ -110,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v17.1-2026-09-06-002";
+const BUILD = "v18.4-2026-09-09-005";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -143,46 +155,96 @@ function nextOpenLabel() {
   return "reprise 9h";                       // soir de semaine → lendemain 9h
 }
 
-const YF = {
-  FTI:  { y: "FTI",     ccy: "USD" },
-  HPE:  { y: "HPE",     ccy: "USD" },
-  AMZN: { y: "AMZN",    ccy: "USD" },
-  MC:   { y: "MC.PA",   ccy: "EUR" },
-  NATO: { y: "NATO.L",  ccy: "USD" },
-  NVDA: { y: "NVDA",    ccy: "USD" },
-  ABUS: { y: "ABUS",    ccy: "USD" },
-  GAD:  { y: "DFND.MI", ccy: "EUR" },
-  MSFT: { y: "MSFT",    ccy: "USD" },
-  SPY:  { y: "SPY",     ccy: "USD", bench: true },
-  // Opportunités suivies (watchlist) : cours live pour mesurer le potentiel restant
-  CEG:  { y: "CEG",     ccy: "USD", watch: true },
-  PLTR: { y: "PLTR",    ccy: "USD", watch: true },
-  FCX:  { y: "FCX",     ccy: "USD", watch: true },
-  ASML: { y: "ASML",    ccy: "USD", watch: true },
-  URA:  { y: "URA",     ccy: "USD", watch: true },
-  // ETF de référence sectorielle : servent à MESURER le momentum réel des secteurs
-  SMH:  { y: "SMH",     ccy: "USD", sector: "IA Infrastructure" },
-  NLR:  { y: "NLR",     ccy: "USD", sector: "Nucléaire & Énergie" },
-  ITA:  { y: "ITA",     ccy: "USD", sector: "Défense & Sécurité" },
-  IGV:  { y: "IGV",     ccy: "USD", sector: "Cloud & SaaS IA" },
-  COPX: { y: "COPX",    ccy: "USD", sector: "Matières premières" },
-  XLE:  { y: "XLE",     ccy: "USD", sector: "Énergie offshore" }
+/* ═══════════════════════════════════════════════════════════════════════
+   REGISTRE DES SUPPORTS — SOURCE UNIQUE DE VÉRITÉ
+   ───────────────────────────────────────────────────────────────────────
+   AJOUTER UN SUPPORT = UNE SEULE ENTRÉE ICI (ou via ⚙ Réglages dans l'app).
+   Tout le reste (symbole Yahoo, devise, bornes, secteur, portefeuille) en
+   dérive automatiquement — plus aucune table à éditer en parallèle.
+
+   Champs :
+     n      nom affiché              y       symbole Yahoo (défaut : le ticker)
+     ccy    devise du cours          role    port | bench | watch | sector | macro
+     s      secteur (role port)      v       volatilité estimée % (repli si pas d'historique)
+     sig    signal de départ         def     cours de secours si tout échoue
+     bounds [min,max] anti-aberration        acct    enveloppe (CTO/PEA…)
+     sector nom du secteur mesuré (role sector)
+
+   role : port = détenu · bench = référence (SPY) · watch = suivi sans position
+          sector = ETF mesurant un secteur · macro = indicateur macro (bornes seules)
+   ═══════════════════════════════════════════════════════════════════════ */
+const REGISTRY = {
+  // ── Portefeuille ──
+  FTI:  { n:"TechnipFMC",        y:"FTI",     ccy:"USD", role:"port", s:"Énergie", v:28, sig:"sell", def:68.34, bounds:[10,300],  acct:"CTO" },
+  HPE:  { n:"HP Enterprise",     y:"HPE",     ccy:"USD", role:"port", s:"Tech",    v:32, sig:"hold", def:45.0,  bounds:[5,200],  acct:"CTO" },
+  AMZN: { n:"Amazon",            y:"AMZN",    ccy:"USD", role:"port", s:"Tech",    v:25, sig:"buy",  def:245.0, bounds:[50,900],  acct:"CTO" },
+  MC:   { n:"LVMH",              y:"MC.PA",   ccy:"EUR", role:"port", s:"Luxe",    v:24, sig:"hold", def:490.0, bounds:[150,1500],acct:"CTO" },
+  NATO: { n:"Future of Defence", y:"NATO.L",  ccy:"USD", role:"port", s:"Défense", v:20, sig:"buy",  def:21.3,  bounds:[5,80],    acct:"CTO" },
+  NVDA: { n:"NVIDIA",            y:"NVDA",    ccy:"USD", role:"port", s:"Tech",    v:38, sig:"buy",  def:196.0, bounds:[20,600],  acct:"CTO" },
+  ABUS: { n:"Arbutus Biopharma", y:"ABUS",    ccy:"USD", role:"port", s:"Biotech", v:65, sig:"spec", def:4.70,  bounds:[0.5,40],  acct:"CTO" },
+  GAD:  { n:"Global Aero & Def", y:"DFND.MI", ccy:"EUR", role:"port", s:"Défense", v:18, sig:"buy",  def:8.42,  bounds:[2,50],    acct:"CTO" },
+  MSFT: { n:"Microsoft",         y:"MSFT",    ccy:"USD", role:"port", s:"Tech",    v:22, sig:"buy",  def:390.0, bounds:[100,1200], acct:"CTO" },
+  // ── Référence ──
+  SPY:  { n:"S&P 500",           y:"SPY",     ccy:"USD", role:"bench", def:748.0, bounds:[200,1500] },
+  // ── Watchlist (cours live, sans position) ──
+  CEG:  { n:"Constellation Energy", y:"CEG",  ccy:"USD", role:"watch" },
+  PLTR: { n:"Palantir",             y:"PLTR", ccy:"USD", role:"watch" },
+  FCX:  { n:"Freeport-McMoRan",     y:"FCX",  ccy:"USD", role:"watch" },
+  ASML: { n:"ASML Holding",         y:"ASML", ccy:"USD", role:"watch" },
+  URA:  { n:"Global X Uranium",     y:"URA",  ccy:"USD", role:"watch" },
+  // ── ETF de mesure sectorielle ──
+  SMH:  { n:"Semiconducteurs", y:"SMH",  ccy:"USD", role:"sector", sector:"IA Infrastructure" },
+  NLR:  { n:"Nucléaire",       y:"NLR",  ccy:"USD", role:"sector", sector:"Nucléaire & Énergie" },
+  ITA:  { n:"Défense US",      y:"ITA",  ccy:"USD", role:"sector", sector:"Défense & Sécurité", bounds:[50,500] },
+  IGV:  { n:"Logiciel",        y:"IGV",  ccy:"USD", role:"sector", sector:"Cloud & SaaS IA" },
+  COPX: { n:"Cuivre",          y:"COPX", ccy:"USD", role:"sector", sector:"Matières premières" },
+  XLE:  { n:"Énergie",         y:"XLE",  ccy:"USD", role:"sector", sector:"Énergie offshore" },
+  // ── Indicateurs macro (bornes seules, non cotés dans le portefeuille) ──
+  QQQ:  { n:"Nasdaq 100", y:"QQQ", ccy:"USD", role:"macro", bounds:[150,800] },
+  TLT:  { n:"Obligations 20 ans", y:"TLT", ccy:"USD", role:"macro", bounds:[50,140] },
+  GLD:  { n:"Or", y:"GLD", ccy:"USD", role:"macro", bounds:[800,5000] }
 };
 
-const PRICE_DEF = {
-  FTI: 68.34, HPE: 45.0, AMZN: 245.0, MC: 490.0,
-  NATO: 21.3, NVDA: 196.0, ABUS: 4.70, GAD: 8.42, MSFT: 390.0,
-  SPY: 748.0
-};
+// Supports ajoutés depuis l'app (⚙ Réglages) — même forme que REGISTRY, fusionnés au démarrage.
+const REGISTRY_KEY = "fab-registry";
+function loadUserRegistry() { try{ const s=localStorage.getItem(REGISTRY_KEY); const o=s?JSON.parse(s):{}; return (o&&typeof o==="object")?o:{}; }catch(e){ return {}; } }
+function saveUserRegistry(o) { try{ localStorage.setItem(REGISTRY_KEY, JSON.stringify(o)); }catch(e){} }
 
-// Bornes de sécurité par symbole Yahoo — rejette les prix aberrants (feed cassé, devise mélangée)
-// Marge volontairement large pour ne jamais bloquer un mouvement de marché réel
-const PRICE_BOUNDS = {
-  FTI: [15, 200], HPE: [10, 120], AMZN: [50, 600], "MC.PA": [200, 1200],
-  "NATO.L": [5, 60], NVDA: [30, 500], ABUS: [0.5, 30], "DFND.MI": [2, 40],
-  MSFT: [100, 800], SPY: [200, 900], QQQ: [150, 800], TLT: [50, 140],
-  GLD: [800, 5000], ITA: [60, 300]
-};
+// Registre effectif = registre du code + ajouts de l'utilisateur (ces derniers priment).
+const REG = (() => {
+  const user = loadUserRegistry();
+  const out = { ...REGISTRY };
+  Object.entries(user).forEach(([t, e]) => { out[t] = { ...(out[t]||{}), ...e }; });
+  Object.entries(out).forEach(([t, e]) => { if(!e.y) e.y = t; if(!e.role) e.role = "port"; });
+  return out;
+})();
+const regEntries = role => Object.entries(REG).filter(([,e]) => e.role === role);
+
+/* ───── Tables DÉRIVÉES du registre (ne plus éditer à la main) ───── */
+
+// Symboles cotés : tout sauf les indicateurs macro (qui ne fournissent que des bornes).
+const YF = Object.fromEntries(Object.entries(REG)
+  .filter(([,e]) => e.role !== "macro")
+  .map(([t,e]) => {
+    const o = { y:e.y, ccy:e.ccy||"USD" };
+    if(e.role === "bench")  o.bench  = true;
+    if(e.role === "watch")  o.watch  = true;
+    if(e.role === "sector") o.sector = e.sector;
+    return [t, o];
+  }));
+
+// Cours de secours (dernier recours si relais ET cache échouent).
+const PRICE_DEF = Object.fromEntries(Object.entries(REG)
+  .filter(([,e]) => e.def != null).map(([t,e]) => [t, e.def]));
+
+// Bornes anti-aberration, indexées par SYMBOLE YAHOO (rejette feed cassé / devise mélangée).
+const PRICE_BOUNDS = Object.fromEntries(Object.entries(REG)
+  .filter(([,e]) => Array.isArray(e.bounds)).map(([,e]) => [e.y, e.bounds]));
+
+// Structure du portefeuille, SANS données personnelles (q et b à zéro : elles vivent en local).
+const PORT_SKEL = regEntries("port").map(([t,e]) => ({
+  t, n:e.n||t, q:0, b:0, s:e.s||"Autre", sig:e.sig||"hold", v:e.v||25, acct:e.acct||"CTO"
+}));
 
 /* ===== PORTEFEUILLE CHIFFRÉ =====
    Confidentialité : tes positions ne sont plus en clair dans ce fichier public.
@@ -195,20 +257,7 @@ const PRICE_BOUNDS = {
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"RTViuD0vFWhuqBrWu3jC9g==","iv":"J4EhPkMlQO3SG9Q9","data":"ClQB1riHnfjUiMphQhUZwnMowb3l67r9G/VrgU0SyTIFoRbkNy8g+qGD2hKi0DU/o7+Ka0gpZ7TzmyUVvlCBHj9/Xa9/e7ue4r93ZuaMdlJGywuLIjRn05PuhmEts6YkrHfcNsJhPl9MTLpLilzDVNiGOQJTVqSAc6HeDrB25/InZFhejVxd0d8ObykdIlrfLbqNhItFma6sC9x+95Mz+19vzNTffRAPaERuv8Mzhew+MYtC5JvjAu6rSgFKl1NNx5d6MJsBHNQLcgi/3xv3p3aJrbNs3pFYzQbezzujdgrGwjDEmmLbvMlZl9ujs+GVcOlgW6mJcoZfJiPiFrL1o8DFfTp6hReQiDN7hbZPh8HjJdNvuoHSpHRXnPSna8ElZlVsmVlEqitK/wY2880OGV3Lbs9C+LtTY847+BwDGpcABlyYqtnlWOKhoTLoraj/GeKckYMibN8RuQLeteg12l6i+ErSp//Eow3JnAuUB7a2CaCbX+w5rVn5STJHGAoPAZHVgMfcbkj75iDHb575wG+yTBBAHaM3H3KTOfwkiIWvywkzSVBxxl2Ik14g7U6CZkHxp0YiSvXroKEweSF2nFozC8xwEonJB0Lved6/pe4NMHoI5cK2s0svyszWiB3anB/hFPNBcpmiVmnc/mNkrBw3hBN+fykwxpxHwTAmdmMsbFzAeFjkCaRSnPevlD1oFmuQWDQ6DUQZ3eRP/k8F02w9reanYbx8hIwVUYGc7yfaYEyhHTyUOKbJFoaMLEZDilMlrYR7wp9sUJ0QwIp9Xh21+d4QbYRIojHc3rlaqSX+7To0XUayfRKSKXcCbGVM0bQEwgnw8MUuL02ADslSMdSTN5pHr9jceoik1q1VMucLDN3I0MhC/+4wLraVa29AsI5R6anOIkrXYIBZCy6Y2MT6fEvuSi1dqz+ns798O6RK7cPHxDAGWBIOaJLJcZbZbrW0GSAcy5LEMobQRnKEQKLO/p7DZNd2ReU4VOZnELku4e1rbNUoXoYyu8yih7Z84/dGgIZHbOKO3O8N5G9OqbTE0V5RczVu91qgDJsJkegkc8zeQNpGFlcQTORovz5LPaO3mq9V2ZD5tjkmGiPU73oZ92TrND/UJ5CkrbFsLRE4LpofhycmHIUjjerDDBBZakH8jJ/gTaD3ayx37UjPs94="};
-
-// Structure des supports suivis, SANS aucune donnée personnelle (q et b à zéro).
-const PORT_SKEL = [
-  { t:"FTI",  n:"TechnipFMC",        q:0, b:0, s:"Énergie", sig:"sell", v:28, acct:"CTO" },
-  { t:"HPE",  n:"HP Enterprise",     q:0, b:0, s:"Tech",    sig:"hold", v:32, acct:"CTO" },
-  { t:"AMZN", n:"Amazon",            q:0, b:0, s:"Tech",    sig:"buy",  v:25, acct:"CTO" },
-  { t:"MC",   n:"LVMH",              q:0, b:0, s:"Luxe",    sig:"hold", v:24, acct:"CTO" },
-  { t:"NATO", n:"Future of Defence", q:0, b:0, s:"Défense", sig:"buy",  v:20, acct:"CTO" },
-  { t:"NVDA", n:"NVIDIA",            q:0, b:0, s:"Tech",    sig:"buy",  v:38, acct:"CTO" },
-  { t:"ABUS", n:"Arbutus Biopharma", q:0, b:0, s:"Biotech", sig:"spec", v:65, acct:"CTO" },
-  { t:"GAD",  n:"Global Aero & Def", q:0, b:0, s:"Défense", sig:"buy",  v:18, acct:"CTO" },
-  { t:"MSFT", n:"Microsoft",         q:0, b:0, s:"Tech",    sig:"buy",  v:22, acct:"CTO" }
-];
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -247,7 +296,7 @@ function sanitizePort(arr) {
   return dedup.length ? dedup : PORT_DEF;
 }
 
-const AN = {
+const AN_BASE = {
   FTI:{r:"ALLÉGER",c:85,p:5,sig:"sell",lu:"2026-07-06",tgt:{l:45,a:76,h:90},
     th:"Cours dépasse consensus analystes. Concentration importante du portefeuille = risque de drawdown asymétrique. Recommandation : alléger 50-60% sur force, réinvestir sur convictions IA/défense.",
     cat:["Backlog offshore — carnet de commandes record, visibilité pluriannuelle sur les projets sous-marins","Rebond capex pétrolier — reprise des investissements des majors dans l'offshore profond","Cycle haut du Brent — un baril élevé soutient les nouveaux projets et les marges"],
@@ -294,6 +343,25 @@ const AN = {
     ris:["Shutdown US — blocages budgétaires retardant les commandes","Cycle pacifique — une accalmie géopolitique freinerait le secteur","Coûts programmes (F-35) — dépassements et retards sur les grands programmes"],
     act:"Renforcer + DCA",edg:"ETF mondial bénéficie même si un pays sous-performe."}
 };
+
+/* Données analystes EFFECTIVES = celles du code + celles que tu saisis dans l'app
+   (fiche d'une position → « Données analystes »). Tes saisies priment, ce qui permet
+   à un support AJOUTÉ depuis l'app d'avoir une vraie thèse — et donc une vraie
+   prévision — au lieu de rester une position de seconde zone. */
+const AN = (() => {
+  const ov = loadANOverrides();
+  const out = {};
+  Object.keys(AN_BASE).forEach(t => { out[t] = { ...AN_BASE[t] }; });
+  Object.entries(ov).forEach(([t, o]) => {
+    if(!o || typeof o !== "object") return;
+    const keep = {};
+    ["r","c","p","sig","lu","tgt","th","cat","ris","act","edg"].forEach(k => { if(o[k] != null) keep[k] = o[k]; });
+    if(Object.keys(keep).length) out[t] = { ...(out[t]||{}), ...keep };
+  });
+  return out;
+})();
+// Une position a-t-elle une thèse exploitable (objectifs + conviction) ?
+function hasThesis(t) { const a = AN[t]; return !!(a && a.tgt && a.c != null); }
 
 /* Nouvelles opportunités */
 const OPPS = [
@@ -772,6 +840,21 @@ async function fetchAllPrices(fast) {
   const workerOk = Object.keys(results).length > 0;
   if (!workerOk) DBG && console.warn("[Relais] aucun cours reçu — cache/PRICE_DEF conservés");
 
+  // COMPLÉMENT : le Worker embarque sa propre liste de tickers. Tout support AJOUTÉ depuis
+  // l'app (registre local) en est absent — il serait donc resté sans cours. On le récupère
+  // ici individuellement via le passe-plat ?q= du relais, qui accepte n'importe quel symbole
+  // Yahoo. Le Worker n'a donc PAS besoin d'être redéployé pour suivre un nouveau support.
+  if (wurl && !fast) {
+    const missing = Object.keys(YF).filter(t => results[t] == null);
+    if (missing.length) {
+      const nowM = Date.now();
+      await Promise.all(missing.slice(0, 12).map(async t => {
+        try { const px = await fetchSymbol(YF[t].y); if (px > 0) { results[t] = px; ts[t] = nowM; } }
+        catch(e) { DBG && console.warn("[Relais] complément échoué", t, e.message); }
+      }));
+    }
+  }
+
   // Taux de change : le relais le renvoie déjà. Secours (rare) : Frankfurter (BCE, sans proxy).
   if (eurusd == null && !fast) {
     try { eurusd = await fetchEurUsd(); } catch(e) { DBG && console.warn("[Fetch] EURUSD fallback", FALLBACK_EURUSD); }
@@ -822,9 +905,10 @@ function enrich(port, prices, eurusd, priceTsMap, convMap, qHistMap) {
     const dynConv = (convMap && convMap[p.t]) || {
       value: AN[p.t] ? AN[p.t].c : 50, decay: 1, coherence: 1, changes: {}, available: 0, divergent: false, lu: AN[p.t] ? getANLu(p.t) : null
     };
-    const eff = effectiveSignal(p.t, prices, qHistMap && qHistMap[p.t]);
     const pxNative = (prices && prices[p.t] != null) ? prices[p.t] : null;
-    const qh = qHistMap && qHistMap[p.t];
+    // Historique enrichi du cours live → RSI, volatilité et cône réagissent au prix du jour.
+    const qh = liveHist(qHistMap && qHistMap[p.t], pxNative);
+    const eff = effectiveSignal(p.t, prices, qh);
     const rvol = realizedVol(qh);   // volatilité observée 3 ans
     const wret = weeklyLogRets(qh); // rendements hebdo réels (cône bootstrap)
     return { ...p, inv, pxE, val, pnl, pct, priceAge, dynConv, pxNative, rvol, wret,
@@ -1046,6 +1130,31 @@ function flagThesis(ticker) {
   saveANOverrides(ov);
 }
 
+/* ===== SUIVI VIVANT DES CATALYSEURS ET RISQUES =====
+   Le TEXTE d'un catalyseur reste un jugement (l'app ne peut pas inventer l'actualité), mais son
+   STATUT devient vivant : tu marques « réalisé / en attente / caduc », l'app horodate, mémorise
+   le cours à ce moment, et affiche ensuite ce que le marché a fait DEPUIS. Un marquage vieux de
+   plus de 90 jours repasse automatiquement « à revérifier ». */
+const ITEM_STALE_DAYS = 90;
+function getItems(ticker) { const ov = loadANOverrides(); return (ov[ticker] && ov[ticker].items) || {}; }
+function setItemStatus(ticker, key, st, px) {
+  const ov = loadANOverrides();
+  const cur = ov[ticker] || {};
+  const items = { ...(cur.items||{}) };
+  if(st == null) delete items[key];
+  else items[key] = { st, at: new Date().toISOString().slice(0,10), px: (px!=null && px>0) ? px : null };
+  ov[ticker] = { ...cur, items };
+  saveANOverrides(ov);
+}
+// État effectif d'un item : statut marqué + ancienneté + dérive du cours depuis le marquage.
+function itemState(ticker, key, pxNow, itemsCache) {
+  const it = (itemsCache || getItems(ticker))[key];
+  if(!it) return { st:null, stale:false, ageDays:null, drift:null };
+  const ageDays = Math.round((Date.now() - new Date(it.at).getTime())/86400000);
+  const drift = (it.px && pxNow) ? (pxNow/it.px - 1)*100 : null;
+  return { st: it.st, at: it.at, stale: ageDays > ITEM_STALE_DAYS, ageDays, drift };
+}
+
 // Détecte si une thèse mérite une revue, et pourquoi. Ne juge pas la thèse : signale seulement.
 const REVIEW_AGE_DAYS = 90;
 function reviewNeeds(p, ov) {
@@ -1246,7 +1355,10 @@ function calcRiskScore({ vol, rsi, beta, wt, p10, ec }) {
   parts.push({k:"rsi", label:"RSI extrême", score:Math.min(20,rScore), max:20, val:rsi});
   // 3. Beta vs marché (>1.5 ou <0 = risque) — poids 20
   let bScore = 8;
-  if(beta!=null) bScore = beta>1.5 ? 12+Math.min(8,(beta-1.5)*6) : beta<0 ? 16 : Math.abs(beta-1)*8;
+  // Le risque de marché croît avec l'AMPLITUDE du beta : β≈0 = décorrélé (diversifiant,
+  // donc peu risqué), β≈1 = suit le marché, β>1.5 = amplifie. Auparavant tout beta négatif
+  // était noté 16/20, ce qui pénalisait à tort une ligne décorrélée (ex. β = -0,09).
+  if(beta!=null) { const ab = Math.abs(beta); bScore = ab>1.5 ? 12+Math.min(8,(ab-1.5)*6) : ab*8; }
   parts.push({k:"beta", label:"Beta marché", score:Math.min(20,bScore), max:20, val:beta});
   // 4. Concentration (poids du portefeuille) — poids 20
   const cScore = Math.min(20, (wt||0)/40*20);
@@ -1386,6 +1498,59 @@ function notify(title, body) {
   catch(e) {}
 }
 
+// Formate un montant dans la devise RÉELLE du support (registre) — évite d'afficher
+// les objectifs de LVMH en dollars alors que le titre cote en euros.
+function fcur(t, v, d) {
+  const ccy = (REG[t] && REG[t].ccy) || "USD";
+  return ccy === "EUR" ? "\u20AC" + Math.abs(v).toLocaleString("fr-FR",{minimumFractionDigits:d==null?2:d,maximumFractionDigits:d==null?2:d})
+                       : fd(v, d);
+}
+// Convertit un montant exprimé dans la devise du support vers l'euro.
+function nativeToEUR(t, v, eurusd) {
+  if(v == null || !isFinite(v)) return null;
+  const ccy = (REG[t] && REG[t].ccy) || "USD";
+  return ccy === "EUR" ? v : (eurusd > 0 ? v / eurusd : v);
+}
+
+/* ============== SIGNAUX TEMPS RÉEL ==============
+   Détecte automatiquement ce qui mérite ton attention MAINTENANT, sans aucun réglage :
+   franchissement d'objectif, mouvement hebdo marqué, RSI extrême, décrochage vs PRU.
+   C'est ce qui manquait : avant, aucun signal ne se déclenchait tant qu'aucun seuil
+   n'avait été saisi manuellement ticker par ticker. */
+function autoSignals(port, qHistMap) {
+  const out = [];
+  (port||[]).forEach(p => {
+    if(p.val == null) return;
+    const an = AN[p.t], px = p.pxNative;
+    const h = qHistMap && qHistMap[p.t];
+    // Mouvement hebdomadaire (dernier point vs précédent de l'historique hebdo)
+    if(h && h.length >= 2) {
+      const a = h[h.length-2].px, b = h[h.length-1].px;
+      if(a > 0) {
+        const w = (b/a - 1) * 100;
+        if(w <= -7) out.push({ t:p.t, sev:"warn", kind:"Baisse marquée", msg:`${fp(w,1)} sur la dernière semaine` });
+        else if(w >= 10) out.push({ t:p.t, sev:"info", kind:"Hausse marquée", msg:`${fp(w,1)} sur la dernière semaine` });
+      }
+    }
+    // Franchissement des objectifs analystes (comparaison dans la devise du titre)
+    if(an && an.tgt && px != null) {
+      if(px <= an.tgt.l) out.push({ t:p.t, sev:"buy",  kind:"Sous l'objectif bas", msg:`${fcur(p.t,px)} \u2264 ${fcur(p.t,an.tgt.l)} — zone d'accumulation` });
+      else if(px >= an.tgt.h) out.push({ t:p.t, sev:"sell", kind:"Au-dessus de l'objectif haut", msg:`${fcur(p.t,px)} \u2265 ${fcur(p.t,an.tgt.h)} — envisager d'alléger` });
+    }
+    // RSI extrême
+    if(p.rsiLive != null) {
+      if(p.rsiLive <= 30) out.push({ t:p.t, sev:"buy", kind:"Survendu", msg:`RSI ${p.rsiLive} — rebond possible` });
+      else if(p.rsiLive >= 70) out.push({ t:p.t, sev:"sell", kind:"Suracheté", msg:`RSI ${p.rsiLive} — risque de correction` });
+    }
+    // Décrochage marqué vs PRU
+    if(p.pct != null && p.pct <= -30) out.push({ t:p.t, sev:"warn", kind:"Forte moins-value", msg:`${fp(p.pct,0)} vs PRU — thèse à revalider` });
+    // Concentration critique
+    if(p.wt != null && p.wt >= 35) out.push({ t:p.t, sev:"warn", kind:"Concentration", msg:`${fp(p.wt,0)} du portefeuille sur cette ligne` });
+  });
+  const rank = { warn:0, sell:1, buy:2, info:3 };
+  return out.sort((a,b)=> (rank[a.sev]-rank[b.sev]));
+}
+
 /* ============== ALERTES SEUILS ============== */
 function smartThresholds(pos, pxE) {
   // Calcul intelligent des seuils par défaut basés sur PRU et volatilité
@@ -1399,7 +1564,18 @@ function checkAlerts(port, alerts, prices, eurusd, lastNotifRef) {
   port.forEach(p => {
     const pxE = priceEUR(p.t, prices, eurusd);
     if (pxE == null) return;
-    const a = alerts[p.t]; if (!a || !a.on) return;
+    // Seuils : ceux que tu as saisis, SINON des seuils automatiques déduits de l'analyse
+    // (objectifs analystes si disponibles, sinon PRU + volatilité). Avant, l'absence de
+    // configuration manuelle désactivait purement et simplement toute alerte.
+    let a = alerts[p.t];
+    if (!a || !a.on) {
+      const an = AN[p.t];
+      if (an && an.tgt) {
+        a = { on:true, lo: nativeToEUR(p.t, an.tgt.l, eurusd), hi: nativeToEUR(p.t, an.tgt.h, eurusd), auto:true };
+      } else if (p.b > 0) {
+        const st = smartThresholds(p, pxE); a = { on:true, lo:st.lo, hi:st.hi, auto:true };
+      } else return;
+    }
     const lastT = lastNotifRef[p.t] || 0;
     if (now - lastT < 3600000) return; // 1h cooldown par ticker
     if (a.hi && pxE >= a.hi) {
@@ -1427,6 +1603,19 @@ function realizedVol(qHist) {
 }
 
 // Rendements hebdo log (additifs) pour le cône bootstrap. null si historique trop court.
+// Greffe le cours LIVE sur l'historique hebdo : le dernier point représente la semaine EN COURS,
+// on le remplace donc par le cours actuel. Sans cela, RSI, volatilité réelle et forme du cône
+// restaient figés sur l'historique en cache (24 h) et ne réagissaient pas au prix du jour.
+// Garde-fou ±50 % : évite qu'un cours dans une autre devise ne corrompe la série.
+function liveHist(qHist, pxNative) {
+  if(!qHist || !qHist.length || pxNative == null || !(pxNative > 0)) return qHist;
+  const last = qHist[qHist.length-1];
+  if(!last || !(last.px > 0) || Math.abs(pxNative/last.px - 1) > 0.5) return qHist;
+  const out = qHist.slice();
+  out[out.length-1] = { ...last, px: pxNative };
+  return out;
+}
+
 function weeklyLogRets(qHist) {
   const px = (qHist||[]).map(d=>d.px).filter(v=>v>0);
   if(px.length < 20) return null;
@@ -1521,6 +1710,7 @@ function analystFreshness(lu) {
 }
 function forecast(pos, mac) {
   const an = AN[pos.t] || {};
+  const thesis = hasThesis(pos.t);   // thèse exploitable (objectifs + conviction) ?
   // 10 facteurs (compactés) : conviction, momentum sectoriel, signal, volatilité, position cycle, etc.
   const f1 = (pos.dynConv ? pos.dynConv.value : (an.c || 50)) / 100; // conviction auto-gérée (décroissance + cohérence momentum)
   const f2 = an.sig === "buy" ? 1 : an.sig === "sell" ? -1 : an.sig === "spec" ? .3 : 0;
@@ -1557,6 +1747,11 @@ function forecast(pos, mac) {
     calibrated: CALIB.ready,
     fresh: +fresh.toFixed(2),
     fat: !!shape,
+    // Sur quoi la prévision s'appuie réellement — affiché pour ne jamais laisser croire
+    // qu'un support sans thèse a la même solidité qu'un support documenté.
+    basis: thesis ? "thèse" : "statistique",
+    hist: pos.wret ? pos.wret.length : 0,
+    confidence: (thesis ? (fresh >= 0.9 ? "élevée" : "moyenne") : ((pos.wret && pos.wret.length >= 40) ? "moyenne" : "faible")),
     factors: { f1,f2,f3,f4,f5,f6,f7,f8,f9,f10 }
   };
 }
@@ -1892,6 +2087,7 @@ function reviewQuestions(ticker) {
 
 function ThesisReview({ port, items, onReviewed, onSelect }) {
   const [open, setOpen] = useState(null);
+  const [itemBump, setItemBump] = useState(0);   // rafraîchit les statuts d'items après marquage
   if(!items || !items.length) return null;
   const cols = { rd:"#e85d5d", am:"#f0a020", bl:"#4f83f5" };
   const cur = items.find(i => i.ticker === open);
@@ -1950,15 +2146,8 @@ function ThesisReview({ port, items, onReviewed, onSelect }) {
 
               <div className="lbl" style={{margin:"9px 0 4px"}}>À trancher de ton côté · propre à {it.ticker}</div>
               {reviewQuestions(it.ticker).map((q,i)=>(
-                <div key={i} style={{display:"flex",gap:6,padding:"4px 0",borderTop:i?"1px solid rgba(255,255,255,.04)":"none"}}>
-                  <span style={{flex:"0 0 auto",fontSize:10,color:q.k==="cat"?"#2ecc8f":q.k==="ris"?"#e85d5d":"#4f83f5"}}>
-                    {q.k==="cat"?"▲":q.k==="ris"?"▼":"◆"}
-                  </span>
-                  <span style={{flex:1,fontSize:10,lineHeight:1.4}}>
-                    <strong style={{color:"#dde3f0"}}>{q.label}</strong>
-                    {q.q && <span style={{color:"#8892a8"}}> — {q.q}</span>}
-                  </span>
-                </div>
+                <ItemTracker key={i} ticker={it.ticker} ikey={q.k+i} kind={q.k} label={q.label}
+                  detail={q.q} pxNow={p.pxNative} bump={itemBump} onChange={()=>setItemBump(b=>b+1)}/>
               ))}
               <div style={{fontSize:9,color:"#3a4560",marginTop:5}}>▲ catalyseurs · ▼ risques · ◆ objectifs. La thèse complète est dans la fiche.</div>
 
@@ -2180,6 +2369,61 @@ const JOURNAL_KEY = "fab-journal";
 function loadJournal() { try{ const s=localStorage.getItem(JOURNAL_KEY); const a=s?JSON.parse(s):[]; return Array.isArray(a)?a:[]; }catch(e){ return []; } }
 function saveJournal(arr) { try{ localStorage.setItem(JOURNAL_KEY, JSON.stringify(arr.slice(0,200))); }catch(e){} }
 
+/* Ligne de catalyseur/risque VIVANTE : statut marquable, horodaté, avec la dérive du cours
+   depuis le marquage. C'est ce qui rend la thèse actualisable dans le temps et face au prix. */
+function ItemTracker({ ticker, ikey, kind, label, detail, pxNow, bump, onChange }) {
+  const st = useMemo(()=>itemState(ticker, ikey, pxNow), [ticker, ikey, pxNow, bump]);
+  const kcol = kind==="cat" ? "#2ecc8f" : kind==="ris" ? "#e85d5d" : "#4f83f5";
+  const chip = { ok:{t:"réalisé",c:"#2ecc8f"}, wait:{t:"en attente",c:"#f0a020"}, ko:{t:"caduc",c:"#8892a8"} }[st.st];
+  const set = v => { setItemStatus(ticker, ikey, st.st===v ? null : v, pxNow); onChange && onChange(); };
+  const btn = (v,txt) => (
+    <span onClick={e=>{e.stopPropagation(); set(v);}}
+      style={{cursor:"pointer",fontSize:8,fontWeight:700,padding:"2px 6px",borderRadius:4,
+        border:"1px solid",borderColor:st.st===v?kcol:"#3a4560",color:st.st===v?kcol:"#8892a8"}}>{txt}</span>
+  );
+  return (
+    <div style={{padding:"7px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
+      <div style={{display:"flex",gap:6,alignItems:"baseline"}}>
+        <span style={{fontSize:10,color:kcol}}>{kind==="cat"?"▲":kind==="ris"?"▼":"◆"}</span>
+        <span style={{flex:1,fontSize:10,lineHeight:1.4}}>
+          <strong style={{color:"#dde3f0"}}>{label}</strong>
+          {detail && <span style={{color:"#8892a8"}}> — {detail}</span>}
+        </span>
+      </div>
+      <div style={{display:"flex",gap:5,alignItems:"center",marginTop:5,flexWrap:"wrap",paddingLeft:16}}>
+        {btn("ok","réalisé")}{btn("wait","en attente")}{btn("ko","caduc")}
+        {chip && <span style={{fontSize:8,color:chip.c}}>
+          {chip.t} · il y a {st.ageDays}j
+          {st.drift!=null && <span style={{color:cl(st.drift)}}> · cours {fp(st.drift,1)} depuis</span>}
+          {st.stale && <span style={{color:"#f0a020"}}> · à revérifier</span>}
+        </span>}
+        {!chip && <span style={{fontSize:8,color:"#3a4560"}}>non statué</span>}
+      </div>
+    </div>
+  );
+}
+
+function SignalsCard({ port, qHistMap, onSelect }) {
+  const sigs = useMemo(()=>autoSignals(port, qHistMap), [port, qHistMap]);
+  const [all, setAll] = useState(false);
+  if(!sigs.length) return null;
+  const col = { warn:"#e85d5d", sell:"#f0a020", buy:"#2ecc8f", info:"#4f83f5" };
+  const shown = all ? sigs : sigs.slice(0,4);
+  return (
+    <div className="card" style={{borderColor:"rgba(232,93,93,.25)"}}>
+      <div className="cd-ti"><h3>Signaux</h3><span className="dim" style={{fontSize:9}}>détectés automatiquement · {sigs.length}</span></div>
+      {shown.map((g,i)=>(
+        <div key={i} onClick={()=>onSelect&&onSelect(g.t)} style={{display:"flex",gap:8,alignItems:"baseline",padding:"6px 0",borderTop:i?"1px solid rgba(255,255,255,.04)":"none",cursor:"pointer"}}>
+          <strong className="tk" style={{minWidth:44,fontSize:11}}>{g.t}</strong>
+          <span style={{fontSize:10,fontWeight:700,color:col[g.sev],minWidth:96}}>{g.kind}</span>
+          <span style={{fontSize:10,color:"#8892a8",flex:1,lineHeight:1.35}}>{g.msg}</span>
+        </div>
+      ))}
+      {sigs.length>4 && <div onClick={()=>setAll(v=>!v)} style={{fontSize:10,color:"#4f83f5",cursor:"pointer",marginTop:7,textAlign:"center"}}>{all?"Réduire":`Voir les ${sigs.length-4} autres`}</div>}
+    </div>
+  );
+}
+
 function PositionsView({ port, m, eurusd, qHistMap = {}, onSelect, onTabChange, onRefresh, lastTs }) {
   const [showHealth, setShowHealth] = useState(false);
   const health = useMemo(() => calcHealth(port, m), [port, m]);
@@ -2247,6 +2491,7 @@ function PositionsView({ port, m, eurusd, qHistMap = {}, onSelect, onTabChange, 
           </div>
         )}
       </div>
+      <SignalsCard port={port} qHistMap={qHistMap} onSelect={onSelect}/>
       <div className="card">
         <div className="cd-ti"><h3>Positions ({port.length})</h3>
           <span className="dim mono" style={{fontSize:10}}>EUR/USD {eurusd?eurusd.toFixed(4):"—"}</span>
@@ -3729,7 +3974,7 @@ function CalibrationStatus() {
 
 function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onAskNotif, notifPerm, prices, eurusd, lastTs, fetchCount, priceTsMap }) {
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ t:"", n:"", q:"", b:"", s:"Tech", sig:"hold", v:25 });
+  const [form, setForm] = useState({ t:"", n:"", q:"", b:"", s:"Tech", sig:"hold", v:25, y:"", ccy:"USD" });
   const [pinActive, setPinActive] = useState(()=>Boolean(getPinHash()));
   const [pinA, setPinA] = useState("");
   const [pinB, setPinB] = useState("");
@@ -3770,13 +4015,24 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
   const removePos = (t) => {
     if (!confirm(`Supprimer ${t} du portefeuille ?`)) return;
     onPortChange(port.filter(p => p.t !== t));
+    // Retire aussi le support du registre s'il y avait été ajouté depuis l'app
+    // (les supports livrés avec l'outil restent, ils ne gênent pas).
+    const reg = loadUserRegistry();
+    if (reg[t]) { delete reg[t]; saveUserRegistry(reg); }
   };
   const addPos = () => {
     if (!form.t || !form.q || !form.b) { alert("Ticker, quantité et PRU obligatoires"); return; }
-    const exists = port.find(p => p.t === form.t.toUpperCase());
-    if (exists) { alert("Ticker déjà présent — supprimer puis re-ajouter"); return; }
-    onPortChange([...port, { ...form, t: form.t.toUpperCase(), q: +form.q, b: +form.b, v: +form.v }]);
-    setForm({ t:"", n:"", q:"", b:"", s:"Tech", sig:"hold", v:25 });
+    const t = form.t.toUpperCase().trim();
+    if (port.find(p => p.t === t)) { alert("Ticker déjà présent — supprimer puis re-ajouter"); return; }
+    // Le support est enregistré dans le REGISTRE : symbole Yahoo, devise, secteur, volatilité.
+    // C'est ce qui lui donne des cours live, un historique et une prévision — comme les autres.
+    const reg = loadUserRegistry();
+    reg[t] = { n: form.n || t, y: (form.y || t).trim(), ccy: form.ccy || "USD",
+               role: "port", s: form.s, v: +form.v || 25, sig: form.sig, acct: "CTO" };
+    saveUserRegistry(reg);
+    onPortChange([...port, { t, n: form.n || t, q: +form.q, b: +form.b, s: form.s, sig: form.sig, v: +form.v || 25, acct: "CTO" }]);
+    setForm({ t:"", n:"", q:"", b:"", s:"Tech", sig:"hold", v:25, y:"", ccy:"USD" });
+    alert(t + " ajouté au registre.\nRecharge la page pour activer ses cours live et sa prévision.");
   };
 
   // ===== Sauvegarde / restauration (confidentialité : données hors du code source) =====
@@ -4031,6 +4287,12 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
           <input placeholder="Ticker (ex: TSLA)" value={form.t} onChange={(e)=>setForm({...form,t:e.target.value})}/>
           <input placeholder="Nom" value={form.n} onChange={(e)=>setForm({...form,n:e.target.value})}/>
         </div>
+        <div className="g2" style={{marginBottom:8}}>
+          <input placeholder="Symbole Yahoo (déf. = ticker)" value={form.y} onChange={(e)=>setForm({...form,y:e.target.value})}/>
+          <select value={form.ccy} onChange={(e)=>setForm({...form,ccy:e.target.value})}>
+            <option value="USD">Cours en USD</option><option value="EUR">Cours en EUR</option>
+          </select>
+        </div>
         <div className="g2" style={{marginBottom:6}}>
           <input placeholder="Quantité" type="number" step="0.000001" value={form.q} onChange={(e)=>setForm({...form,q:e.target.value})}/>
           <input placeholder="PRU EUR" type="number" step="0.01" value={form.b} onChange={(e)=>setForm({...form,b:e.target.value})}/>
@@ -4083,12 +4345,35 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   const p = port.find(x => x.t === ticker); if (!p) return null;
   const a = AN[ticker] || {};
   const [history, setHistory] = useState(null);
-  const [qHist, setQHist] = useState(null); // historique trimestriel 3A
+  const [qHistRaw, setQHist] = useState(null); // historique hebdo 3A (brut, en cache)
+  // Historique effectif = brut + cours live greffé → le graphe, le %3 ans, le RSI et le beta
+  // de la fiche suivent le prix du jour au lieu d'attendre le rafraîchissement du cache.
+  const qHist = useMemo(() => liveHist(qHistRaw, p.pxNative), [qHistRaw, p.pxNative]);
   const [spyQHist, setSpyQHist] = useState(null); // SPY trimestriel pour beta
   const [adv, setAdv] = useState(false);           // repli des indicateurs techniques (beta, Kelly)
   const [earnDate, setEarnDate] = useState(undefined); // undefined=chargement, null=aucune, {ts,date}=ok
   const [horizon, setHorizon] = useState(12);
   const [reviewBump, setReviewBump] = useState(0);
+  const [edit, setEdit] = useState(false);   // éditeur des données analystes
+  const [anF, setAnF] = useState(()=>({ l:(a.tgt&&a.tgt.l)||"", av:(a.tgt&&a.tgt.a)||"", h:(a.tgt&&a.tgt.h)||"", c:a.c!=null?a.c:"", pr:a.p!=null?a.p:"", th:a.th||"",
+    cat:(a.cat||[]).join("\n"), ris:(a.ris||[]).join("\n") }));
+  const saveAN = () => {
+    const ov = loadANOverrides();
+    const cur = ov[ticker] || {};
+    const num = v => (v===""||v==null) ? null : +v;
+    const l=num(anF.l), av=num(anF.av), h=num(anF.h);
+    if(l!=null && av!=null && h!=null) cur.tgt = { l, a:av, h };
+    if(num(anF.c)!=null) cur.c = num(anF.c);
+    if(num(anF.pr)!=null) cur.p = num(anF.pr);
+    if(anF.th.trim()) cur.th = anF.th.trim();
+    const lines = v => v.split("\n").map(x=>x.trim()).filter(Boolean);
+    if(anF.cat.trim()) cur.cat = lines(anF.cat);
+    if(anF.ris.trim()) cur.ris = lines(anF.ris);
+    cur.lu = new Date().toISOString().slice(0,10);
+    ov[ticker] = cur; saveANOverrides(ov);
+    alert("Données enregistrées. Recharge la page pour les appliquer partout.");
+    setEdit(false);
+  };
   const [cInfo, setCInfo] = useState(false);
 
   useEffect(() => {
@@ -4135,7 +4420,9 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   }, [history, ec, f.p50]);
 
   // Score de risque synthétique
-  const risk = useMemo(() => calcRiskScore({ vol:p.v, rsi, beta, wt:p.wt, p10:f.p10, ec }), [p.v, rsi, beta, p.wt, f.p10, ec]);
+  // Volatilité RÉELLE observée (comme la prévision), repli sur l'estimation si pas d'historique.
+  const volPct = (p.rvol != null && p.rvol > 0) ? +(p.rvol*100).toFixed(0) : p.v;
+  const risk = useMemo(() => calcRiskScore({ vol:volPct, rsi, beta, wt:p.wt, p10:f.p10, ec }), [volPct, rsi, beta, p.wt, f.p10, ec]);
 
   // Verdict synthétique : signal + conviction + risque combinés en une phrase
   const verdict = useMemo(() => {
@@ -4143,14 +4430,18 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     const sigLabel = {buy:"RENFORCER", sell:"ALLÉGER", hold:"CONSERVER", spec:"SPÉCULATIF"}[vsig] || "CONSERVER";
     const riskLabel = risk.total>=65?"risque élevé":risk.total>=40?"risque modéré":"risque faible";
     const convLabel = ec>=80?"conviction forte":ec>=60?"conviction correcte":"conviction faible";
+    // Garde-fou « couteau qui tombe » : un signal d'achat né d'une simple décote ne doit pas
+    // être présenté comme une opportunité tranquille si le cours baisse encore franchement.
+    const falling = (p.pct != null && p.pct <= -25) || (dynConv && dynConv.changes && ((dynConv.changes.m1 != null && dynConv.changes.m1 <= -8) || (dynConv.changes.d90 != null && dynConv.changes.d90 <= -12)));
     let phrase;
-    if(vsig==="sell" && risk.total>=55) phrase = `Signal de vente avec ${riskLabel} actuel — fenêtre de sortie favorable.`;
+    if(vsig==="buy" && falling) phrase = `Décote réelle, mais la baisse est toujours en cours — ${convLabel}. Attendre une stabilisation avant de renforcer.`;
+    else if(vsig==="sell" && risk.total>=55) phrase = `Signal de vente avec ${riskLabel} actuel — fenêtre de sortie favorable.`;
     else if(vsig==="buy" && risk.total<45) phrase = `Opportunité de renforcement à ${riskLabel} — ${convLabel} de la thèse.`;
     else if(vsig==="buy" && risk.total>=55) phrase = `Thèse positive mais ${riskLabel} actuel — renforcer prudemment ou attendre.`;
     else if(vsig==="sell" && risk.total<45) phrase = `Signal de vente mais risque actuel limité — pas d'urgence à agir.`;
     else phrase = `Position stable, ${riskLabel}, ${convLabel}.`;
     return { sigLabel, riskLabel, convLabel, phrase };
-  }, [p.sig, p.effSig, p.pxE, risk.total, ec]);
+  }, [p.sig, p.effSig, p.pxE, p.pct, risk.total, ec, dynConv]);
 
   // Fiscal (PEA exonéré imposition revenu, CTO = PFU 30%)
   const fiscal = useMemo(() => {
@@ -4419,6 +4710,17 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
             <span>P50 {horizon}M: <strong style={{color:"#4f83f5"}}>{fp(fAtH("p50"),0)}</strong></span>
             <span>P90 {horizon}M: <strong style={{color:"#2ecc8f"}}>{fp(fAtH("p90"),0)}</strong></span>
           </div>
+          {(()=>{ const cc = f.confidence==="élevée"?"#2ecc8f":f.confidence==="moyenne"?"#f0a020":"#e85d5d";
+            return (
+              <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.05)",fontSize:9,color:"#8892a8",lineHeight:1.45}}>
+                Confiance <strong style={{color:cc}}>{f.confidence}</strong> — prévision {f.basis==="thèse"
+                  ? "appuyée sur une thèse (objectifs + conviction) et sur l'historique de prix"
+                  : "purement statistique : ce support n'a pas encore d'objectifs ni de conviction saisis"}
+                {f.hist>0 ? ` · ${f.hist} semaines d'historique` : " · historique insuffisant"}.
+                {f.basis!=="thèse" && <span style={{color:"#f0a020"}}> Renseigne ses données via « Modifier » ci-dessous pour la fiabiliser.</span>}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -4598,7 +4900,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
           </div>
         </div>
         <div className="dim" style={{fontSize:10,marginBottom:8}}>
-          Thèse révisée le {dynConv.lu} · {dynConv.available}/5 horizons disponibles
+          Thèse révisée le {dynConv.lu} · {dynConv.available}/{MOMENTUM_HORIZONS.length} horizons disponibles
         </div>
         <div className="g2" style={{rowGap:8}}>
           {MOMENTUM_HORIZONS.map(h=>{
@@ -4623,11 +4925,33 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 
       {a.tgt && (
         <div className="card">
-          <div className="cd-ti"><h3>Objectifs analystes</h3></div>
+          <div className="cd-ti"><h3>Objectifs analystes</h3>
+            <span onClick={()=>setEdit(v=>!v)} style={{cursor:"pointer",fontSize:9,fontWeight:800,color:edit?"#4f83f5":"#8892a8",border:"1px solid",borderColor:edit?"#4f83f5":"#3a4560",borderRadius:5,padding:"2px 7px"}}>{edit?"FERMER":"MODIFIER"}</span>
+          </div>
+          {edit && (
+            <div style={{marginBottom:12}}>
+              <div className="g3" style={{marginBottom:6}}>
+                <input placeholder="Bas" type="number" value={anF.l} onChange={e=>setAnF({...anF,l:e.target.value})}/>
+                <input placeholder="Médian" type="number" value={anF.av} onChange={e=>setAnF({...anF,av:e.target.value})}/>
+                <input placeholder="Haut" type="number" value={anF.h} onChange={e=>setAnF({...anF,h:e.target.value})}/>
+              </div>
+              <div className="g2" style={{marginBottom:6}}>
+                <input placeholder="Conviction /100" type="number" value={anF.c} onChange={e=>setAnF({...anF,c:e.target.value})}/>
+                <input placeholder="Projection 12M %" type="number" value={anF.pr} onChange={e=>setAnF({...anF,pr:e.target.value})}/>
+              </div>
+              <input placeholder="Thèse (pourquoi tu détiens cette ligne)" value={anF.th} onChange={e=>setAnF({...anF,th:e.target.value})} style={{width:"100%",marginBottom:6}}/>
+              <textarea placeholder={"Catalyseurs — une par ligne, format : Nom — détail"} value={anF.cat} onChange={e=>setAnF({...anF,cat:e.target.value})}
+                rows={3} style={{width:"100%",marginBottom:6,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"6px 8px",fontFamily:"inherit"}}/>
+              <textarea placeholder={"Risques — un par ligne, format : Nom — détail"} value={anF.ris} onChange={e=>setAnF({...anF,ris:e.target.value})}
+                rows={3} style={{width:"100%",marginBottom:6,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"6px 8px",fontFamily:"inherit"}}/>
+              <button className="bn bn-b" style={{width:"100%"}} onClick={saveAN}>Enregistrer mes données</button>
+              <div className="dim" style={{fontSize:9,marginTop:5,lineHeight:1.4}}>Ces valeurs alimentent la prévision, le signal et la revue de thèse — c'est ce qui donne à un support ajouté la même qualité d'analyse qu'aux autres.</div>
+            </div>
+          )}
           <div className="g3">
-            <div><div className="lbl">Bas</div><div className="mono">{fd(a.tgt.l)}</div></div>
-            <div><div className="lbl">Médian</div><div className="mono"><strong>{fd(a.tgt.a)}</strong></div></div>
-            <div><div className="lbl">Haut</div><div className="mono">{fd(a.tgt.h)}</div></div>
+            <div><div className="lbl">Bas</div><div className="mono">{fcur(ticker,a.tgt.l)}</div></div>
+            <div><div className="lbl">Médian</div><div className="mono"><strong>{fcur(ticker,a.tgt.a)}</strong></div></div>
+            <div><div className="lbl">Haut</div><div className="mono">{fcur(ticker,a.tgt.h)}</div></div>
           </div>
           {p.pxNative!=null && (()=>{
             const lo=a.tgt.l, med=a.tgt.a, hi=a.tgt.h, px=p.pxNative, span=(hi-lo)||1;
@@ -4643,7 +4967,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
                   <div style={{position:"absolute",top:-1,left:pos*100+"%",transform:"translateX(-50%)",width:11,height:11,borderRadius:6,background:"#4f83f5",border:"2px solid #080b11"}}/>
                 </div>
                 <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#3a4560",marginTop:3}}>
-                  <span>bas {fd(lo)}</span><span>médian</span><span>haut {fd(hi)}</span>
+                  <span>bas {fcur(ticker,lo)}</span><span>médian</span><span>haut {fcur(ticker,hi)}</span>
                 </div>
                 <div style={{fontSize:10,color:"#8892a8",marginTop:7,lineHeight:1.4}}>Cours {zone}. Objectif médian à <strong style={{color:upMed>=0?"#2ecc8f":"#e85d5d"}}>{fp(upMed,0)}</strong>{px>=hi?" · zone d'allègement":px<=lo?" · zone d'accumulation":""}.</div>
               </div>
@@ -4664,24 +4988,16 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
         <div className="g2">
           <div className="card">
             <div className="cd-ti"><h3 style={{color:"#2ecc8f"}}>Catalyseurs</h3></div>
-            {a.cat.map((c,i)=>{const j=c.indexOf(" — ");return <div key={i} className="row" style={{padding:"6px 0",fontSize:11,lineHeight:1.45}}>{j<0?c:<span><strong style={{color:"#dde3f0"}}>{c.slice(0,j)}</strong><span style={{color:"#8892a8"}}>{c.slice(j)}</span></span>}</div>;})}
+            {a.cat.map((c,i)=>{const j=c.indexOf(" — ");return <ItemTracker key={i} ticker={ticker} ikey={"cat"+i} kind="cat"
+              label={j<0?c:c.slice(0,j)} detail={j<0?"":c.slice(j+3)} pxNow={p.pxNative} bump={reviewBump} onChange={()=>setReviewBump(b=>b+1)}/>;})}
           </div>
           <div className="card">
             <div className="cd-ti"><h3 style={{color:"#e85d5d"}}>Risques</h3></div>
-            {a.ris.map((r,i)=>{const j=r.indexOf(" — ");return <div key={i} className="row" style={{padding:"6px 0",fontSize:11,lineHeight:1.45}}>{j<0?r:<span><strong style={{color:"#dde3f0"}}>{r.slice(0,j)}</strong><span style={{color:"#8892a8"}}>{r.slice(j)}</span></span>}</div>;})}
+            {a.ris.map((r,i)=>{const j=r.indexOf(" — ");return <ItemTracker key={i} ticker={ticker} ikey={"ris"+i} kind="ris"
+              label={j<0?r:r.slice(0,j)} detail={j<0?"":r.slice(j+3)} pxNow={p.pxNative} bump={reviewBump} onChange={()=>setReviewBump(b=>b+1)}/>;})}
           </div>
         </div>
       )}
-
-      <div className="card">
-        <div className="cd-ti"><h3>Moteur 10 facteurs</h3><span className="dim" style={{fontSize:9}}>horizon {horizon}M</span></div>
-        <div className="g3">
-          <div><div className="lbl">P10</div><div className="mono" style={{color:"#e85d5d"}}>{fp(fAtH("p10"),0)}</div></div>
-          <div><div className="lbl">P50</div><div className="mono"><strong>{fp(fAtH("p50"),0)}</strong></div></div>
-          <div><div className="lbl">P90</div><div className="mono" style={{color:"#2ecc8f"}}>{fp(fAtH("p90"),0)}</div></div>
-        </div>
-        <div className="dim" style={{fontSize:10,marginTop:8,fontStyle:"italic"}}>Estimation probabiliste combinant conviction, momentum, volatilité et signal — pas une certitude.</div>
-      </div>
 
       {a.act && (
         <div className="card" style={{background:"rgba(79,131,245,.08)",borderColor:"rgba(79,131,245,.3)"}}>
