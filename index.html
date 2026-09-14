@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v18.8-2026-09-14-004";
+const BUILD = "v18.9-2026-09-14-005";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -257,7 +257,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"c/y1dhJerMNLzI8BhyfBNg==","iv":"o7QiL1RAPE2kZ9US","data":"Nw8WMM0jwLeHfIaolrI8FOGwseCxlR60eT4wiNwgRnouxnu/cWUzMUR3vfkc6pWQTwZP1Xqqi+A37VY8GXjLa5389zCj051FdWy70MJMIHJHFNckJsl3w0EVkyE0aBYG0brjBtcbaQgnowEQgVE4baG1c3rWTfWOFs73TWxIDf8ql19aBubw0PDvoROQUd1VuANWzsKebItlJA70GgDoOK723HMqij5rDC0cPxxFoPrAvIwxGL2ve10jN+HAcxxZ07WEXXf2rfPAkcbYt7R+de909ORWRv5QdGJFKZN4TVxVOONZ9lcE3hVmEPM5nVOt2GfZfxf9fdn6xeasYVYuke8g5VMm/M0/N0XpXhdwWC+OV28uI474ukG+eXz0rS4U4yovhpZ6lOiqfG2HtZX3LoBQKdQYDaMyJeNec44sbZTa+VXlcPG/aw7J4gWqt580FZdJrFbBJcc6TMgA8ipJlsp0+szMlBSV5YOeB1Q7xin96i4QmS1NEz28lqPtClj+ZJfK+dmEp8uZTQ8xxGZc9Hl4b2H1jp4lzwdRK6149TV2cjlcG7td2COedR4HoNYc7Pgly+9v78dTqj9cpMaw/qWE/elSCrp+jUv8eeXTSlvyV7+NdQUOBES7Yp7Q+8YcM3jfR49N28MHCdxKagYG1jrfifbQC6Q4xbU8Y69LyNuQ/2cjKJYDUKkAeTtpszOncUHdwmaD0gctEwvZ1O53iTp+Webnmb5sUmj8LBClJD0gd4pQpIiRhSZIyQR2ZLTs61RzC55FpP0KYxJgDhDl6Rrmr3R/akC9WAmt7/JA42G3SVhvmJ+5Eh+pPmtNvlVrV8IgwNINLBanzXcU7LasjxHJ7Rpp35Zd42K01eiuOWTsP7ms43wBRP2IpIPn/Xh3fFmITS5ugrfn4KsptJpwZRdas1dzJSlNKj993S6cZ05f+51O/Upf6uI14MJqrfyJ0XN53u/XqgViXZwbm+EE9Q6C8h1W2QCJWI3R2OzH2jWh/abLh2A1kOLZSbckTQgv8XZtBXA07Nej9wOs4QmE1FzIZKupS32u4wrG3/7Z7YNtvHgWawhH3sQml6bYelZp9xT2yveL0dyO0/PYUo298xgnhw0+f3nZE6i0OzfvSFMUzn7OihOa2PbjXBjZRzS09wOFZBQPKO+wfSczjUp90m8="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -1545,9 +1545,12 @@ function autoSignals(port, qHistMap) {
     if(p.val == null) return;
     const an = AN[p.t], px = p.pxNative;
     const h = qHistMap && qHistMap[p.t];
-    // Mouvement hebdomadaire (dernier point vs précédent de l'historique hebdo)
+    // Mouvement hebdomadaire : cours LIVE comparé à la clôture de la dernière semaine COMPLÈTE.
+    // (La dernière barre de l'historique est la semaine en cours : la comparer à la précédente
+    // ne donnait pas une variation hebdo et pouvait inverser le sens du mouvement.)
     if(h && h.length >= 2) {
-      const a = h[h.length-2].px, b = h[h.length-1].px;
+      const a = h[h.length-2].px;
+      const b = (px != null && px > 0) ? px : h[h.length-1].px;
       if(a > 0) {
         const w = (b/a - 1) * 100;
         if(w <= -7) out.push({ t:p.t, sev:"warn", kind:"Baisse marquée", msg:`${fp(w,1)} sur la dernière semaine` });
@@ -4768,7 +4771,6 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
         )}
       </div>
 
-      {/* VERDICT — synthèse décisionnelle en un coup d'œil */}
       <div className="card" style={{marginBottom:9,border:"1px solid "+sigCol+"40",background:`linear-gradient(135deg, ${sigCol}14, transparent)`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
           <div style={{flex:1}}>
@@ -4806,17 +4808,13 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
           <div><div className="lbl">P&amp;L</div><div className="mono" style={{fontSize:16,color:cl(p.pnl)}}>{fe(p.pnl)}</div></div>
           <div><div className="lbl">Performance</div><div className="mono" style={{fontSize:16,color:cl(p.pct)}}>{fp(p.pct)}</div></div>
         </div>
-      </div>
-
-      {al && al.on && (
-        <div className="card">
-          <div className="cd-ti"><h3>Seuils actifs</h3></div>
-          <div className="g2">
-            <div><div className="lbl">Stop bas</div><div className="mono" style={{color:p.pxE&&p.pxE<=al.lo*1.05?"#e85d5d":"#dde3f0"}}>{fe(al.lo)}</div></div>
-            <div><div className="lbl">Profit haut</div><div className="mono" style={{color:p.pxE&&p.pxE>=al.hi*0.95?"#2ecc8f":"#dde3f0"}}>{fe(al.hi)}</div></div>
+        {al && al.on && (
+          <div className="g2" style={{marginTop:10,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.06)"}}>
+            <div><div className="lbl">Seuil d'alerte bas</div><div className="mono" style={{color:p.pxE&&p.pxE<=al.lo*1.05?"#e85d5d":"#dde3f0"}}>{fe(al.lo)}{al.auto && <span className="dim" style={{fontSize:9}}> · auto</span>}</div></div>
+            <div><div className="lbl">Seuil d'alerte haut</div><div className="mono" style={{color:p.pxE&&p.pxE>=al.hi*0.95?"#2ecc8f":"#dde3f0"}}>{fe(al.hi)}{al.auto && <span className="dim" style={{fontSize:9}}> · auto</span>}</div></div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {chartData.length > 0 && (
         <div className="card">
@@ -4950,117 +4948,89 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
         </div>
       )}
 
-      {/* SCORE DE RISQUE — décomposition */}
-      <div className="card">
-        <div className="cd-ti"><h3>Décomposition du risque</h3><span className="dim" style={{fontSize:9}}>{risk.total}/100</span></div>
-        <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:12}}>Score global sur 100 — <strong style={{color:hcol}}>plus il est haut, plus la ligne est risquée</strong>. Il additionne 5 facteurs ; chacun éclaire une facette du risque, expliquée ci-dessous.</div>
-        {risk.parts.map(pt=>{
-          const pct = pt.score/pt.max;
-          const col = pct>=0.7?"#e85d5d":pct>=0.4?"#f0a020":"#2ecc8f";
-          const v = pt.val;
-          const info = {
-            vol:  { what:"Volatilité : l'amplitude des variations de prix. Plus c'est haut, plus le cours bouge fort — risque, mais aussi opportunité.",
-                    read: v!=null?`${v.toFixed(0)} %/an — ${v>=40?"très agité":v>=25?"modéré":"plutôt calme"}`:"—" },
-            rsi:  { what:"RSI : la force récente du cours, de 0 à 100. Au-dessus de 70 = suracheté (risque de correction), sous 30 = survendu (rebond possible), autour de 50 = neutre.",
-                    read: v!=null?`RSI ${v} — ${v>=70?"suracheté, il vient de bien monter":v<=30?"survendu, sort d'un creux":"zone neutre"}`:"historique insuffisant" },
-            beta: { what:"Beta : la sensibilité au marché. 1 = bouge comme le marché ; au-dessus = amplifie ses mouvements ; en dessous = amortit ; négatif = évolue à l'inverse.",
-                    read: v!=null?`β ${v.toFixed(2)} — ${v>1.3?"amplifie le marché":v<0?"évolue à l'inverse":v<0.7?"plus stable que le marché":"proche du marché"}`:"historique insuffisant" },
-            conc: { what:"Concentration : le poids de cette ligne dans ton portefeuille. Trop élevé = une seule valeur décide de ton résultat.",
-                    read: v!=null?`${v.toFixed(0)} % du portefeuille — ${v>=35?"concentration critique":v>=20?"à surveiller":"raisonnable"}`:"—" },
-            down: { what:"Downside : la perte estimée au scénario pessimiste (P10, environ 1 cas sur 10) à 12 mois. Plus c'est négatif, plus une forte baisse est plausible.",
-                    read: v!=null?`${fp(v*100,0)} au pire — ${v<=-0.3?"baisse marquée possible":v<=-0.15?"repli modéré possible":"downside limité"}`:"—" }
-          }[pt.k] || { what:"", read:"" };
-          return (
-            <div key={pt.k} style={{marginBottom:14,paddingBottom:14,borderBottom:"1px solid rgba(255,255,255,.04)"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-                <span style={{fontSize:12,fontWeight:700,color:"#dde3f0"}}>{pt.label}</span>
-                <span className="mono" style={{fontSize:11,color:col,fontWeight:800}}>{pt.score.toFixed(0)}/{pt.max}</span>
-              </div>
-              <div className="bar" style={{marginBottom:6}}><span style={{width:pct*100+"%",background:col}}/></div>
-              <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:3}}>{info.what}</div>
-              <div style={{fontSize:11,color:col,fontWeight:600}}>→ {info.read}</div>
-            </div>
-          );
-        })}
-        <div className="dim" style={{fontSize:9,marginTop:2,fontStyle:"italic"}}>Le badge X/25 (ou /20, /15) = combien ce facteur pèse dans le score. RSI et Beta demandent 15+ et 5+ points d'historique.</div>
-      </div>
-
-      {/* RSI + BETA + KELLY + CONVICTION DECAY */}
-      <div className="card">
-        <div className="cd-ti"><h3>Indicateurs de marché</h3>
-          <span onClick={()=>setAdv(v=>!v)} style={{cursor:"pointer",fontSize:9,fontWeight:800,letterSpacing:".04em",color:adv?"#4f83f5":"#8892a8",border:"1px solid",borderColor:adv?"#4f83f5":"#3a4560",borderRadius:5,padding:"2px 7px"}}>{adv?"AVANCÉ ▲":"AVANCÉ ▾"}</span>
-        </div>
-        <div className="g2" style={{marginBottom:10}}>
-          {/* RSI */}
-          {rsi!=null ? (
-            <div>
-              <div className="lbl">RSI 14 sem.</div>
-              <div style={{position:"relative",height:22,background:"#161c2a",borderRadius:4,overflow:"hidden",marginTop:4}}>
-                <div style={{position:"absolute",left:"30%",right:"30%",top:0,bottom:0,background:"rgba(255,255,255,.04)"}}/>
-                <div style={{position:"absolute",left:rsi+"%",top:3,width:3,height:16,background:rsi<30?"#2ecc8f":rsi>70?"#e85d5d":"#f0a020",borderRadius:2,transform:"translateX(-50%)"}}/>
-                <div style={{position:"absolute",left:"30%",top:2,width:1,bottom:2,background:"rgba(46,204,143,.3)"}}/>
-                <div style={{position:"absolute",left:"70%",top:2,width:1,bottom:2,background:"rgba(232,93,93,.3)"}}/>
-              </div>
-              <div className="mono" style={{fontSize:13,fontWeight:800,color:rsi<30?"#2ecc8f":rsi>70?"#e85d5d":"#f0a020",marginTop:3}}>{rsi}
-                <span style={{fontSize:9,color:"#8892a8",fontWeight:400,marginLeft:4}}>{rsi<30?"Survente":rsi>70?"Surachat":"Neutre"}</span>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <div className="lbl">RSI 14 sem.</div>
-              <div className="dim" style={{fontSize:10,marginTop:4}}>Disponible dès le chargement de l'historique hebdo (Yahoo).</div>
-            </div>
-          )}
-          {/* Beta (avancé) */}
-          {adv && (beta!=null ? (
-            <div>
-              <div className="lbl">Beta vs S&amp;P 500</div>
-              <div className="mono" style={{fontSize:16,fontWeight:800,color:beta>1.3?"#e85d5d":beta<0.7?"#2ecc8f":"#f0a020",marginTop:4}}>{beta.toFixed(2)}</div>
-              <div style={{fontSize:9,color:"#8892a8"}}>
-                {beta>1.3?"Plus volatil que le marché":beta<0?"Décorrélé / inverse":beta<0.7?"Moins volatil que le marché":"Proche du marché"}
-              </div>
-            </div>
-          ) : (
-            <div>
-              <div className="lbl">Beta vs S&amp;P 500</div>
-              <div className="dim" style={{fontSize:10,marginTop:4}}>Données 3 ans insuffisantes</div>
-            </div>
-          ))}
-        </div>
-        {adv && (
-        <div className="g2" style={{marginBottom:10}}>
-          {/* Kelly */}
-          {kellyPct!=null ? (
-            <div>
-              <div className="lbl">Taille Kelly (½K)</div>
-              <div className="mono" style={{fontSize:16,fontWeight:800,color:"#4f83f5",marginTop:4}}>{kellyPct.toFixed(1)}%</div>
-              <div style={{fontSize:9,color:"#8892a8"}}>portef. • actuel {fp(p.wt,1)}</div>
-              <div style={{fontSize:9,color:p.wt<kellyPct?"#2ecc8f":p.wt>kellyPct*1.3?"#f0a020":"#3a4560"}}>
-                {p.wt<kellyPct?"→ Sous-pondéré — renforcer":p.wt>kellyPct*1.3?"→ Sur-pondéré — alléger":"→ Taille correcte"}
-              </div>
-            </div>
-          ) : (
-            <div>
-              <div className="lbl">Kelly sizing</div>
-              <div className="dim" style={{fontSize:10,marginTop:4}}>Disponible après 20+ snapshots</div>
-            </div>
-          )}
-        </div>
-        )}
-        {/* Fiscal */}
-        {fiscal && (
-          <div style={{paddingTop:8,borderTop:"1px solid rgba(255,255,255,.04)"}}>
-            <div className="lbl">Impact fiscal ({fiscal.acct})</div>
-            <div className="g3" style={{marginTop:4}}>
-              <div><div style={{fontSize:9,color:"#3a4560"}}>Plus-value brute</div><div className="mono" style={{color:"#2ecc8f",fontSize:12}}>{fe(p.pnl)}</div></div>
-              <div><div style={{fontSize:9,color:"#3a4560"}}>Taxe {fiscal.taxPct}%</div><div className="mono" style={{color:"#e85d5d",fontSize:12}}>-{fe(fiscal.tax)}</div></div>
-              <div><div style={{fontSize:9,color:"#3a4560"}}>Net après impôt</div><div className="mono" style={{color:"#2ecc8f",fontSize:12,fontWeight:800}}>{fe(fiscal.net)}</div></div>
-            </div>
+      {a.tgt && (
+        <div className="card">
+          <div className="cd-ti"><h3>Objectifs analystes</h3>
+            <span onClick={()=>setEdit(v=>!v)} style={{cursor:"pointer",fontSize:9,fontWeight:800,color:edit?"#4f83f5":"#8892a8",border:"1px solid",borderColor:edit?"#4f83f5":"#3a4560",borderRadius:5,padding:"2px 7px"}}>{edit?"FERMER":"MODIFIER"}</span>
           </div>
-        )}
-      </div>
+          {edit && (
+            <div style={{marginBottom:12}}>
+              <div className="g3" style={{marginBottom:6}}>
+                <input placeholder="Bas" type="number" value={anF.l} onChange={e=>setAnF({...anF,l:e.target.value})}/>
+                <input placeholder="Médian" type="number" value={anF.av} onChange={e=>setAnF({...anF,av:e.target.value})}/>
+                <input placeholder="Haut" type="number" value={anF.h} onChange={e=>setAnF({...anF,h:e.target.value})}/>
+              </div>
+              <div className="g2" style={{marginBottom:6}}>
+                <input placeholder="Conviction /100" type="number" value={anF.c} onChange={e=>setAnF({...anF,c:e.target.value})}/>
+                <input placeholder="Projection 12M %" type="number" value={anF.pr} onChange={e=>setAnF({...anF,pr:e.target.value})}/>
+              </div>
+              <input placeholder="Thèse (pourquoi tu détiens cette ligne)" value={anF.th} onChange={e=>setAnF({...anF,th:e.target.value})} style={{width:"100%",marginBottom:6}}/>
+              <textarea placeholder={"Catalyseurs — une par ligne, format : Nom — détail"} value={anF.cat} onChange={e=>setAnF({...anF,cat:e.target.value})}
+                rows={3} style={{width:"100%",marginBottom:6,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"6px 8px",fontFamily:"inherit"}}/>
+              <textarea placeholder={"Risques — un par ligne, format : Nom — détail"} value={anF.ris} onChange={e=>setAnF({...anF,ris:e.target.value})}
+                rows={3} style={{width:"100%",marginBottom:6,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"6px 8px",fontFamily:"inherit"}}/>
+              <button className="bn bn-b" style={{width:"100%"}} onClick={saveAN}>Enregistrer mes données</button>
+              <div className="dim" style={{fontSize:9,marginTop:5,lineHeight:1.4}}>Ces valeurs alimentent la prévision, le signal et la revue de thèse — c'est ce qui donne à un support ajouté la même qualité d'analyse qu'aux autres.</div>
+            </div>
+          )}
+          <div className="g3">
+            <div><div className="lbl">Bas</div><div className="mono">{fcur(ticker,a.tgt.l)}</div></div>
+            <div><div className="lbl">Médian</div><div className="mono"><strong>{fcur(ticker,a.tgt.a)}</strong></div></div>
+            <div><div className="lbl">Haut</div><div className="mono">{fcur(ticker,a.tgt.h)}</div></div>
+          </div>
+          {p.pxNative!=null && (()=>{
+            const lo=a.tgt.l, med=a.tgt.a, hi=a.tgt.h, px=p.pxNative, span=(hi-lo)||1;
+            const pos=Math.max(0,Math.min(1,(px-lo)/span));
+            const upMed=(med/px-1)*100;
+            const zone = px>=hi?"au-dessus de l'objectif haut — cher":px<=lo?"sous l'objectif bas — décoté":px>=med?"au-dessus du médian":"sous le médian — potentiel restant";
+            return (
+              <div style={{marginTop:12}}>
+                <div className="lbl" style={{marginBottom:8}}>Distance à l'action</div>
+                <div style={{position:"relative",height:12}}>
+                  <div style={{position:"absolute",top:4,left:0,right:0,height:4,background:"linear-gradient(90deg,#2ecc8f,#f0a020,#e85d5d)",borderRadius:2,opacity:.55}}/>
+                  <div style={{position:"absolute",top:0,left:Math.max(0,Math.min(100,(med-lo)/span*100))+"%",width:1,height:12,background:"#8892a8"}}/>
+                  <div style={{position:"absolute",top:-1,left:pos*100+"%",transform:"translateX(-50%)",width:11,height:11,borderRadius:6,background:"#4f83f5",border:"2px solid #080b11"}}/>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#3a4560",marginTop:3}}>
+                  <span>bas {fcur(ticker,lo)}</span><span>médian</span><span>haut {fcur(ticker,hi)}</span>
+                </div>
+                <div style={{fontSize:10,color:"#8892a8",marginTop:7,lineHeight:1.4}}>Cours {zone}. Objectif médian à <strong style={{color:upMed>=0?"#2ecc8f":"#e85d5d"}}>{fp(upMed,0)}</strong>{px>=hi?" · zone d'allègement":px<=lo?" · zone d'accumulation":""}.</div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
-      {/* CONVICTION AUTO-GÉRÉE */}
+      {a.th && (
+        <div className="card">
+          <div className="cd-ti"><h3>Thèse</h3><span className={"chip "+a.sig}>{a.r}</span></div>
+          <div style={{lineHeight:1.55}}>{a.th}</div>
+          {a.edg && <div className="warn" style={{marginTop:10}}><strong>Edge :</strong> {a.edg}</div>}
+        </div>
+      )}
+
+      {a.cat && (
+        <div className="g2">
+          <div className="card">
+            <div className="cd-ti"><h3 style={{color:"#2ecc8f"}}>Catalyseurs</h3></div>
+            {a.cat.map((c,i)=>{const j=c.indexOf(" — ");return <ItemTracker key={i} ticker={ticker} ikey={"cat"+i} kind="cat"
+              label={j<0?c:c.slice(0,j)} detail={j<0?"":c.slice(j+3)} pxNow={p.pxNative} bump={reviewBump} onChange={()=>setReviewBump(b=>b+1)}/>;})}
+          </div>
+          <div className="card">
+            <div className="cd-ti"><h3 style={{color:"#e85d5d"}}>Risques</h3></div>
+            {a.ris.map((r,i)=>{const j=r.indexOf(" — ");return <ItemTracker key={i} ticker={ticker} ikey={"ris"+i} kind="ris"
+              label={j<0?r:r.slice(0,j)} detail={j<0?"":r.slice(j+3)} pxNow={p.pxNative} bump={reviewBump} onChange={()=>setReviewBump(b=>b+1)}/>;})}
+          </div>
+        </div>
+      )}
+
+      {a.act && (
+        <div className="card" style={{background:"rgba(79,131,245,.08)",borderColor:"rgba(79,131,245,.3)"}}>
+          <div className="cd-ti"><h3 style={{color:"#4f83f5"}}>Action recommandée</h3></div>
+          <div style={{fontSize:14,fontWeight:600}}>{a.act}</div>
+        </div>
+      )}
+
       <div className="card">
         <div className="cd-ti"><h3>Conviction auto-gérée</h3>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -5149,88 +5119,76 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
         </div>
       </div>
 
-      {a.tgt && (
-        <div className="card">
-          <div className="cd-ti"><h3>Objectifs analystes</h3>
-            <span onClick={()=>setEdit(v=>!v)} style={{cursor:"pointer",fontSize:9,fontWeight:800,color:edit?"#4f83f5":"#8892a8",border:"1px solid",borderColor:edit?"#4f83f5":"#3a4560",borderRadius:5,padding:"2px 7px"}}>{edit?"FERMER":"MODIFIER"}</span>
-          </div>
-          {edit && (
-            <div style={{marginBottom:12}}>
-              <div className="g3" style={{marginBottom:6}}>
-                <input placeholder="Bas" type="number" value={anF.l} onChange={e=>setAnF({...anF,l:e.target.value})}/>
-                <input placeholder="Médian" type="number" value={anF.av} onChange={e=>setAnF({...anF,av:e.target.value})}/>
-                <input placeholder="Haut" type="number" value={anF.h} onChange={e=>setAnF({...anF,h:e.target.value})}/>
+      <div className="card">
+        <div className="cd-ti"><h3>Décomposition du risque</h3><span className="dim" style={{fontSize:9}}>{risk.total}/100</span></div>
+        <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:12}}>Score global sur 100 — <strong style={{color:hcol}}>plus il est haut, plus la ligne est risquée</strong>. Il additionne 5 facteurs ; chacun éclaire une facette du risque, expliquée ci-dessous.</div>
+        {risk.parts.map(pt=>{
+          const pct = pt.score/pt.max;
+          const col = pct>=0.7?"#e85d5d":pct>=0.4?"#f0a020":"#2ecc8f";
+          const v = pt.val;
+          const info = {
+            vol:  { what:"Volatilité : l'amplitude des variations de prix. Plus c'est haut, plus le cours bouge fort — risque, mais aussi opportunité.",
+                    read: v!=null?`${v.toFixed(0)} %/an — ${v>=40?"très agité":v>=25?"modéré":"plutôt calme"}`:"—" },
+            rsi:  { what:"RSI : la force récente du cours, de 0 à 100. Au-dessus de 70 = suracheté (risque de correction), sous 30 = survendu (rebond possible), autour de 50 = neutre.",
+                    read: v!=null?`RSI ${v} — ${v>=70?"suracheté, il vient de bien monter":v<=30?"survendu, sort d'un creux":"zone neutre"}`:"historique insuffisant" },
+            beta: { what:"Beta : la sensibilité au marché. 1 = bouge comme le marché ; au-dessus = amplifie ses mouvements ; en dessous = amortit ; négatif = évolue à l'inverse.",
+                    read: v!=null?`β ${v.toFixed(2)} — ${v>1.3?"amplifie le marché":v<0?"évolue à l'inverse":v<0.7?"plus stable que le marché":"proche du marché"}`:"historique insuffisant" },
+            conc: { what:"Concentration : le poids de cette ligne dans ton portefeuille. Trop élevé = une seule valeur décide de ton résultat.",
+                    read: v!=null?`${v.toFixed(0)} % du portefeuille — ${v>=35?"concentration critique":v>=20?"à surveiller":"raisonnable"}`:"—" },
+            down: { what:"Downside : la perte estimée au scénario pessimiste (P10, environ 1 cas sur 10) à 12 mois. Plus c'est négatif, plus une forte baisse est plausible.",
+                    read: v!=null?`${fp(v*100,0)} au pire — ${v<=-0.3?"baisse marquée possible":v<=-0.15?"repli modéré possible":"downside limité"}`:"—" }
+          }[pt.k] || { what:"", read:"" };
+          return (
+            <div key={pt.k} style={{marginBottom:14,paddingBottom:14,borderBottom:"1px solid rgba(255,255,255,.04)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+                <span style={{fontSize:12,fontWeight:700,color:"#dde3f0"}}>{pt.label}</span>
+                <span className="mono" style={{fontSize:11,color:col,fontWeight:800}}>{pt.score.toFixed(0)}/{pt.max}</span>
               </div>
-              <div className="g2" style={{marginBottom:6}}>
-                <input placeholder="Conviction /100" type="number" value={anF.c} onChange={e=>setAnF({...anF,c:e.target.value})}/>
-                <input placeholder="Projection 12M %" type="number" value={anF.pr} onChange={e=>setAnF({...anF,pr:e.target.value})}/>
+              <div className="bar" style={{marginBottom:6}}><span style={{width:pct*100+"%",background:col}}/></div>
+              <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:3}}>{info.what}</div>
+              <div style={{fontSize:11,color:col,fontWeight:600}}>→ {info.read}</div>
+            </div>
+          );
+        })}
+        <div className="dim" style={{fontSize:9,marginTop:2,fontStyle:"italic"}}>Le badge X/25 (ou /20, /15) = combien ce facteur pèse dans le score. RSI et Beta demandent 15+ et 5+ points d'historique.</div>
+      </div>
+
+      <div className="card">
+        <div className="cd-ti"><h3>Fiscalité &amp; dimensionnement</h3>
+          <span onClick={()=>setAdv(v=>!v)} style={{cursor:"pointer",fontSize:9,fontWeight:800,letterSpacing:".04em",color:adv?"#4f83f5":"#8892a8",border:"1px solid",borderColor:adv?"#4f83f5":"#3a4560",borderRadius:5,padding:"2px 7px"}}>{adv?"AVANCÉ ▲":"AVANCÉ ▾"}</span>
+        </div>
+        {adv && (
+        <div className="g2" style={{marginBottom:10}}>
+          {/* Kelly */}
+          {kellyPct!=null ? (
+            <div>
+              <div className="lbl">Taille Kelly (½K)</div>
+              <div className="mono" style={{fontSize:16,fontWeight:800,color:"#4f83f5",marginTop:4}}>{kellyPct.toFixed(1)}%</div>
+              <div style={{fontSize:9,color:"#8892a8"}}>portef. • actuel {fp(p.wt,1)}</div>
+              <div style={{fontSize:9,color:p.wt<kellyPct?"#2ecc8f":p.wt>kellyPct*1.3?"#f0a020":"#3a4560"}}>
+                {p.wt<kellyPct?"→ Sous-pondéré — renforcer":p.wt>kellyPct*1.3?"→ Sur-pondéré — alléger":"→ Taille correcte"}
               </div>
-              <input placeholder="Thèse (pourquoi tu détiens cette ligne)" value={anF.th} onChange={e=>setAnF({...anF,th:e.target.value})} style={{width:"100%",marginBottom:6}}/>
-              <textarea placeholder={"Catalyseurs — une par ligne, format : Nom — détail"} value={anF.cat} onChange={e=>setAnF({...anF,cat:e.target.value})}
-                rows={3} style={{width:"100%",marginBottom:6,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"6px 8px",fontFamily:"inherit"}}/>
-              <textarea placeholder={"Risques — un par ligne, format : Nom — détail"} value={anF.ris} onChange={e=>setAnF({...anF,ris:e.target.value})}
-                rows={3} style={{width:"100%",marginBottom:6,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"6px 8px",fontFamily:"inherit"}}/>
-              <button className="bn bn-b" style={{width:"100%"}} onClick={saveAN}>Enregistrer mes données</button>
-              <div className="dim" style={{fontSize:9,marginTop:5,lineHeight:1.4}}>Ces valeurs alimentent la prévision, le signal et la revue de thèse — c'est ce qui donne à un support ajouté la même qualité d'analyse qu'aux autres.</div>
+            </div>
+          ) : (
+            <div>
+              <div className="lbl">Kelly sizing</div>
+              <div className="dim" style={{fontSize:10,marginTop:4}}>Disponible après 20+ snapshots</div>
             </div>
           )}
-          <div className="g3">
-            <div><div className="lbl">Bas</div><div className="mono">{fcur(ticker,a.tgt.l)}</div></div>
-            <div><div className="lbl">Médian</div><div className="mono"><strong>{fcur(ticker,a.tgt.a)}</strong></div></div>
-            <div><div className="lbl">Haut</div><div className="mono">{fcur(ticker,a.tgt.h)}</div></div>
+        </div>
+        )}
+        {/* Fiscal */}
+        {fiscal && (
+          <div style={{paddingTop:8,borderTop:"1px solid rgba(255,255,255,.04)"}}>
+            <div className="lbl">Impact fiscal ({fiscal.acct})</div>
+            <div className="g3" style={{marginTop:4}}>
+              <div><div style={{fontSize:9,color:"#3a4560"}}>Plus-value brute</div><div className="mono" style={{color:"#2ecc8f",fontSize:12}}>{fe(p.pnl)}</div></div>
+              <div><div style={{fontSize:9,color:"#3a4560"}}>Taxe {fiscal.taxPct}%</div><div className="mono" style={{color:"#e85d5d",fontSize:12}}>-{fe(fiscal.tax)}</div></div>
+              <div><div style={{fontSize:9,color:"#3a4560"}}>Net après impôt</div><div className="mono" style={{color:"#2ecc8f",fontSize:12,fontWeight:800}}>{fe(fiscal.net)}</div></div>
+            </div>
           </div>
-          {p.pxNative!=null && (()=>{
-            const lo=a.tgt.l, med=a.tgt.a, hi=a.tgt.h, px=p.pxNative, span=(hi-lo)||1;
-            const pos=Math.max(0,Math.min(1,(px-lo)/span));
-            const upMed=(med/px-1)*100;
-            const zone = px>=hi?"au-dessus de l'objectif haut — cher":px<=lo?"sous l'objectif bas — décoté":px>=med?"au-dessus du médian":"sous le médian — potentiel restant";
-            return (
-              <div style={{marginTop:12}}>
-                <div className="lbl" style={{marginBottom:8}}>Distance à l'action</div>
-                <div style={{position:"relative",height:12}}>
-                  <div style={{position:"absolute",top:4,left:0,right:0,height:4,background:"linear-gradient(90deg,#2ecc8f,#f0a020,#e85d5d)",borderRadius:2,opacity:.55}}/>
-                  <div style={{position:"absolute",top:0,left:Math.max(0,Math.min(100,(med-lo)/span*100))+"%",width:1,height:12,background:"#8892a8"}}/>
-                  <div style={{position:"absolute",top:-1,left:pos*100+"%",transform:"translateX(-50%)",width:11,height:11,borderRadius:6,background:"#4f83f5",border:"2px solid #080b11"}}/>
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#3a4560",marginTop:3}}>
-                  <span>bas {fcur(ticker,lo)}</span><span>médian</span><span>haut {fcur(ticker,hi)}</span>
-                </div>
-                <div style={{fontSize:10,color:"#8892a8",marginTop:7,lineHeight:1.4}}>Cours {zone}. Objectif médian à <strong style={{color:upMed>=0?"#2ecc8f":"#e85d5d"}}>{fp(upMed,0)}</strong>{px>=hi?" · zone d'allègement":px<=lo?" · zone d'accumulation":""}.</div>
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
-      {a.th && (
-        <div className="card">
-          <div className="cd-ti"><h3>Thèse</h3><span className={"chip "+a.sig}>{a.r}</span></div>
-          <div style={{lineHeight:1.55}}>{a.th}</div>
-          {a.edg && <div className="warn" style={{marginTop:10}}><strong>Edge :</strong> {a.edg}</div>}
-        </div>
-      )}
-
-      {a.cat && (
-        <div className="g2">
-          <div className="card">
-            <div className="cd-ti"><h3 style={{color:"#2ecc8f"}}>Catalyseurs</h3></div>
-            {a.cat.map((c,i)=>{const j=c.indexOf(" — ");return <ItemTracker key={i} ticker={ticker} ikey={"cat"+i} kind="cat"
-              label={j<0?c:c.slice(0,j)} detail={j<0?"":c.slice(j+3)} pxNow={p.pxNative} bump={reviewBump} onChange={()=>setReviewBump(b=>b+1)}/>;})}
-          </div>
-          <div className="card">
-            <div className="cd-ti"><h3 style={{color:"#e85d5d"}}>Risques</h3></div>
-            {a.ris.map((r,i)=>{const j=r.indexOf(" — ");return <ItemTracker key={i} ticker={ticker} ikey={"ris"+i} kind="ris"
-              label={j<0?r:r.slice(0,j)} detail={j<0?"":r.slice(j+3)} pxNow={p.pxNative} bump={reviewBump} onChange={()=>setReviewBump(b=>b+1)}/>;})}
-          </div>
-        </div>
-      )}
-
-      {a.act && (
-        <div className="card" style={{background:"rgba(79,131,245,.08)",borderColor:"rgba(79,131,245,.3)"}}>
-          <div className="cd-ti"><h3 style={{color:"#4f83f5"}}>Action recommandée</h3></div>
-          <div style={{fontSize:14,fontWeight:600}}>{a.act}</div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -5259,7 +5217,7 @@ function App() {
   const [lastTs, setLastTs] = useState(() => loadStore()?.priceTs || 0);
   const [priceTsMap, setPriceTsMap] = useState(() => loadStore()?.priceTsMap || {});
   const [qHistMap, setQHistMap] = useState({});
-  const [spyHist, setSpyHist] = useState([]);
+  const [spyHistRaw, setSpyHist] = useState([]);
   const [status, setStatus] = useState("ld");
   const [tab, setTab] = useState("today");
   const [cfgOpen, setCfgOpen] = useState(false);
@@ -5432,21 +5390,36 @@ function App() {
   // Conviction auto-gérée : lourde (6 horizons × historique) mais NE dépend PAS du prix live.
   // Mémoïsée ici pour ne recalculer qu'au changement de positions / historique / snapshots
   // (au lieu de chaque tick de 60 s → CPU divisé sur mobile).
+  /* Historique VIVANT : chaque série hebdo voit sa dernière barre (semaine EN COURS, issue du
+     cache) remplacée par le cours live. C'est cette carte qui est diffusée dans toute l'app —
+     sans elle, les variations « sur la dernière semaine », le momentum et la cohérence de
+     conviction se calculaient sur une barre partielle et périmée (ex. HPE annoncé en baisse
+     alors qu'il montait). */
+  const liveHistMap = useMemo(() => {
+    const map = {};
+    Object.keys(qHistMap || {}).forEach(t => { map[t] = liveHist(qHistMap[t], prices && prices[t]); });
+    return map;
+  }, [qHistMap, prices]);
+
+  // Même traitement pour le benchmark : sans cela, la comparaison au S&P 500 opposait
+  // ton portefeuille live à une barre SPY périmée.
+  const spyHist = useMemo(() => liveHist(spyHistRaw, prices && prices.SPY), [spyHistRaw, prices]);
+
   const convMap = useMemo(() => {
     const map = {};
-    port.forEach(p => { map[p.t] = calcDynamicConviction(p.t, {}, snapshots, qHistMap && qHistMap[p.t]); });
+    port.forEach(p => { map[p.t] = calcDynamicConviction(p.t, {}, snapshots, liveHistMap && liveHistMap[p.t]); });
     return map;
-  }, [port, qHistMap, snapshots]);
+  }, [port, liveHistMap, snapshots]);
   const convMapRef = useRef({});
   useEffect(() => { convMapRef.current = convMap; }, [convMap]);
 
-  const enriched = useMemo(() => enrich(port, prices, eurusd, priceTsMap, convMap, qHistMap), [port, prices, eurusd, priceTsMap, convMap, qHistMap]);
+  const enriched = useMemo(() => enrich(port, prices, eurusd, priceTsMap, convMap, liveHistMap), [port, prices, eurusd, priceTsMap, convMap, liveHistMap]);
   const m = useMemo(() => {
     const base = metrics(enriched);
     const rs = realizedSharpe(snapshots);                 // vrai Sharpe (snapshots), null si <~10j
-    const dd = portfolioDownside(enriched, qHistMap, 0.25); // perte potentielle au P10 à 3 mois
+    const dd = portfolioDownside(enriched, liveHistMap, 0.25); // perte potentielle au P10 à 3 mois
     return { ...base, sh: rs ? rs.sh : null, shN: rs ? rs.n : 0, dd3m: dd ? dd.loss : null, dd3mPct: dd ? dd.pct : null };
-  }, [enriched, snapshots, qHistMap]);
+  }, [enriched, snapshots, liveHistMap]);
   const sells = enriched.filter(p => p.sig === "sell").length;
 
   // Update countdown depuis lastTs
@@ -5481,9 +5454,9 @@ function App() {
 
       <Strip m={m} alertCount={sells}/>
 
-      {tab === "today" && <ErrorBoundary inline label="Actual"><TodayView port={enriched} m={m} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={qHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
-      {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={qHistMap} macroCtx={macroCtx}/></ErrorBoundary>}
-      {tab === "memory" && <ErrorBoundary inline label="Mémoire"><MemoryView snapshots={snapshots} port={enriched} m={m} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/></ErrorBoundary>}
+      {tab === "today" && <ErrorBoundary inline label="Actual"><TodayView port={enriched} m={m} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
+      {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={liveHistMap} macroCtx={macroCtx}/></ErrorBoundary>}
+      {tab === "memory" && <ErrorBoundary inline label="Mémoire"><MemoryView snapshots={snapshots} port={enriched} m={m} eurusd={eurusd} qHistMap={liveHistMap} spyHist={spyHist}/></ErrorBoundary>}
 
       {detail && detailPort && <ErrorBoundary inline label="Détail"><DetailView
         ticker={detail} port={enriched} snapshots={snapshots}
