@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v18.7-2026-09-14-003";
+const BUILD = "v18.8-2026-09-14-004";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -257,7 +257,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"c/y1dhJerMNLzI8BhyfBNg==","iv":"o7QiL1RAPE2kZ9US","data":"Nw8WMM0jwLeHfIaolrI8FOGwseCxlR60eT4wiNwgRnouxnu/cWUzMUR3vfkc6pWQTwZP1Xqqi+A37VY8GXjLa5389zCj051FdWy70MJMIHJHFNckJsl3w0EVkyE0aBYG0brjBtcbaQgnowEQgVE4baG1c3rWTfWOFs73TWxIDf8ql19aBubw0PDvoROQUd1VuANWzsKebItlJA70GgDoOK723HMqij5rDC0cPxxFoPrAvIwxGL2ve10jN+HAcxxZ07WEXXf2rfPAkcbYt7R+de909ORWRv5QdGJFKZN4TVxVOONZ9lcE3hVmEPM5nVOt2GfZfxf9fdn6xeasYVYuke8g5VMm/M0/N0XpXhdwWC+OV28uI474ukG+eXz0rS4U4yovhpZ6lOiqfG2HtZX3LoBQKdQYDaMyJeNec44sbZTa+VXlcPG/aw7J4gWqt580FZdJrFbBJcc6TMgA8ipJlsp0+szMlBSV5YOeB1Q7xin96i4QmS1NEz28lqPtClj+ZJfK+dmEp8uZTQ8xxGZc9Hl4b2H1jp4lzwdRK6149TV2cjlcG7td2COedR4HoNYc7Pgly+9v78dTqj9cpMaw/qWE/elSCrp+jUv8eeXTSlvyV7+NdQUOBES7Yp7Q+8YcM3jfR49N28MHCdxKagYG1jrfifbQC6Q4xbU8Y69LyNuQ/2cjKJYDUKkAeTtpszOncUHdwmaD0gctEwvZ1O53iTp+Webnmb5sUmj8LBClJD0gd4pQpIiRhSZIyQR2ZLTs61RzC55FpP0KYxJgDhDl6Rrmr3R/akC9WAmt7/JA42G3SVhvmJ+5Eh+pPmtNvlVrV8IgwNINLBanzXcU7LasjxHJ7Rpp35Zd42K01eiuOWTsP7ms43wBRP2IpIPn/Xh3fFmITS5ugrfn4KsptJpwZRdas1dzJSlNKj993S6cZ05f+51O/Upf6uI14MJqrfyJ0XN53u/XqgViXZwbm+EE9Q6C8h1W2QCJWI3R2OzH2jWh/abLh2A1kOLZSbckTQgv8XZtBXA07Nej9wOs4QmE1FzIZKupS32u4wrG3/7Z7YNtvHgWawhH3sQml6bYelZp9xT2yveL0dyO0/PYUo298xgnhw0+f3nZE6i0OzfvSFMUzn7OihOa2PbjXBjZRzS09wOFZBQPKO+wfSczjUp90m8="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -4670,7 +4670,11 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     }));
 
     // 2. Snapshots 90j (EUR → % vs cours actuel EUR)
-    const recentPts = (history||[]).map(d=>({
+    // Un seul point par date (les snapshots peuvent être multiples le même jour) : sinon l'axe
+    // affiche deux fois la même date et la courbe fait un aller-retour.
+    const byDate = new Map();
+    (history||[]).forEach(d => byDate.set(d.date, d));
+    const recentPts = Array.from(byDate.values()).map(d=>({
       date:d.date, seg:"recent",
       pxHist:null, px:normEUR(d.px), p10:null, p50:null, p90:null,
       eur: +d.px.toFixed(2)
@@ -4711,6 +4715,17 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
       };
     });
 
+    // JONCTION : les deux courbes (historique 3 ans « pxHist » et relevés récents « px ») sont
+    // deux séries distinctes. Sans point commun, un TROU apparaît entre les deux. On duplique
+    // donc la valeur au point de bascule pour que le tracé soit continu.
+    const firstPx = pastDS.findIndex(d => d.px != null);
+    if(firstPx > 0) {
+      const j = pastDS[firstPx-1];
+      if(j && j.px == null && j.pxHist != null) pastDS[firstPx-1] = { ...j, px: j.pxHist };
+    } else if(firstPx === -1 && pastDS.length) {
+      const last = pastDS[pastDS.length-1];
+      if(last.pxHist != null) pastDS[pastDS.length-1] = { ...last, px: last.pxHist };
+    }
     if(!pastDS.length) return [trans,...fPts];
     return [...pastDS,trans,...fPts];
   }, [qHist, history, p.pxE, eurusd, ticker, f.p10, f.p50, f.p90, horizon]);
@@ -4820,6 +4835,11 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
             <span style={{margin:"0 2px"}}>|</span>
             <span style={{display:"inline-block",width:14,height:8,background:"rgba(79,131,245,.18)",borderRadius:2,flex:"0 0 auto"}}/>
             <span>1/4 prévisions ({horizon}M) →</span>
+            <span style={{marginLeft:8,color:f.calibrated?"#2ecc8f":"#8892a8"}}>
+              {f.calibrated
+                ? "cône corrigé par la calibration (×"+(CALIB.sigMult||1).toFixed(2)+(CALIB.muBias?", biais "+fp(CALIB.muBias*100,1):"")+")"
+                : "cône non encore calibré"}
+            </span>
           </div>
           <div style={{display:"flex",gap:8,marginBottom:6,flexWrap:"wrap"}}>
             {[["─","#4f83f5","Cours"],["▬","rgba(79,131,245,.2)","Cône P10–P90"],["╌","#4f83f5","P50 médian"],["╌","#2ecc8f","P90 haut"],["╌","#e85d5d","P10 bas"]].map(([sym,col,lbl])=>(
