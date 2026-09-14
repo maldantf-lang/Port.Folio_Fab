@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v18.5-2026-09-14-001";
+const BUILD = "v18.7-2026-09-14-003";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -257,7 +257,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"jQlG7BtUKatLq7LCz0isgA==","iv":"ELkWWi1/VxsZdG8g","data":"s8iD+uY8fyR2tjRaT7fzKtivmO1uQmlwHafYPXELozzaBlQzboU4zhJikzFiWRA2aUSYHfT134ZbIOjSlra35Fxxqs8VBUhqbSHWU44aYC/srTcccAjJnSo0avlCeo4wg64WIRmkdcTdTEwHr/NhmAn4SY9vT2JjDDaLLqdxONxF3yeOpHdOgQ+1lF564BpqBxDVxoxdZExUybGOnanPeOFYd09qWaEDTxiniXdECoTtAAqdKXOHEJML4ihwAurwMHxosqEEnzv0MQXL0wUpshQMgLs3nVJzXs/M7EQsB0Z7kccUZcGzW1TYHe17WHtVKQWQJOtfpOoP1SXz8Q7Jz42ZyhVhHeV7maIfYIKZfxwbrjkdiYXI/nkgDM9iWYisMVv4TUFwimDCxknRvkOn4T4bAltC04oTgvlYVpP8kd0YZNh10PduqCRRpcHs94XK2uZOiHfvaYjsStwWrOIMQRaiXcyfx4VG95AmmHeAhMccHaqMauy1sAdVqGvcj/1jIToSWaScPZ9fNd6v7lAVzam6LQm1j8ysUwinduIcLWpuaqOmM05TQmAptqhKJKByq6LEo8eYoNqxE623jmpGG4tgYb1cL3kE36dVk5MCW04vnuXfoYZ+juwB4FU+d2rJSkkmMdj/q7fwzy8XEreTS9d4gRHuTKKvG1qubKvAlr2L1REaMQ8DRWonQzsyB3H4CaOXjUl8koQFImxRact2jhCxIJTFbkKM52Yyd+8wqZmBzbcGXsUujzDvKAP5RddSK9mY22PtSBxrtsNUJQ5Sbw/EiTtCw/osRoXyxxlttT1qopIAWpX4RnJvYaHLaiK6fT0uPieP4EB5K7vjHkFNyRqR+lHqm0wwUvhqktFRgKU2xKRJQCFk1dIZR9+0/75ES7uAMvVw+n4PvROAD61tRgdZycYezBY94Y50X/Zs+olxZ7nqa0hZ7PjE3LS4q1K+bqJeMIquA96p72jH2ZVBAwEldWuNfvuV5F59AXA4/3i5iT/pfpEyNYwv4DHRkptj0/0pBizH/9MrrVWc1NHhHWlOE1POLmhySFMTyo6GZ+U5Keb/f+W45t+eDCSdRGYTl88rHCF7E3UDNk6Dy9nF/xzU32FuDEjOkd7ecH+enPtBthu2uQrUnngL/I6a5Snxa/NGBOkZu06mukjNEOMi4YQ="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -1155,6 +1155,28 @@ function itemState(ticker, key, pxNow, itemsCache) {
   return { st: it.st, at: it.at, stale: ageDays > ITEM_STALE_DAYS, ageDays, drift };
 }
 
+/* Traduit tes marquages en AJUSTEMENT de prévision. Un catalyseur « réalisé » conforte la thèse,
+   un catalyseur « caduc » l'affaiblit ; un risque « réalisé » l'affaiblit, un risque « caduc » la
+   conforte. Les marquages périmés (>90 j) ne comptent qu'à 40 %. Effet volontairement borné à
+   ±8 % sur la projection 12 mois : ton suivi affine la prévision, il ne la pilote pas. */
+function thesisAdjustment(ticker, pxNow) {
+  const items = getItems(ticker);
+  const keys = Object.keys(items);
+  if(!keys.length) return { adj:0, net:0, decided:0 };
+  let sum = 0, wsum = 0;
+  keys.forEach(k => {
+    const st = itemState(ticker, k, pxNow, items);
+    if(!st.st || st.st === "wait") return;              // « en attente » = pas d'avis
+    const isRisk = k.indexOf("ris") === 0;
+    const v = st.st === "ok" ? (isRisk ? -1 : 1) : (isRisk ? 1 : -1);   // « caduc » = inverse
+    const w = st.stale ? 0.4 : 1;
+    sum += v * w; wsum += w;
+  });
+  if(wsum === 0) return { adj:0, net:0, decided:0 };
+  const net = sum / wsum;                                 // -1 (thèse démentie) … +1 (confortée)
+  return { adj: net * 0.08, net: +net.toFixed(2), decided: Math.round(wsum*10)/10 };
+}
+
 // Détecte si une thèse mérite une revue, et pourquoi. Ne juge pas la thèse : signale seulement.
 const REVIEW_AGE_DAYS = 90;
 function reviewNeeds(p, ov) {
@@ -1662,6 +1684,68 @@ function corrAggregate(vals, tickers, mat) {
 // Pour chaque prévision stockée, on la compare au prix réel atteint plus tard,
 // en RAMENANT la prévision 12M à l'horizon réellement écoulé (√temps).
 // → boucle "la prévision d'hier ajuste celle de demain".
+/* Reconstruit, pour un ticker, la trajectoire RÉELLE depuis un snapshot de départ et le CÔNE
+   qui avait été prédit ce jour-là. Sert à voir si la réalité est restée dans la fourchette.
+   Renvoie une série en % depuis le départ : {d (jours), reel, p10, p50, p90}. */
+function forecastVsReality(snapshots, ticker, minDays) {
+  const snaps = (snapshots||[]).filter(s => s.forecasts && s.forecasts[ticker] && (s.port||[]).some(p=>p.t===ticker && p.pxE>0))
+    .sort((a,b)=>a.ts-b.ts);
+  if(snaps.length < 2) return null;
+  const s0 = snaps[0];
+  const px0 = s0.port.find(p=>p.t===ticker).pxE;
+  const fc = s0.forecasts[ticker];
+  const spanDays = (snaps[snaps.length-1].ts - s0.ts)/86400000;
+  if(spanDays < (minDays==null?3:minDays)) return null;
+  const out = [];
+  snaps.forEach(s => {
+    const pr = (s.port||[]).find(p=>p.t===ticker);
+    if(!pr || !(pr.pxE>0)) return;
+    const d = (s.ts - s0.ts)/86400000, kt = d/365, k = Math.sqrt(kt);
+    const mu = (fc.p50||0)*kt, sig = ((fc.p90-fc.p10)/2/1.28)*k;
+    out.push({ d:Math.round(d), date:s.date,
+      reel:+(((pr.pxE/px0)-1)*100).toFixed(2),
+      p50:+(mu*100).toFixed(2),
+      p10:+((mu-1.28*sig)*100).toFixed(2),
+      p90:+((mu+1.28*sig)*100).toFixed(2) });
+  });
+  if(out.length < 2) return null;
+  const last = out[out.length-1];
+  return { series:out, from:s0.date, days:Math.round(spanDays), px0,
+    inBand: last.reel >= last.p10 && last.reel <= last.p90,
+    ecart: +(last.reel - last.p50).toFixed(2) };
+}
+
+/* Fiabilité du moteur PAR POSITION : mêmes paires que la calibration globale, mais groupées
+   par ticker. Permet de savoir quelles prévisions méritent ta confiance. */
+function calibrationByTicker(snapshots) {
+  const by = {};
+  const snaps = (snapshots||[]).slice().sort((a,b)=>a.ts-b.ts);
+  for(let i=0;i<snaps.length;i++){
+    const s0 = snaps[i]; if(!s0.forecasts) continue;
+    for(let j=i+1;j<snaps.length;j++){
+      const dt = (snaps[j].ts - s0.ts)/86400000;
+      if(dt < 15) continue;
+      if(dt > 75) break;
+      const sL = snaps[j];
+      Object.entries(s0.forecasts).forEach(([t,fc])=>{
+        const p0=(s0.port||[]).find(p=>p.t===t), pL=(sL.port||[]).find(p=>p.t===t);
+        if(!p0||!pL||!(p0.pxE>0)||!(pL.pxE>0)) return;
+        const actual=(pL.pxE-p0.pxE)/p0.pxE, kt=dt/365, k=Math.sqrt(kt);
+        const mu=(fc.p50||0)*kt, sig=((fc.p90-fc.p10)/2/1.28)*k;
+        if(!(sig>0)) return;
+        const b = by[t] || (by[t] = { t, n:0, hit:0, err:0 });
+        b.n++; if(actual>=mu-1.28*sig && actual<=mu+1.28*sig) b.hit++;
+        b.err += (actual-mu);
+      });
+      break;
+    }
+  }
+  return Object.values(by).map(b => ({ t:b.t, n:b.n,
+    cov:+(b.hit/b.n).toFixed(2),
+    biais:+((b.err/b.n)*100).toFixed(1)      // > 0 : le moteur SOUS-estime cette ligne
+  })).sort((a,b)=> b.cov - a.cov || b.n - a.n);
+}
+
 const CALIB_MIN = 12;   // nb minimum de comparaisons avant activation (affiché dans les Réglages)
 let CALIB = { sigMult:1, muBias:0, samples:0, cov:null, ready:false };
 function calcCalibration(snapshots) {
@@ -1731,6 +1815,8 @@ function forecast(pos, mac) {
   // Volatilité RÉELLE si disponible (largeur du cône ancrée sur le comportement observé)
   const baseVol = (pos.rvol != null && pos.rvol > 0) ? pos.rvol : (pos.v || 25)/100 * 1.2;
   // Calibration adaptative : correction de largeur (sigMult) et de biais (muBias) apprise du passé
+  const tadj = thesisAdjustment(pos.t, pos.pxNative);   // ton suivi des catalyseurs/risques
+  mu12 += tadj.adj;
   mu12 += (CALIB.muBias || 0);
   const sigma12 = Math.max(0.10, baseVol * (CALIB.sigMult || 1));
   // Cône : bootstrap des rendements hebdo RÉELS (queues épaisses + asymétrie) si historique
@@ -1749,6 +1835,7 @@ function forecast(pos, mac) {
     fat: !!shape,
     // Sur quoi la prévision s'appuie réellement — affiché pour ne jamais laisser croire
     // qu'un support sans thèse a la même solidité qu'un support documenté.
+    thesisAdj: +(tadj.adj*100).toFixed(1), thesisNet: tadj.net, thesisDecided: tadj.decided,
     basis: thesis ? "thèse" : "statistique",
     hist: pos.wret ? pos.wret.length : 0,
     confidence: (thesis ? (fresh >= 0.9 ? "élevée" : "moyenne") : ((pos.wret && pos.wret.length >= 40) ? "moyenne" : "faible")),
@@ -3291,7 +3378,9 @@ function ScenariosView({ port, m, qHistMap }) {
         ℹ️ <strong>Estimation probabiliste, pas une certitude.</strong> Le moteur 10 facteurs combine convictions analyste, momentum, volatilité. Les bandes P10/P50/P90 reflètent l'incertitude — pas un objectif.
       </div>
       <div className="card">
-        <div className="cd-ti"><h3>Horizon</h3></div>
+        <div className="cd-ti"><h3>Horizon de projection</h3>
+          <span style={{fontSize:11,fontWeight:800,color:"#4f83f5"}}>{horizon} mois</span>
+        </div>
         <div className="seg">
           {[3,6,9,12].map(n =>
             <div key={n} className={"it"+(horizon===n?" ac":"")} onClick={()=>setHorizon(n)}>{n}M</div>
@@ -3300,17 +3389,17 @@ function ScenariosView({ port, m, qHistMap }) {
       </div>
       <div className="g3">
         <div className="card" style={{textAlign:"center"}}>
-          <div className="lbl">P10 (pessimiste)</div>
+          <div className="lbl">P10 à {horizon}M</div>
           <div className="mono" style={{fontSize:18,color:"#e85d5d"}}>{fe(tot10)}</div>
           <div className="num" style={{fontSize:11,color:"#e85d5d"}}>{fp((tot10/m.tot-1)*100,0)}</div>
         </div>
         <div className="card" style={{textAlign:"center"}}>
-          <div className="lbl">P50 (médian)</div>
+          <div className="lbl">P50 à {horizon}M</div>
           <div className="mono" style={{fontSize:18,color:"#4f83f5"}}>{fe(tot50)}</div>
           <div className="num" style={{fontSize:11,color:"#4f83f5"}}>{fp((tot50/m.tot-1)*100,0)}</div>
         </div>
         <div className="card" style={{textAlign:"center"}}>
-          <div className="lbl">P90 (optimiste)</div>
+          <div className="lbl">P90 à {horizon}M</div>
           <div className="mono" style={{fontSize:18,color:"#2ecc8f"}}>{fe(tot90)}</div>
           <div className="num" style={{fontSize:11,color:"#2ecc8f"}}>{fp((tot90/m.tot-1)*100,0)}</div>
         </div>
@@ -3383,7 +3472,7 @@ function ScenariosView({ port, m, qHistMap }) {
         </>}
       </div>
       <div className="card">
-        <div className="cd-ti"><h3>Détail par position</h3></div>
+        <div className="cd-ti"><h3>Détail par position</h3><span className="dim" style={{fontSize:9}}>projection à {horizon}M</span></div>
         {items.map(x => (
           <div key={x.t} className="row">
             <div className="tk" style={{flex:"0 0 25%"}}>{x.t}</div>
@@ -3478,6 +3567,93 @@ function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx }) {
 }
 
 // MÉMOIRE — le passé : historique de valeur, P&L, contributions, fiabilité du moteur
+/* Carte 1 — le cône prédit à une date passée, superposé au prix RÉELLEMENT suivi depuis. */
+function ForecastVsRealityCard({ snapshots, port }) {
+  const cands = useMemo(()=>(port||[]).filter(p=>p.val!=null).map(p=>p.t), [port]);
+  const [tk, setTk] = useState(cands[0] || "");
+  const sel = cands.includes(tk) ? tk : (cands[0]||"");
+  const r = useMemo(()=>sel?forecastVsReality(snapshots, sel):null, [snapshots, sel]);
+  if(!cands.length) return null;
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Prévision passée vs réalité</h3>
+        <select value={sel} onChange={e=>setTk(e.target.value)}
+          style={{background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"3px 7px"}}>
+          {cands.map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      {!r ? (
+        <div className="dim" style={{fontSize:10,lineHeight:1.5}}>
+          Pas encore assez d'historique pour {sel}. Il faut au moins deux relevés espacés de quelques jours — la courbe apparaîtra d'elle-même en continuant à ouvrir l'app.
+        </div>
+      ) : (
+        <>
+          <div style={{fontSize:10,color:"#8892a8",marginBottom:6,lineHeight:1.4}}>
+            Cône prédit le <strong style={{color:"#dde3f0"}}>{r.from}</strong>, confronté au prix réel sur {r.days} jour{r.days>1?"s":""}.
+          </div>
+          <div style={{height:190}}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={r.series} margin={{top:8,right:10,left:0,bottom:0}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.05)"/>
+                <XAxis dataKey="d" tick={{fontSize:9,fill:"#8892a8"}} axisLine={false} tickLine={false}
+                  tickFormatter={v=>"J+"+v}/>
+                <YAxis tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false} width={38}
+                  tickFormatter={v=>v+"%"}/>
+                <Tooltip contentStyle={{background:"#0f1420",border:"1px solid rgba(255,255,255,.1)",borderRadius:6,fontSize:11}}
+                  formatter={(v,n)=>[v+"%", n]} labelFormatter={v=>"J+"+v}/>
+                <ReferenceLine y={0} stroke="rgba(255,255,255,.15)" strokeDasharray="3 3"/>
+                <Area type="monotone" dataKey="p10" stroke="none" fill="transparent" isAnimationActive={false}/>
+                <Line type="monotone" dataKey="p90" name="P90 prévu" stroke="#2ecc8f" strokeWidth={1} strokeDasharray="4 3" dot={false} isAnimationActive={false}/>
+                <Line type="monotone" dataKey="p50" name="P50 prévu" stroke="#4f83f5" strokeWidth={1} strokeDasharray="4 3" dot={false} isAnimationActive={false}/>
+                <Line type="monotone" dataKey="p10" name="P10 prévu" stroke="#e85d5d" strokeWidth={1} strokeDasharray="4 3" dot={false} isAnimationActive={false}/>
+                <Line type="monotone" dataKey="reel" name="Réel" stroke="#dde3f0" strokeWidth={2.2} dot={false} isAnimationActive={false}/>
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{fontSize:10,marginTop:6,lineHeight:1.45,color:"#8892a8"}}>
+            Ligne blanche = prix réel. Pointillés = fourchette prévue ce jour-là.{" "}
+            {r.inBand
+              ? <span style={{color:"#2ecc8f"}}>La réalité est restée dans la fourchette — prévision cohérente.</span>
+              : <span style={{color:"#e85d5d"}}>La réalité est sortie de la fourchette — le moteur élargira son cône.</span>}
+            {" "}Écart vs médiane : <strong style={{color:cl(r.ecart)}}>{fp(r.ecart,1)}</strong>.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* Carte 2 — quelles lignes le moteur prédit bien, lesquelles il rate. */
+function ReliabilityByTickerCard({ snapshots }) {
+  const rows = useMemo(()=>calibrationByTicker(snapshots), [snapshots]);
+  if(!rows.length) return null;
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Fiabilité par position</h3><span className="dim" style={{fontSize:9}}>couverture visée 80 %</span></div>
+      <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:9}}>
+        Part des prévisions passées où le prix réel est resté dans la fourchette. Plus c'est haut, plus tu peux te fier à la prévision de cette ligne.
+      </div>
+      {rows.map(r=>{
+        const col = r.cov>=0.75?"#2ecc8f":r.cov>=0.5?"#f0a020":"#e85d5d";
+        return (
+          <div key={r.t} style={{padding:"7px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+              <strong className="tk" style={{fontSize:11}}>{r.t}</strong>
+              <span className="mono" style={{fontSize:11,color:col,fontWeight:700}}>{Math.round(r.cov*100)}%</span>
+            </div>
+            <div className="bar" style={{marginTop:4}}><span style={{width:(r.cov*100)+"%",background:col}}/></div>
+            <div style={{fontSize:9,color:"#3a4560",marginTop:3}}>
+              {r.n} comparaison{r.n>1?"s":""} · {Math.abs(r.biais)<1 ? "prévision centrée"
+                : r.biais>0 ? "moteur trop prudent (réel au-dessus de +"+r.biais+"%)"
+                            : "moteur trop optimiste (réel en dessous de "+r.biais+"%)"}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function JournalCard({ port }) {
   const [entries, setEntries] = useState(()=>loadJournal());
   const [type, setType] = useState("Achat");
@@ -3541,6 +3717,8 @@ function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
   return (
     <>
       <HistoryView snapshots={snapshots} port={port} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/>
+      <ForecastVsRealityCard snapshots={snapshots} port={port}/>
+      <ReliabilityByTickerCard snapshots={snapshots}/>
       <JournalCard port={port}/>
       {precision ? (
         <div className="card">
@@ -4038,8 +4216,17 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
   // ===== Sauvegarde / restauration (confidentialité : données hors du code source) =====
   const fileRef = useRef(null);
   const exportPortfolio = () => {
-    const data = { app:"port.folio Fab", type:"portfolio-backup", version:1,
-      exportedAt:new Date().toISOString().slice(0,10), port };
+    // v2 : on sauvegarde AUSSI le travail d'analyse (thèses saisies, statuts des catalyseurs
+    // et risques, supports ajoutés, journal, seuils). Avant, seules les positions étaient
+    // exportées — un changement d'appareil effaçait tout ce travail.
+    const grab = k => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch(e) { return null; } };
+    const data = { app:"port.folio Fab", type:"portfolio-backup", version:2,
+      exportedAt:new Date().toISOString().slice(0,10), port,
+      overrides: grab(AN_OVERRIDE_KEY),   // thèses éditées + statuts réalisé/en attente/caduc
+      registry:  grab(REGISTRY_KEY),      // supports ajoutés depuis l'app
+      journal:   grab(JOURNAL_KEY),       // journal des décisions
+      alerts:    grab("fab-pf-alerts-v6"),
+      watch:     grab("fab-pf-watch-v6") };
     const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -4057,9 +4244,24 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
         if(!Array.isArray(arr)) { alert("Fichier invalide : aucune liste de positions trouvée."); return; }
         const clean = sanitizePort(arr).filter(p => p.q > 0 || arr.length === 1);
         if(!clean.length) { alert("Aucune position valide dans le fichier."); return; }
-        if(!confirm("Importer "+clean.length+" positions ? Cela remplace le portefeuille actuel.")) return;
+        // Sauvegarde v2 : on restaure aussi le travail d'analyse (thèses, statuts des
+        // catalyseurs/risques, supports ajoutés, journal, seuils).
+        const extras = [];
+        if(parsed.overrides) extras.push("thèses et statuts d'analyse");
+        if(parsed.registry)  extras.push("supports ajoutés");
+        if(parsed.journal)   extras.push("journal des décisions");
+        if(parsed.alerts)    extras.push("seuils d'alerte");
+        const msg = "Importer "+clean.length+" positions"+(extras.length?" + "+extras.join(", "):"")+" ?\nCela remplace les données actuelles.";
+        if(!confirm(msg)) return;
+        const put = (k,v) => { if(v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} } };
+        put(AN_OVERRIDE_KEY, parsed.overrides);
+        put(REGISTRY_KEY,    parsed.registry);
+        put(JOURNAL_KEY,     parsed.journal);
+        put("fab-pf-alerts-v6", parsed.alerts);
+        put("fab-pf-watch-v6",  parsed.watch);
         onPortChange(clean);
-        alert("✅ "+clean.length+" positions importées et sauvegardées.");
+        alert("✅ "+clean.length+" positions importées"+(extras.length?" + "+extras.join(", "):"")+".\n"+
+              (extras.length?"Recharge la page pour appliquer les données d'analyse.":"Sauvegardé."));
       } catch(err) { alert("Fichier illisible : "+err.message); }
     };
     reader.readAsText(file);
@@ -4604,7 +4806,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
       {chartData.length > 0 && (
         <div className="card">
           <div className="cd-ti">
-            <h3>Historique &amp; prévisions</h3>
+            <h3>Historique &amp; prévisions</h3><span className="dim" style={{fontSize:9}}>horizon {horizon}M</span>
             <span className="dim" style={{fontSize:9}}>👆 clique la courbe → prix</span>
           </div>
           <div className="seg" style={{marginBottom:8}}>
@@ -4718,6 +4920,10 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
                   : "purement statistique : ce support n'a pas encore d'objectifs ni de conviction saisis"}
                 {f.hist>0 ? ` · ${f.hist} semaines d'historique` : " · historique insuffisant"}.
                 {f.basis!=="thèse" && <span style={{color:"#f0a020"}}> Renseigne ses données via « Modifier » ci-dessous pour la fiabiliser.</span>}
+                {f.thesisDecided>0 && <div style={{marginTop:4}}>
+                  Ton suivi des catalyseurs/risques ({f.thesisDecided} statué{f.thesisDecided>1?"s":""}) ajuste la projection de
+                  <strong style={{color:cl(f.thesisAdj)}}> {fp(f.thesisAdj,1)}</strong> sur 12 mois.
+                </div>}
               </div>
             );
           })()}
