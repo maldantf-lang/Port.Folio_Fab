@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v18.9-2026-09-14-005";
+const BUILD = "v19.0-2026-09-15-001";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -257,7 +257,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"c/y1dhJerMNLzI8BhyfBNg==","iv":"o7QiL1RAPE2kZ9US","data":"Nw8WMM0jwLeHfIaolrI8FOGwseCxlR60eT4wiNwgRnouxnu/cWUzMUR3vfkc6pWQTwZP1Xqqi+A37VY8GXjLa5389zCj051FdWy70MJMIHJHFNckJsl3w0EVkyE0aBYG0brjBtcbaQgnowEQgVE4baG1c3rWTfWOFs73TWxIDf8ql19aBubw0PDvoROQUd1VuANWzsKebItlJA70GgDoOK723HMqij5rDC0cPxxFoPrAvIwxGL2ve10jN+HAcxxZ07WEXXf2rfPAkcbYt7R+de909ORWRv5QdGJFKZN4TVxVOONZ9lcE3hVmEPM5nVOt2GfZfxf9fdn6xeasYVYuke8g5VMm/M0/N0XpXhdwWC+OV28uI474ukG+eXz0rS4U4yovhpZ6lOiqfG2HtZX3LoBQKdQYDaMyJeNec44sbZTa+VXlcPG/aw7J4gWqt580FZdJrFbBJcc6TMgA8ipJlsp0+szMlBSV5YOeB1Q7xin96i4QmS1NEz28lqPtClj+ZJfK+dmEp8uZTQ8xxGZc9Hl4b2H1jp4lzwdRK6149TV2cjlcG7td2COedR4HoNYc7Pgly+9v78dTqj9cpMaw/qWE/elSCrp+jUv8eeXTSlvyV7+NdQUOBES7Yp7Q+8YcM3jfR49N28MHCdxKagYG1jrfifbQC6Q4xbU8Y69LyNuQ/2cjKJYDUKkAeTtpszOncUHdwmaD0gctEwvZ1O53iTp+Webnmb5sUmj8LBClJD0gd4pQpIiRhSZIyQR2ZLTs61RzC55FpP0KYxJgDhDl6Rrmr3R/akC9WAmt7/JA42G3SVhvmJ+5Eh+pPmtNvlVrV8IgwNINLBanzXcU7LasjxHJ7Rpp35Zd42K01eiuOWTsP7ms43wBRP2IpIPn/Xh3fFmITS5ugrfn4KsptJpwZRdas1dzJSlNKj993S6cZ05f+51O/Upf6uI14MJqrfyJ0XN53u/XqgViXZwbm+EE9Q6C8h1W2QCJWI3R2OzH2jWh/abLh2A1kOLZSbckTQgv8XZtBXA07Nej9wOs4QmE1FzIZKupS32u4wrG3/7Z7YNtvHgWawhH3sQml6bYelZp9xT2yveL0dyO0/PYUo298xgnhw0+f3nZE6i0OzfvSFMUzn7OihOa2PbjXBjZRzS09wOFZBQPKO+wfSczjUp90m8="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -442,6 +442,61 @@ function buildSectors(prices, qHistMap) {
   return out.sort((a,b) => ((b.mom&&b.mom.score)||-999) - ((a.mom&&a.mom.score)||-999));
 }
 // Régime de marché déduit de signaux mesurables (taux, peur, appétit pour le risque)
+/* ANALYSE DE FOND — générée à partir des données réellement utilisées par le Forecast :
+   percentiles 3 ans des indicateurs de marché (QQQ risque, TLT taux, GLD refuge, ITA défense)
+   et momentum sectoriel mesuré. Plus aucun texte figé. */
+function buildFondamentaux(ctx, port) {
+  if(!ctx || ctx.qqqPct == null) return null;
+  const pc = v => Math.round(v*100);
+  const out = [];
+  if(ctx.tltPct != null) out.push({ k:"Taux & politique monétaire",
+    v: pc(ctx.tltPct)+"ᵉ centile (obligations 20 ans)",
+    txt: ctx.tltPct < 0.35 ? "Les obligations longues sont basses dans leur fourchette 3 ans : les taux restent élevés. L'argent coûte cher, ce qui pèse sur les valorisations de croissance et limite la marge de baisse des banques centrales."
+       : ctx.tltPct > 0.65 ? "Les obligations longues sont hautes : les taux ont nettement reflué. Environnement porteur pour les valeurs de croissance et les actifs longs."
+       : "Les taux longs sont proches de leur moyenne 3 ans : pas de tension ni de détente marquée." });
+  if(ctx.itaPct != null) out.push({ k:"Géopolitique & défense",
+    v: pc(ctx.itaPct)+"ᵉ centile (défense US)",
+    txt: ctx.itaPct > 0.75 ? "Le secteur défense est haut dans sa fourchette : le marché price un cycle de réarmement soutenu. Vent porteur pour tes lignes défense, mais le point d'entrée est cher."
+       : ctx.itaPct < 0.35 ? "Le secteur défense est bas : le marché doute du maintien des budgets militaires."
+       : "Le secteur défense évolue dans sa moyenne." });
+  out.push({ k:"Cycle IA & technologie",
+    v: pc(ctx.qqqPct)+"ᵉ centile (Nasdaq 100)",
+    txt: ctx.qqqPct > 0.75 ? "La tech est haute dans sa fourchette 3 ans : le cycle IA est largement intégré aux cours. La poursuite de la hausse dépend désormais des résultats livrés, pas des annonces."
+       : ctx.qqqPct < 0.35 ? "La tech est basse : le marché doute du retour sur investissement de l'IA — configuration historiquement favorable à l'accumulation si la thèse tient."
+       : "La tech est dans sa moyenne : le marché attend des preuves avant de repricer le cycle IA." });
+  if(ctx.gldPct != null) out.push({ k:"Aversion au risque",
+    v: pc(ctx.gldPct)+"ᵉ centile (or)",
+    txt: ctx.gldPct > 0.75 ? "L'or est haut : une partie du marché se couvre contre un choc. À surveiller si tes positions sont concentrées sur des actifs cycliques."
+       : "L'or reste contenu : pas de stress systémique visible." });
+  return out;
+}
+
+/* OÙ LE CONSENSUS SE TROMPE — écarts MESURÉS entre le prix de marché (le consensus) et les
+   repères de l'app (objectifs analystes, signal effectif, momentum, suivi de thèse).
+   Chaque écart est décrit : où, dans quel sens, pourquoi, et l'impact sur la prévision. */
+function buildConsensusGaps(port) {
+  const out = [];
+  (port||[]).forEach(p => {
+    const an = AN[p.t], px = p.pxNative;
+    if(!an || !an.tgt || px == null || !(px > 0)) return;
+    const med = an.tgt.a;
+    const ecart = (med/px - 1) * 100;           // potentiel vs objectif médian
+    if(Math.abs(ecart) < 20) return;            // écart non significatif
+    const f = forecast(p, MACRO);
+    const sens = ecart > 0 ? "pessimiste" : "optimiste";
+    out.push({
+      t: p.t, n: p.n, ecart: +ecart.toFixed(0), sens,
+      ou: `Le marché cote ${fcur(p.t,px)} contre un objectif médian de ${fcur(p.t,med)}`,
+      pourquoi: ecart > 0
+        ? `Le prix intègre un scénario plus sombre que la thèse suivie (${an.r || "vue analyste"}). ${p.pct != null && p.pct <= -25 ? "La baisse est toutefois encore en cours — la décote peut se creuser." : "Les catalyseurs identifiés ne sont pas encore reflétés dans le cours."}`
+        : `Le prix intègre déjà plus que l'objectif médian : le marché anticipe une exécution parfaite, ce qui laisse peu de marge d'erreur.`,
+      impact: `Projection ${Math.round((f.p50||0)*100)} % à 12 mois, confiance ${f.confidence}.`,
+      conf: f.confidence
+    });
+  });
+  return out.sort((a,b)=>Math.abs(b.ecart)-Math.abs(a.ecart)).slice(0,5);
+}
+
 function buildMacro(ctx) {
   if(!ctx || ctx.qqqPct == null) return null;
   const risk = ctx.qqqPct, fear = ctx.gldPct, rates = ctx.tltPct;
@@ -1392,42 +1447,6 @@ function calcRiskScore({ vol, rsi, beta, wt, p10, ec }) {
   return { total: Math.min(100,total), parts };
 }
 
-/* ============== CALENDRIER EARNINGS (Yahoo Finance — gratuit) ============== */
-const EARN_KEY = "fab-earn-cache";
-const EARN_TTL = 24*60*60*1000;
-function loadEarnCache(){ try{const s=localStorage.getItem(EARN_KEY);return s?JSON.parse(s):{};}catch(e){return {};} }
-function saveEarnCache(d){ try{localStorage.setItem(EARN_KEY,JSON.stringify(d));}catch(e){} }
-
-async function fetchEarningsDate(yfsym) {
-  const cache = loadEarnCache();
-  if(cache[yfsym] && Date.now()-cache[yfsym].ts < EARN_TTL) return cache[yfsym].data;
-  const yUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yfsym)}?modules=calendarEvents`;
-  const wurl = getWorkerUrl();
-  const proxUrls = wurl ? [`${wurl}${wurl.includes("?")?"&":"?"}q=${encodeURIComponent(yUrl)}`] : [];
-  for(const proxy of proxUrls) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(()=>ctrl.abort(), 8000);
-      const r = await fetch(proxy, {signal:ctrl.signal});
-      clearTimeout(t);
-      const json = await r.json();
-      const earn = json?.quoteSummary?.result?.[0]?.calendarEvents?.earnings;
-      const dates = earn?.earningsDate;
-      if(dates && dates.length>0) {
-        const ts = dates[0].raw*1000;
-        const data = { ts, date: new Date(ts).toLocaleDateString("fr-FR",{day:"2-digit",month:"short",year:"numeric"}) };
-        const all = loadEarnCache(); all[yfsym]={ts:Date.now(),data}; saveEarnCache(all);
-        return data;
-      }
-      if(json?.quoteSummary) { // réponse valide mais pas de date → cache négatif court
-        const all = loadEarnCache(); all[yfsym]={ts:Date.now(),data:null}; saveEarnCache(all);
-        return null;
-      }
-    } catch(e) { continue; }
-  }
-  return null;
-}
-
 // Corrélation de Pearson entre deux séries de rendements
 function pearson(a, b) {
   const n = Math.min(a.length,b.length); if(n<4) return null;
@@ -1985,7 +2004,6 @@ function AnticipatoryAlerts({ port, onSelect }) {
         </div>
       ))}
       <ThesisReview port={port} items={reviewItems} onReviewed={()=>setReviewBump(b=>b+1)} onSelect={onSelect}/>
-      <div className="dim" style={{fontSize:8,marginTop:6}}>Prochains résultats : voir l'onglet Forecast.</div>
     </div>
   );
 }
@@ -2326,7 +2344,10 @@ function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, q
             {mkTick("gld","Or","#d4a843")}
           </div>
           <div style={{fontSize:10,color:"#3a4560",marginTop:8,lineHeight:1.4,paddingTop:6,borderTop:"1px solid rgba(255,255,255,.04)"}}>
-            {MACRO.regime}
+            {/* V19 : régime CALCULÉ (percentiles 3 ans), plus de texte figé */}
+            {(() => { const dm = buildMacro(macroCtx);
+              return dm ? <span style={{color:dm.col}}>{dm.regime}</span>
+                        : <span>Lecture du régime en cours…</span>; })()}
           </div>
         </div>
       )}
@@ -2671,70 +2692,6 @@ function HistoryView({ snapshots, port, eurusd, qHistMap, spyHist }) {
 
   return (
     <>
-      <div className="card">
-        <div className="cd-ti">
-          <h3>Valeur du portefeuille</h3>
-          <span className="num" style={{fontSize:12,color:cl(delta)}}>{fp(deltaPct)} • {fe(delta)}</span>
-        </div>
-        <div className="seg">
-          {["7j","30j","90j","tout"].map(k=>
-            <div key={k} className={"it"+(period===k?" ac":"")} onClick={()=>setPeriod(k)}>{k}</div>
-          )}
-        </div>
-        {data.length < 2 ? (
-          <div className="warn">Historique en cours de constitution — {snapshots.length} snapshot{snapshots.length>1?"s":""}. Premiers points dans quelques jours d'utilisation continue.</div>
-        ) : (
-          <div style={{height:200,marginTop:8}}>
-            <ResponsiveContainer>
-              <AreaChart data={data} margin={{top:5,right:5,left:0,bottom:0}}>
-                <defs>
-                  <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#4f83f5" stopOpacity={0.4}/>
-                    <stop offset="100%" stopColor="#4f83f5" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="rgba(255,255,255,.04)" vertical={false}/>
-                <XAxis dataKey="date" stroke="#3a4560" fontSize={10} tickLine={false}/>
-                <YAxis stroke="#3a4560" fontSize={10} tickLine={false} axisLine={false}
-                  tickFormatter={v=>v.toFixed(0)+"€"} width={45}/>
-                <Tooltip contentStyle={{background:"#0f1420",border:"1px solid rgba(255,255,255,.1)",borderRadius:6,fontSize:12}}
-                  formatter={v=>[fe(v),"Valeur"]}/>
-                <Area type="monotone" dataKey="val" stroke="#4f83f5" strokeWidth={2} fill="url(#gv)"/>
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </div>
-
-      {data.length >= 2 && (
-        <div className="card">
-          <div className="cd-ti">
-            <h3>P&amp;L cumulé</h3>
-            <span className="num" style={{fontSize:12,color:cl(curPnl)}}>{fe(curPnl)} <span className="dim" style={{fontWeight:400}}>({fp(curPnl/curInv*100,1)})</span></span>
-          </div>
-          <div style={{height:160}}>
-            <ResponsiveContainer>
-              <AreaChart data={data} margin={{top:5,right:5,left:0,bottom:0}}>
-                <defs>
-                  <linearGradient id="gpnl" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#2ecc8f" stopOpacity={0.35}/>
-                    <stop offset="100%" stopColor="#2ecc8f" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="rgba(255,255,255,.04)" vertical={false}/>
-                <XAxis dataKey="date" stroke="#3a4560" fontSize={10} tickLine={false}/>
-                <YAxis stroke="#3a4560" fontSize={10} tickLine={false} axisLine={false}
-                  tickFormatter={v=>v.toFixed(0)+"€"} width={45}/>
-                <Tooltip contentStyle={{background:"#0f1420",border:"1px solid rgba(255,255,255,.1)",borderRadius:6,fontSize:12}}
-                  formatter={v=>[fe(v),"P&L"]}/>
-                <ReferenceLine y={0} stroke="rgba(255,255,255,.15)" strokeDasharray="3 3"/>
-                <Area type="monotone" dataKey="pnl" stroke="#2ecc8f" strokeWidth={2} fill="url(#gpnl)"/>
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-
       {bench && bench.length>=4 && (
         <div className="card">
           <div className="cd-ti"><h3>Portefeuille vs S&amp;P 500</h3><span className="dim" style={{fontSize:9}}>base 100 · ~1 an</span></div>
@@ -2876,7 +2833,7 @@ function HistoryView({ snapshots, port, eurusd, qHistMap, spyHist }) {
   );
 }
 
-function MacroView({ prices, qHistMap, macroCtx }) {
+function MacroView({ prices, qHistMap, macroCtx, port }) {
   return (
     <>
       <div className="card">
@@ -2908,14 +2865,43 @@ function MacroView({ prices, qHistMap, macroCtx }) {
         })()}
       </div>
       <div className="card">
-        <div className="cd-ti"><h3>Analyse de fond</h3><span className="dim" style={{fontSize:9}}>revue manuellement</span></div>
-        <div style={{padding:"6px 0"}}><span className="lbl">Fed</span><div className="dim">{MACRO.fed}</div></div>
-        <div style={{padding:"6px 0"}}><span className="lbl">Géopolitique</span><div className="dim">{MACRO.geo}</div></div>
-        <div style={{padding:"6px 0"}}><span className="lbl">Cycle IA</span><div className="dim">{MACRO.ia}</div></div>
+        <div className="cd-ti"><h3>Analyse de fond</h3><span className="dim" style={{fontSize:9}}>calculée sur les données du Forecast</span></div>
+        {(() => {
+          const fond = buildFondamentaux(macroCtx, port);
+          if(!fond) return <div className="warn">📊 Lecture des indicateurs en cours.</div>;
+          return fond.map((f,i)=>(
+            <div key={i} style={{padding:"7px 0",borderTop:i?"1px solid rgba(255,255,255,.04)":"none"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
+                <span className="lbl">{f.k}</span>
+                <span className="mono" style={{fontSize:9,color:"#8892a8"}}>{f.v}</span>
+              </div>
+              <div className="dim" style={{marginTop:2,lineHeight:1.45}}>{f.txt}</div>
+            </div>
+          ));
+        })()}
       </div>
       <div className="card">
-        <div className="cd-ti"><h3>Où le consensus se trompe</h3></div>
-        {MACRO.wrong.map((w,i) => <div key={i} className="row" style={{padding:"8px 0"}}>{w}</div>)}
+        <div className="cd-ti"><h3>Où le consensus se trompe</h3><span className="dim" style={{fontSize:9}}>écarts mesurés</span></div>
+        {(() => {
+          const gaps = buildConsensusGaps(port);
+          if(!gaps.length) return <div className="dim" style={{fontSize:10,lineHeight:1.5}}>
+            Aucun écart significatif : sur tes positions, le prix de marché reste à moins de 20 % des objectifs médians. Le consensus et ta thèse sont alignés.
+          </div>;
+          return gaps.map((g,i)=>(
+            <div key={g.t} style={{padding:"9px 0",borderTop:i?"1px solid rgba(255,255,255,.04)":"none"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+                <strong className="tk" style={{fontSize:11}}>{g.t} <span className="dim" style={{fontWeight:400}}>{g.n}</span></strong>
+                <span className="mono" style={{fontSize:11,fontWeight:800,color:g.ecart>0?"#2ecc8f":"#e85d5d"}}>{fp(g.ecart,0)}</span>
+              </div>
+              <div style={{fontSize:10,color:"#8892a8",marginTop:3,lineHeight:1.45}}>
+                <div><strong style={{color:"#dde3f0"}}>Où :</strong> {g.ou}.</div>
+                <div><strong style={{color:"#dde3f0"}}>Sens :</strong> consensus {g.sens} par rapport à la thèse suivie.</div>
+                <div><strong style={{color:"#dde3f0"}}>Pourquoi :</strong> {g.pourquoi}</div>
+                <div><strong style={{color:"#dde3f0"}}>Impact :</strong> {g.impact}</div>
+              </div>
+            </div>
+          ));
+        })()}
       </div>
       <div className="card">
         <div className="cd-ti"><h3>Classement sectoriel</h3><span className="dim" style={{fontSize:9}}>mesuré sur les cours</span></div>
@@ -2972,7 +2958,7 @@ function WatchlistView({ port, m }) {
   const [simTk, setSimTk] = useState(OPPS[0] ? OPPS[0].t : "");
   const [simQty, setSimQty] = useState("");
   const [simPx, setSimPx] = useState("");
-  const [simHz, setSimHz] = useState(12);
+  const [simHz, setSimHz] = useState(3);
   const [simRes, setSimRes] = useState(null);
 
   const fetchWatchPrices = async () => {
@@ -3197,7 +3183,7 @@ function FanTip({ active, payload, label }) {
 }
 
 function ScenariosView({ port, m, qHistMap }) {
-  const [horizon, setHorizon] = useState(12);
+  const [horizon, setHorizon] = useState(3);   // V19 : 3 mois en détail par défaut
   const [sInfo, setSInfo] = useState(false);
   const [activeStress, setActiveStress] = useState(null);
   const [macroCtx, setMacroCtx] = useState(() => loadMacroCtx() || {});
@@ -3503,49 +3489,6 @@ function TodayView(props) {
 
 // DEMAIN — la projection : contexte macro, stress-tests, thèses, watchlist
 // Calendrier earnings AGRÉGÉ au niveau portefeuille — anticipe la volatilité autour des publications
-function EarningsCalendar({ port, onSelect }) {
-  const [dates, setDates] = useState({});
-  const tickerKey = port.map(p=>p.t).join(",");
-  useEffect(() => {
-    let alive = true;
-    port.forEach(p => {
-      const sym = YF[p.t] ? YF[p.t].y : p.t;
-      fetchEarningsDate(sym).then(d => { if(alive) setDates(prev => ({ ...prev, [p.t]: d })); });
-    });
-    return () => { alive = false; };
-  }, [tickerKey]);
-  const now = Date.now();
-  const upcoming = port
-    .map(p => ({ p, e: dates[p.t] }))
-    .filter(x => x.e && x.e.ts >= now - 2*86400000)
-    .sort((a,b) => a.e.ts - b.e.ts);
-  const loading = port.some(p => dates[p.t] === undefined);
-  return (
-    <div className="card">
-      <div className="cd-ti"><h3>Prochains résultats</h3>
-        {upcoming.length>0 && <span className="dim" style={{fontSize:10}}>{upcoming.length} à venir</span>}
-      </div>
-      {upcoming.length === 0 ? (
-        <div className="dim" style={{fontSize:11}}>{loading ? "Chargement des dates de publication…" : "Aucune date de résultats connue pour le moment."}</div>
-      ) : upcoming.map(({p,e}) => {
-        const days = Math.round((e.ts - now)/86400000);
-        const soon = days <= 14;
-        return (
-          <div key={p.t} className="row" onClick={()=>onSelect&&onSelect(p.t)}
-            style={{cursor:"pointer",padding:"7px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
-            <div style={{flex:1}}><strong className="tk">{p.t}</strong> <span className="dim" style={{fontSize:10}}>{p.n}</span></div>
-            <div style={{textAlign:"right"}}>
-              <div className="mono" style={{fontSize:11,color:soon?"#f0a020":"#dde3f0"}}>{e.date}</div>
-              <div style={{fontSize:9,color:soon?"#f0a020":"#8892a8"}}>{days<=0?"imminent":"dans "+days+" j"}</div>
-            </div>
-          </div>
-        );
-      })}
-      <div className="dim" style={{fontSize:8,marginTop:6}}>Source Yahoo · à anticiper : volatilité accrue autour des publications.</div>
-    </div>
-  );
-}
-
 function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx }) {
   const [sub, setSub] = useState("prev");
   return (
@@ -3558,8 +3501,7 @@ function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx }) {
       {sub==="prev" ? (
         <>
           <ScenariosView port={port} m={m} qHistMap={qHistMap}/>
-          <EarningsCalendar port={port} onSelect={onSelect}/>
-          <MacroView prices={prices} qHistMap={qHistMap} macroCtx={macroCtx}/>
+          <MacroView prices={prices} qHistMap={qHistMap} macroCtx={macroCtx} port={port}/>
           <AnalysisView port={port} onSelect={onSelect}/>
         </>
       ) : (
@@ -3571,61 +3513,6 @@ function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx }) {
 
 // MÉMOIRE — le passé : historique de valeur, P&L, contributions, fiabilité du moteur
 /* Carte 1 — le cône prédit à une date passée, superposé au prix RÉELLEMENT suivi depuis. */
-function ForecastVsRealityCard({ snapshots, port }) {
-  const cands = useMemo(()=>(port||[]).filter(p=>p.val!=null).map(p=>p.t), [port]);
-  const [tk, setTk] = useState(cands[0] || "");
-  const sel = cands.includes(tk) ? tk : (cands[0]||"");
-  const r = useMemo(()=>sel?forecastVsReality(snapshots, sel):null, [snapshots, sel]);
-  if(!cands.length) return null;
-  return (
-    <div className="card">
-      <div className="cd-ti"><h3>Prévision passée vs réalité</h3>
-        <select value={sel} onChange={e=>setTk(e.target.value)}
-          style={{background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"3px 7px"}}>
-          {cands.map(t=><option key={t} value={t}>{t}</option>)}
-        </select>
-      </div>
-      {!r ? (
-        <div className="dim" style={{fontSize:10,lineHeight:1.5}}>
-          Pas encore assez d'historique pour {sel}. Il faut au moins deux relevés espacés de quelques jours — la courbe apparaîtra d'elle-même en continuant à ouvrir l'app.
-        </div>
-      ) : (
-        <>
-          <div style={{fontSize:10,color:"#8892a8",marginBottom:6,lineHeight:1.4}}>
-            Cône prédit le <strong style={{color:"#dde3f0"}}>{r.from}</strong>, confronté au prix réel sur {r.days} jour{r.days>1?"s":""}.
-          </div>
-          <div style={{height:190}}>
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={r.series} margin={{top:8,right:10,left:0,bottom:0}}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.05)"/>
-                <XAxis dataKey="d" tick={{fontSize:9,fill:"#8892a8"}} axisLine={false} tickLine={false}
-                  tickFormatter={v=>"J+"+v}/>
-                <YAxis tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false} width={38}
-                  tickFormatter={v=>v+"%"}/>
-                <Tooltip contentStyle={{background:"#0f1420",border:"1px solid rgba(255,255,255,.1)",borderRadius:6,fontSize:11}}
-                  formatter={(v,n)=>[v+"%", n]} labelFormatter={v=>"J+"+v}/>
-                <ReferenceLine y={0} stroke="rgba(255,255,255,.15)" strokeDasharray="3 3"/>
-                <Area type="monotone" dataKey="p10" stroke="none" fill="transparent" isAnimationActive={false}/>
-                <Line type="monotone" dataKey="p90" name="P90 prévu" stroke="#2ecc8f" strokeWidth={1} strokeDasharray="4 3" dot={false} isAnimationActive={false}/>
-                <Line type="monotone" dataKey="p50" name="P50 prévu" stroke="#4f83f5" strokeWidth={1} strokeDasharray="4 3" dot={false} isAnimationActive={false}/>
-                <Line type="monotone" dataKey="p10" name="P10 prévu" stroke="#e85d5d" strokeWidth={1} strokeDasharray="4 3" dot={false} isAnimationActive={false}/>
-                <Line type="monotone" dataKey="reel" name="Réel" stroke="#dde3f0" strokeWidth={2.2} dot={false} isAnimationActive={false}/>
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-          <div style={{fontSize:10,marginTop:6,lineHeight:1.45,color:"#8892a8"}}>
-            Ligne blanche = prix réel. Pointillés = fourchette prévue ce jour-là.{" "}
-            {r.inBand
-              ? <span style={{color:"#2ecc8f"}}>La réalité est restée dans la fourchette — prévision cohérente.</span>
-              : <span style={{color:"#e85d5d"}}>La réalité est sortie de la fourchette — le moteur élargira son cône.</span>}
-            {" "}Écart vs médiane : <strong style={{color:cl(r.ecart)}}>{fp(r.ecart,1)}</strong>.
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 /* Carte 2 — quelles lignes le moteur prédit bien, lesquelles il rate. */
 function ReliabilityByTickerCard({ snapshots }) {
   const rows = useMemo(()=>calibrationByTicker(snapshots), [snapshots]);
@@ -3720,7 +3607,6 @@ function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
   return (
     <>
       <HistoryView snapshots={snapshots} port={port} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/>
-      <ForecastVsRealityCard snapshots={snapshots} port={port}/>
       <ReliabilityByTickerCard snapshots={snapshots}/>
       <JournalCard port={port}/>
       {precision ? (
@@ -3986,7 +3872,7 @@ function BioSettings({ pinActive }) {
 }
 
 // AUTO-DIAGNOSTIC — vérifie en direct l'état des dépendances de l'appli
-function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
+function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap, fetchCount, notifPerm, onAskNotif }) {
   const [snapN, setSnapN] = useState(null);
   const [wurl, setWurl] = useState(() => { try { return localStorage.getItem(WORKER_KEY) || DEFAULT_WORKER; } catch(e){ return DEFAULT_WORKER; } });
   const [wTest, setWTest] = useState("idle");   // idle | testing | ok | fail
@@ -4078,6 +3964,51 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap }) {
 
       <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.4}}>
         🟢 OK · 🟡 à surveiller · 🔴 problème. Les cours arrivent par ton relais Cloudflare ; s'il est indisponible, l'app affiche les dernières valeurs connues.
+      </div>
+
+      {/* État système — fusionné ici en V19 (était une carte séparée qui répétait ces infos) */}
+      <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.06)"}}>
+        <div className="lbl" style={{marginBottom:6}}>État système</div>
+        <div className="row"><span>Build</span><span className="mono">{BUILD}</span></div>
+        <div className="row"><span>EUR/USD live</span><span className="mono">{eurusd ? eurusd.toFixed(4) : "—"}</span></div>
+        <div className="row"><span>Cours reçus</span><span className="mono">{Object.keys(prices||{}).length} / {Object.keys(YF).length}</span></div>
+        <div className="row"><span>Dernier refresh</span><span className="mono">{ftime(lastTs)}</span></div>
+        {fetchCount != null && <div className="row"><span>Cycles depuis ouverture</span><span className="mono">{fetchCount}</span></div>}
+        {notifPerm != null && <div className="row"><span>Notifications</span>
+          <span style={{color: notifPerm==="granted"?"#2ecc8f":notifPerm==="denied"?"#e85d5d":"#f0a020"}}>
+            {notifPerm==="granted"?"✓ activées":notifPerm==="denied"?"✗ refusées":"non demandées"}
+          </span>
+        </div>}
+        {notifPerm !== "granted" && notifPerm !== "denied" && onAskNotif && (
+          <button className="bn bn-b" style={{marginTop:8,width:"100%"}} onClick={onAskNotif}>🔔 Activer les notifications</button>
+        )}
+      </div>
+
+      {/* Fraîcheur par support — fusionnée ici en V19 (était la carte « Santé des données ») */}
+      <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.06)"}}>
+        <div className="lbl" style={{marginBottom:4}}>Fraîcheur par support</div>
+        <div style={{fontSize:9,color:"#8892a8",marginBottom:6}}>🟢 à jour · 🟡 ancien (&gt;15 min) · ⚪ secours (valeur figée)</div>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+          <tbody>
+            {(port||[]).map(p=>{
+              const ts = priceTsMap && priceTsMap[p.t];
+              const age = ts ? Date.now()-ts : null;
+              const state = age==null ? {dot:"⚪",lbl:"secours",col:"#8892a8"}
+                : age < STALE_MS ? {dot:"🟢",lbl:"à jour",col:"#2ecc8f"}
+                : {dot:"🟡",lbl:"ancien",col:"#f0a020"};
+              const ageLbl = age==null ? "figé" : age<60000 ? "à l'instant" : age<3600000 ? Math.round(age/60000)+" min" : Math.round(age/3600000)+" h";
+              const pxE = priceEUR(p.t, prices, eurusd);
+              return (
+                <tr key={p.t} style={{borderTop:"1px solid rgba(255,255,255,.04)"}}>
+                  <td style={{padding:"5px 4px"}}>{state.dot} <strong className="tk">{p.t}</strong></td>
+                  <td style={{padding:"5px 4px",textAlign:"right",fontFamily:"monospace"}}>{pxE!=null?fe(pxE):"—"}</td>
+                  <td style={{padding:"5px 4px",textAlign:"right",color:state.col,fontSize:10}}>{state.lbl}</td>
+                  <td style={{padding:"5px 4px",textAlign:"right",color:"#8892a8",fontSize:9}}>{ageLbl}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -4273,33 +4204,9 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
 
   return (
     <>
-      <SystemHealth port={port} prices={prices} eurusd={eurusd} lastTs={lastTs} priceTsMap={priceTsMap}/>
+      <SystemHealth port={port} prices={prices} eurusd={eurusd} lastTs={lastTs} priceTsMap={priceTsMap}
+        fetchCount={fetchCount} notifPerm={notifPerm} onAskNotif={onAskNotif}/>
       <CalibrationStatus/>
-      <div className="card">
-        <div className="cd-ti"><h3>Santé des données</h3><span className="dim" style={{fontSize:9}}>fraîcheur des cours</span></div>
-        <div style={{fontSize:9,color:"#8892a8",marginBottom:8}}>🟢 à jour · 🟡 ancien (&gt;15 min) · ⚪ secours (valeur figée)</div>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-          <tbody>
-            {port.map(p=>{
-              const ts = priceTsMap && priceTsMap[p.t];
-              const age = ts ? Date.now()-ts : null;
-              const state = age==null ? {dot:"⚪",lbl:"secours",col:"#8892a8"}
-                : age < STALE_MS ? {dot:"🟢",lbl:"à jour",col:"#2ecc8f"}
-                : {dot:"🟡",lbl:"ancien",col:"#f0a020"};
-              const ageLbl = age==null ? "figé" : age<60000 ? "à l'instant" : age<3600000 ? Math.round(age/60000)+" min" : Math.round(age/3600000)+" h";
-              const pxE = priceEUR(p.t, prices, eurusd);
-              return (
-                <tr key={p.t} style={{borderTop:"1px solid rgba(255,255,255,.04)"}}>
-                  <td style={{padding:"5px 4px"}}>{state.dot} <strong className="tk">{p.t}</strong></td>
-                  <td style={{padding:"5px 4px",textAlign:"right",fontFamily:"monospace"}}>{pxE!=null?fe(pxE):"—"}</td>
-                  <td style={{padding:"5px 4px",textAlign:"right",color:state.col,fontSize:10}}>{state.lbl}</td>
-                  <td style={{padding:"5px 4px",textAlign:"right",color:"#8892a8",fontSize:9}}>{ageLbl}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
       <div className="card">
         <div className="cd-ti"><h3>Empreinte digitale</h3></div>
         <BioSettings pinActive={pinActive}/>
@@ -4432,22 +4339,6 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
         ))}
       </div>
 
-      <div className="card">
-        <div className="cd-ti"><h3>État système</h3></div>
-        <div className="row"><span>Build</span><span className="mono">{BUILD}</span></div>
-        <div className="row"><span>EUR/USD live</span><span className="mono">{eurusd ? eurusd.toFixed(4) : "—"}</span></div>
-        <div className="row"><span>Prix fetchés</span><span className="mono">{Object.keys(prices).length} / {Object.keys(YF).length}</span></div>
-        <div className="row"><span>Dernier refresh</span><span className="mono">{ftime(lastTs)}</span></div>
-        <div className="row"><span>Cycles depuis ouverture</span><span className="mono">{fetchCount}</span></div>
-        <div className="row"><span>Notifications</span>
-          <span style={{color: notifPerm==="granted"?"#2ecc8f":notifPerm==="denied"?"#e85d5d":"#f0a020"}}>
-            {notifPerm==="granted"?"✓ activées":notifPerm==="denied"?"✗ refusées":"non demandées"}
-          </span>
-        </div>
-        {notifPerm !== "granted" && notifPerm !== "denied" && (
-          <button className="bn bn-b" style={{marginTop:8,width:"100%"}} onClick={onAskNotif}>🔔 Activer les notifications</button>
-        )}
-      </div>
 
       <div className="card">
         <div className="cd-ti"><h3>Seuils d'alerte par position</h3></div>
@@ -4556,8 +4447,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   const qHist = useMemo(() => liveHist(qHistRaw, p.pxNative), [qHistRaw, p.pxNative]);
   const [spyQHist, setSpyQHist] = useState(null); // SPY trimestriel pour beta
   const [adv, setAdv] = useState(false);           // repli des indicateurs techniques (beta, Kelly)
-  const [earnDate, setEarnDate] = useState(undefined); // undefined=chargement, null=aucune, {ts,date}=ok
-  const [horizon, setHorizon] = useState(12);
+  const [horizon, setHorizon] = useState(3);   // V19 : 3 mois en détail par défaut
   const [reviewBump, setReviewBump] = useState(0);
   const [edit, setEdit] = useState(false);   // éditeur des données analystes
   const [anF, setAnF] = useState(()=>({ l:(a.tgt&&a.tgt.l)||"", av:(a.tgt&&a.tgt.a)||"", h:(a.tgt&&a.tgt.h)||"", c:a.c!=null?a.c:"", pr:a.p!=null?a.p:"", th:a.th||"",
@@ -4595,8 +4485,6 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     const sym = YF[ticker] ? (typeof YF[ticker]==="string" ? YF[ticker] : (YF[ticker].y||ticker)) : ticker;
     fetchQuarterlyHistory(sym).then(setQHist);
     fetchQuarterlyHistory("SPY").then(setSpyQHist);
-    setEarnDate(undefined);
-    fetchEarningsDate(sym).then(setEarnDate);
   }, [ticker]);
 
   const f = forecast(p, MACRO);
@@ -4656,6 +4544,23 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     return {acct, tax, net:p.pnl-tax, taxPct:acct==="CTO"?30:17.2};
   }, [p.pnl, p.acct]);
   // Tout normalisé en % par rapport au cours actuel (0% = prix d'aujourd'hui)
+  /* V19 — le cône FUTUR n'est tracé que s'il apporte plus d'information que la prévision passée
+     déjà visible : soit il n'y en a pas, soit il est plus PRÉCIS (fourchette plus serrée à
+     l'horizon), soit la prévision passée a dépassé son échéance. Évite deux cônes redondants. */
+  const futureAddsValue = useMemo(() => {
+    const withFc = (snapshots||[])
+      .filter(sx => sx.forecasts && sx.forecasts[ticker] && (sx.port||[]).some(x=>x.t===ticker && x.pxE>0))
+      .sort((a,b)=>a.ts-b.ts);
+    if(withFc.length < 2) return true;                       // pas de prévision passée → le futur informe
+    const s0 = withFc[0], fc = s0.forecasts[ticker];
+    const ageM = (Date.now()-s0.ts)/86400000/30.44;
+    if(ageM >= 12) return true;                              // prévision passée périmée
+    const kt = horizon/12, k = Math.sqrt(kt);
+    const oldW = ((fc.p90-fc.p10)/2/1.28)*k*2*1.28;          // largeur de l'ancienne à l'horizon
+    const newW = (f.p90-f.p10)*kt;                           // largeur de la nouvelle
+    return newW <= oldW * 1.02;                              // plus serrée (ou équivalente) = plus précise
+  }, [snapshots, ticker, horizon, f.p10, f.p90]);
+
   const chartData = useMemo(() => {
     const yfSym = YF[ticker] ? (typeof YF[ticker]==="string" ? YF[ticker] : (YF[ticker].y||ticker)) : ticker;
     const isEUR = yfSym.endsWith(".PA");
@@ -4682,6 +4587,32 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
       pxHist:null, px:normEUR(d.px), p10:null, p50:null, p90:null,
       eur: +d.px.toFixed(2)
     }));
+
+    // 2b. PRÉVISION PASSÉE (V19) : le cône réellement prédit lors du premier relevé disponible,
+    // reprojeté sur les mêmes dates → on voit si la réalité est restée dans la fourchette.
+    const withFc = (snapshots||[])
+      .filter(sx => sx.forecasts && sx.forecasts[ticker] && (sx.port||[]).some(x=>x.t===ticker && x.pxE>0))
+      .sort((a,b)=>a.ts-b.ts);
+    let pastFc = null;
+    if(withFc.length >= 2) {
+      const s0 = withFc[0];
+      pastFc = { ts0:s0.ts, date0:s0.date, px0:s0.port.find(x=>x.t===ticker).pxE, fc:s0.forecasts[ticker] };
+    }
+    const bandAt = (dt) => {                     // dt en jours depuis la prévision passée
+      const kt = Math.max(0, dt)/365, k = Math.sqrt(kt);
+      const mu = (pastFc.fc.p50||0)*kt, sig = ((pastFc.fc.p90-pastFc.fc.p10)/2/1.28)*k;
+      return { lo: mu-1.28*sig, mid: mu, hi: mu+1.28*sig };
+    };
+    if(pastFc) {
+      recentPts.forEach((pt, i) => {
+        const src = Array.from(byDate.values())[i];
+        if(!src || src.ts == null) return;
+        const b = bandAt((src.ts - pastFc.ts0)/86400000);
+        pt.oldP10 = normEUR(pastFc.px0*(1+b.lo));
+        pt.oldP50 = normEUR(pastFc.px0*(1+b.mid));
+        pt.oldP90 = normEUR(pastFc.px0*(1+b.hi));
+      });
+    }
 
     // 3. Transition : aujourd'hui = 0% (départ du cône)
     const lastDate = history&&history.length>0 ? history[history.length-1].date : "Auj.";
@@ -4731,7 +4662,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     }
     if(!pastDS.length) return [trans,...fPts];
     return [...pastDS,trans,...fPts];
-  }, [qHist, history, p.pxE, eurusd, ticker, f.p10, f.p50, f.p90, horizon]);
+  }, [qHist, history, p.pxE, eurusd, ticker, f.p10, f.p50, f.p90, horizon, snapshots]);
 
   const hcol = risk.total>=65?"#e85d5d":risk.total>=40?"#f0a020":"#2ecc8f";
   const sigCol = {buy:"#2ecc8f",sell:"#e85d5d",hold:"#f0a020",spec:"#8b7cf5"}[p.sig]||"#8892a8";
@@ -4759,14 +4690,6 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
         {p.effDrift && (
           <div style={{fontSize:10,color:"#8b7cf5",background:"rgba(139,124,245,.08)",borderRadius:6,padding:"6px 9px",marginBottom:8}}>
             Verdict ajusté au prix : <strong>{p.effReason}</strong>. La vue analyste de fond reste « {p.effBase} ».
-          </div>
-        )}
-        {earnDate !== undefined && (
-          <div style={{marginTop:6,display:"inline-flex",alignItems:"center",gap:5,fontSize:10,
-            background:earnDate?"rgba(240,160,32,.1)":"transparent",
-            border:earnDate?"1px solid rgba(240,160,32,.25)":"none",
-            borderRadius:5,padding:earnDate?"3px 9px":0,color:earnDate?"#f0a020":"#3a4560"}}>
-            {earnDate ? <>📅 Résultats : <strong>{earnDate.date}</strong></> : "Pas de date de résultats connue"}
           </div>
         )}
       </div>
@@ -4840,7 +4763,8 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
             </span>
           </div>
           <div style={{display:"flex",gap:8,marginBottom:6,flexWrap:"wrap"}}>
-            {[["─","#4f83f5","Cours"],["▬","rgba(79,131,245,.2)","Cône P10–P90"],["╌","#4f83f5","P50 médian"],["╌","#2ecc8f","P90 haut"],["╌","#e85d5d","P10 bas"]].map(([sym,col,lbl])=>(
+            {[["─","#4f83f5","Cours réel"],["╌","#8892a8","Prévision passée"],
+              ...(futureAddsValue?[["▬","rgba(79,131,245,.2)","Prévision future P10–P90"],["╌","#4f83f5","P50 médian"]]:[])].map(([sym,col,lbl])=>(
               <span key={lbl} style={{fontSize:9,color:col,display:"flex",alignItems:"center",gap:2}}>
                 <span style={{fontFamily:"monospace"}}>{sym}</span>{lbl}
               </span>
@@ -4903,13 +4827,17 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
                 {fcStart && <ReferenceLine x={fcStart} stroke="rgba(255,255,255,.28)" strokeWidth={1.5}
                   label={{value:"aujourd'hui", fill:"#8892a8", fontSize:8, position:"insideTopRight", angle:-90, offset:12}}/>}
                 {/* Bande ombrée du cône P10→P90 (empilement : base transparente + envergure colorée) */}
-                <Area type="monotone" dataKey="coneBase" stackId="cone" stroke="none" fill="transparent" isAnimationActive={false} connectNulls={false}/>
-                <Area type="monotone" dataKey="coneSpan" stackId="cone" stroke="none" fill="rgba(79,131,245,.2)" isAnimationActive={false} connectNulls={false}/>
+                {/* Prévision PASSÉE (V19) : le cône réellement prédit, reprojeté sur la période écoulée */}
+                <Line type="monotone" dataKey="oldP90" stroke="#8892a8" strokeWidth={1} dot={false} connectNulls={false} strokeDasharray="2 3" strokeOpacity={0.65}/>
+                <Line type="monotone" dataKey="oldP50" stroke="#8892a8" strokeWidth={1.2} dot={false} connectNulls={false} strokeDasharray="2 3"/>
+                <Line type="monotone" dataKey="oldP10" stroke="#8892a8" strokeWidth={1} dot={false} connectNulls={false} strokeDasharray="2 3" strokeOpacity={0.65}/>
+                {futureAddsValue && <Area type="monotone" dataKey="coneBase" stackId="cone" stroke="none" fill="transparent" isAnimationActive={false} connectNulls={false}/>}
+                {futureAddsValue && <Area type="monotone" dataKey="coneSpan" stackId="cone" stroke="none" fill="rgba(79,131,245,.2)" isAnimationActive={false} connectNulls={false}/>}
                 <Line type="monotone" dataKey="pxHist" stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeOpacity={0.5}/>
                 <Line type="monotone" dataKey="px"     stroke="#4f83f5" strokeWidth={2.5} dot={false} connectNulls={false}/>
-                <Line type="monotone" dataKey="p50"    stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3" strokeOpacity={0.85}/>
-                <Line type="monotone" dataKey="p90"    stroke="#2ecc8f" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>
-                <Line type="monotone" dataKey="p10"    stroke="#e85d5d" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>
+                {futureAddsValue && <Line type="monotone" dataKey="p50"    stroke="#4f83f5" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3" strokeOpacity={0.85}/>}
+                {futureAddsValue && <Line type="monotone" dataKey="p90"    stroke="#2ecc8f" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>}
+                {futureAddsValue && <Line type="monotone" dataKey="p10"    stroke="#e85d5d" strokeWidth={1.5} dot={false} connectNulls={false} strokeDasharray="5 3"/>}
                 {/* Valeurs P10/P50/P90 chiffrées à la pointe du cône */}
                 {fcEnd && <ReferenceDot x={fcEnd} y={fAtH("p90")} r={2.5} fill="#2ecc8f" stroke="none"
                   label={{value:"P90 "+fp(fAtH("p90"),0), fill:"#2ecc8f", fontSize:8, position:"right"}}/>}
