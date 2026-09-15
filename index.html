@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v19.3-2026-09-15-004";
+const BUILD = "v19.4-2026-09-15-005";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -257,7 +257,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"T5vDIY101lcN6UeOFUGi3g==","iv":"r0qvfsn5NrlcuLy2","data":"r8yNJyfwFHf/Ibdk2BbE4X/PgcoODt46D4KtKeKEl1eJVWEmFH3+2r44gRvYhccBmBq3+HY+8tH+IYFkO30CVBfwivxxfHwOhSacVjwVKEoOLjV7jnJJNqW0Y5hfbuoedeqam85sIqr9ShaGrjzrUghQNbv1gwiFPHBsy7YViYCRx8yVXu51U6yU6xyxJ80uAVEvZp3kEIHOzuVWOjn0dtMSNSjssr96pPVVW70kEhXFc2jIxKba2kbX19/UMqqftVBhx9lhUlRfzCU4fhvvy88tHAXprpOQFLbuFeUOuwMzQ9wWbz0Wp0CUxKMxQ3bnZ6eaqxoO2hQZsSCdBSuq6pFJp8wIN6cwQOLlM+JN8xsvwMjnVaXbiHjF8LuwIQQT7e/Edo+EBGA5n/sRfMaCH3KIPaEGuQQK5E3ED4T8yv2uPr9GT21zsHDc+nv8d6Sp9EstlGelobPCc3H7jx8t8Arqapo+CSd1Qk8HFfhTgkT4EGgo5hLi1VBxoNk8AhvrxLNZmtNsQJejw6qSEHSuBoE8OliztqH0E7S2AcDi8iFmLV+NE0EJPkg21XH3deT70yg2rKVoLmOUiGMKQnH7/LfHYyWZ/fzYybJDlbaN12hykqb8l450fXlS3GwNCn1lj8ZJl4A6NaHGltCee2f4lFmxhwmPU3N0qhVoFmayj/BhwZZTKQc9HSu5RhuG1wLVc5F41s8V8uTaWmApqN5CUMaTadj5e36Op4FFnTWVC8MHtdaqK1iIw7lP926bWJDZkN1UL2rdM8PFDqLId+vtsHhJI5d2V9M9pZX/ysr5YMGGO68mHU8G1n9OouI53/bWZjMaLj39vohPFnEsG1o/KbJ4Re+b2l56AlzpRE2euGfWkXzWG+V6vCzcJWCKSeM1goXmOk0XAxsYlhxk32u6UrNAbTMrIEKKrJy54mk8nlJ/9ULxz0NbbAvHCyOJKiwFStoMN/qnC4K/6jRrC0tu8du5aHwDDgd88tj44RmOjwlpxvqEzY40svhtFLHInBgpq5HImVWc0wMUoTAydolbCIAi7RA3u2GI/f8QaBlHwLaepDv3k7VSkti2BuKV6IMnYLowLwxgg2DBd4iyq6xdWMzJutvq6gGY/jpiTPipFN6cqk3Yr8qALUNCzVDzjTxK4MR30SGrD7p3v64y1n0Fyag="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -297,6 +297,49 @@ async function decryptBlob(enc, passphrase) {
   return JSON.parse(new TextDecoder().decode(plain));
 }
 const SYNC_ID_KEY = "fab-sync-id";
+const SYNC_CFG_KEY = "fab-sync-cfg";      // { auto, pass } — la phrase ne quitte JAMAIS l'appareil
+const SYNC_BASE_KEY = "fab-sync-base";    // horodatage de la version distante connue de cet appareil
+function loadSyncCfg() { try { const v=localStorage.getItem(SYNC_CFG_KEY); const o=v?JSON.parse(v):null; return (o&&typeof o==="object")?o:{auto:false,pass:""}; } catch(e){ return {auto:false,pass:""}; } }
+function saveSyncCfg(o) { try { localStorage.setItem(SYNC_CFG_KEY, JSON.stringify(o)); } catch(e){} }
+function syncUrl(id) { const w=getWorkerUrl(); return (w && id) ? w + (w.includes("?")?"&":"?") + "sync=" + encodeURIComponent(id) : null; }
+function syncBase() { try { return +(localStorage.getItem(SYNC_BASE_KEY)||0); } catch(e){ return 0; } }
+function setSyncBase(ts) { try { localStorage.setItem(SYNC_BASE_KEY, String(ts||0)); } catch(e){} }
+
+/* Récupération automatique : lecture seule, sans risque. Fusionne l'historique et ne remplace
+   les positions QUE si la version distante est plus récente que celle déjà appliquée ici. */
+async function syncPull(id, pass) {
+  const u = syncUrl(id); if(!u) throw new Error("relais non configuré");
+  const r = await fetch(u); const j = await r.json();
+  if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+  const remoteAt = +j.at || 0;
+  const data = await decryptBlob(j, pass);          // lève si la phrase est fausse
+  const res = await applySyncPayload(data);
+  const newer = remoteAt > syncBase();
+  setSyncBase(remoteAt);
+  return { ...res, remoteAt, newer };
+}
+
+/* Envoi automatique PROTÉGÉ : on relit d'abord l'horodatage distant. S'il est plus récent que
+   la version connue de cet appareil, un autre appareil a écrit entre-temps → on N'ÉCRASE PAS,
+   on signale le conflit. C'est le garde-fou qui évite de perdre une modification en silence. */
+async function syncPush(id, pass, port, force) {
+  const u = syncUrl(id); if(!u) throw new Error("relais non configuré");
+  if(!force) {
+    try {
+      const r0 = await fetch(u);
+      if(r0.ok) { const j0 = await r0.json(); const at0 = +j0.at || 0;
+        if(at0 > syncBase()) return { conflict:true, remoteAt:at0 }; }
+    } catch(e) { /* 404 = pas encore de sauvegarde : on peut écrire */ }
+  }
+  const payload = await buildSyncPayload(port);
+  const blob = await encryptBlob(payload, pass);
+  const r = await fetch(u, { method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(blob) });
+  const j = await r.json();
+  if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+  setSyncBase(blob.at);
+  try { localStorage.setItem("fab-last-backup", String(Date.now())); } catch(e){}
+  return { ok:true, bytes:j.bytes||0, snaps:(payload.snapshots||[]).length, at:blob.at };
+}
 // Rassemble TOUT ce qui doit voyager : positions, analyses, registre, journal, seuils, historique.
 async function buildSyncPayload(port) {
   const grab = k => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch(e){ return null; } };
@@ -4068,9 +4111,18 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap, fetchCount, no
 /* Carte de synchronisation : envoyer / récupérer une sauvegarde CHIFFRÉE via le relais. */
 function SyncCard({ port, onPortChange }) {
   const [id, setId] = useState(()=>{ try { return localStorage.getItem(SYNC_ID_KEY) || ""; } catch(e){ return ""; } });
-  const [pass, setPass] = useState("");
+  const [cfg, setCfg] = useState(loadSyncCfg);
+  const [pass, setPass] = useState(()=>loadSyncCfg().pass || "");
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Mémoriser la phrase est indispensable à l'automatisation : sans elle, l'app ne peut pas
+  // chiffrer/déchiffrer sans te la redemander. Elle reste STRICTEMENT locale à l'appareil.
+  const setAuto = (on) => {
+    if(on && pass.length < 8) { setMsg({t:"err",m:"Renseigne d'abord la phrase secrète (8 caractères min.)."}); return; }
+    const n = { auto:on, pass: on ? pass : "" };
+    setCfg(n); saveSyncCfg(n);
+    setMsg({t:"ok",m: on ? "Synchronisation automatique activée : récupération à l'ouverture, envoi après modification." : "Automatisation désactivée, phrase oubliée de cet appareil."});
+  };
   const inp = {background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"7px 9px",width:"100%"};
   const url = () => { const w = getWorkerUrl(); return w ? w + (w.includes("?")?"&":"?") + "sync=" + encodeURIComponent(id.trim()) : null; };
   const ok = () => {
@@ -4078,31 +4130,29 @@ function SyncCard({ port, onPortChange }) {
     if(pass.length < 8) { setMsg({t:"err",m:"Phrase secrète : 8 caractères minimum."}); return false; }
     if(!url()) { setMsg({t:"err",m:"Relais non configuré."}); return false; }
     try { localStorage.setItem(SYNC_ID_KEY, id.trim()); } catch(e){}
+    if(cfg.auto && cfg.pass !== pass) { const n={auto:true,pass}; setCfg(n); saveSyncCfg(n); }
     return true;
   };
   const push = async () => {
     if(!ok()) return; setBusy(true); setMsg(null);
     try {
-      const payload = await buildSyncPayload(port);
-      const blob = await encryptBlob(payload, pass);
-      const r = await fetch(url(), { method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(blob) });
-      const j = await r.json();
-      if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
-      try { localStorage.setItem("fab-last-backup", String(Date.now())); } catch(e){}
-      setMsg({t:"ok",m:`Envoyé (${(payload.snapshots||[]).length} relevés, ${Math.round((j.bytes||0)/1024)} Ko chiffrés).`});
+      let r = await syncPush(id.trim(), pass, port);
+      if(r.conflict) {
+        if(!confirm("Un autre appareil a modifié la sauvegarde depuis ta dernière synchro.\n\nÉcraser quand même ?\n(Annuler = récupérer d'abord, recommandé)")) {
+          setMsg({t:"err",m:"Envoi annulé. Fais « ⬇ Récupérer » d'abord."}); setBusy(false); return;
+        }
+        r = await syncPush(id.trim(), pass, port, true);
+      }
+      setMsg({t:"ok",m:`Envoyé (${r.snaps} relevés, ${Math.round((r.bytes||0)/1024)} Ko chiffrés).`});
     } catch(e) { setMsg({t:"err",m:"Échec de l'envoi : "+(e.message||e)}); }
     setBusy(false);
   };
   const pull = async () => {
     if(!ok()) return; setBusy(true); setMsg(null);
     try {
-      const r = await fetch(url());
-      const j = await r.json();
-      if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
-      let data;
-      try { data = await decryptBlob(j, pass); }
-      catch(e) { throw new Error("phrase secrète incorrecte (ou sauvegarde illisible)"); }
-      const res = await applySyncPayload(data);
+      let res;
+      try { res = await syncPull(id.trim(), pass); }
+      catch(e) { throw new Error(/decrypt|operation/i.test(e.message||"") ? "phrase secrète incorrecte (ou sauvegarde illisible)" : e.message); }
       if(res.port && res.port.length && onPortChange) onPortChange(res.port);
       setMsg({t:"ok",m:`Récupéré : ${res.port?res.port.length:0} positions, ${res.added} relevé(s) ajouté(s) par fusion. Recharge la page pour tout appliquer.`});
     } catch(e) { setMsg({t:"err",m:"Échec : "+(e.message||e)}); }
@@ -4121,6 +4171,18 @@ function SyncCard({ port, onPortChange }) {
       <div className="g2" style={{gap:6}}>
         <button className="bn bn-b" onClick={push} disabled={busy}>⬆ Envoyer</button>
         <button className="bn" onClick={pull} disabled={busy}>⬇ Récupérer</button>
+      </div>
+      <div onClick={()=>setAuto(!cfg.auto)} style={{display:"flex",alignItems:"center",gap:9,marginTop:10,padding:"8px 10px",borderRadius:7,cursor:"pointer",
+        background: cfg.auto ? "rgba(46,204,143,.08)" : "#161c2a", border:"1px solid "+(cfg.auto?"rgba(46,204,143,.3)":"rgba(255,255,255,.06)")}}>
+        <span style={{width:34,height:19,borderRadius:10,background:cfg.auto?"#2ecc8f":"#3a4560",position:"relative",flex:"0 0 auto",transition:"background .2s"}}>
+          <span style={{position:"absolute",top:2,left:cfg.auto?17:2,width:15,height:15,borderRadius:8,background:"#fff",transition:"left .2s"}}/>
+        </span>
+        <span style={{flex:1,fontSize:11,lineHeight:1.4}}>
+          <strong style={{color:cfg.auto?"#2ecc8f":"#dde3f0"}}>Synchronisation automatique</strong>
+          <span className="dim" style={{display:"block",fontSize:9,marginTop:2}}>
+            {cfg.auto ? "Récupère à l'ouverture, envoie 20 s après une modification." : "Mémorise la phrase sur cet appareil pour l'activer."}
+          </span>
+        </span>
       </div>
       {busy && <div className="dim" style={{fontSize:10,marginTop:7}}>Chiffrement en cours…</div>}
       {msg && <div style={{fontSize:10,marginTop:7,lineHeight:1.45,color:msg.t==="ok"?"#2ecc8f":"#e85d5d"}}>{msg.m}</div>}
@@ -5319,6 +5381,47 @@ function App() {
   const [spyHistRaw, setSpyHist] = useState([]);
   const [status, setStatus] = useState("ld");
   const [tab, setTab] = useState("today");
+
+  /* ═══ SYNCHRONISATION AUTOMATIQUE ═══
+     Au démarrage : RÉCUPÉRATION (lecture seule, sans risque) — fusionne l'historique et
+     reprend les positions si la version distante est plus récente.
+     Après une modification : ENVOI différé de 20 s, PROTÉGÉ — si un autre appareil a écrit
+     entre-temps, on ne l'écrase pas, on prévient. */
+  const [syncNote, setSyncNote] = useState(null);
+  const toastRef = useRef(null);
+  const syncReady = useRef(false);
+  useEffect(() => {
+    const cfg = loadSyncCfg();
+    let id = ""; try { id = localStorage.getItem(SYNC_ID_KEY) || ""; } catch(e){}
+    if(!cfg.auto || !cfg.pass || !id) { syncReady.current = true; return; }
+    let annule = false;
+    (async () => {
+      try {
+        const r = await syncPull(id, cfg.pass);
+        if(annule) return;
+        if(r.port && r.port.length && r.newer) setPort(r.port);
+        if(r.added > 0 || r.newer) setSyncNote({ t:"ok", m:`Synchronisé : ${r.added} relevé(s) ajouté(s)${r.newer?", positions à jour":""}.` });
+      } catch(e) {
+        if(!annule && !/aucune sauvegarde/i.test(e.message||"")) setSyncNote({ t:"err", m:"Récupération auto impossible : "+(e.message||e) });
+      } finally { if(!annule) syncReady.current = true; }
+    })();
+    return () => { annule = true; };
+  }, []);
+
+  useEffect(() => {
+    const cfg = loadSyncCfg();
+    let id = ""; try { id = localStorage.getItem(SYNC_ID_KEY) || ""; } catch(e){}
+    if(!cfg.auto || !cfg.pass || !id || !syncReady.current) return;
+    if(!port || !port.some(p => p && p.q > 0)) return;      // rien de significatif à envoyer
+    const timer = setTimeout(async () => {
+      try {
+        const r = await syncPush(id, cfg.pass, port);
+        if(r.conflict) setSyncNote({ t:"warn", m:"Un autre appareil a modifié la sauvegarde. Rien n'a été écrasé — fais « ⬇ Récupérer » puis « ⬆ Envoyer »." });
+        else setSyncNote({ t:"ok", m:"Sauvegarde envoyée automatiquement." });
+      } catch(e) { setSyncNote({ t:"err", m:"Envoi auto impossible : "+(e.message||e) }); }
+    }, 20000);                                              // anti-rafale : une seule écriture
+    return () => clearTimeout(timer);
+  }, [port]);
   const [cfgOpen, setCfgOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [toast, setToast] = useState(null);
@@ -5354,6 +5457,17 @@ function App() {
   const timerRef = useRef(null);
   const cdRef = useRef(null);
   const lastNotifRef = useRef({});
+
+  useEffect(() => { toastRef.current = showToast; });
+  // Les messages de synchro automatique passent par le bandeau habituel : sans ça, l'utilisateur
+  // ne saurait pas qu'une récupération a eu lieu ni qu'un conflit a été évité.
+  useEffect(() => {
+    if(!syncNote) return;
+    const icon = syncNote.t==="ok" ? "🔄 " : syncNote.t==="warn" ? "⚠️ " : "✗ ";
+    if(toastRef.current) toastRef.current(icon + syncNote.m);
+    const id = setTimeout(()=>setSyncNote(null), 100);
+    return () => clearTimeout(id);
+  }, [syncNote]);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
