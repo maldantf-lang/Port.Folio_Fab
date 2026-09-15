@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v19.1-2026-09-15-002";
+const BUILD = "v19.3-2026-09-15-004";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -257,7 +257,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"T5vDIY101lcN6UeOFUGi3g==","iv":"r0qvfsn5NrlcuLy2","data":"r8yNJyfwFHf/Ibdk2BbE4X/PgcoODt46D4KtKeKEl1eJVWEmFH3+2r44gRvYhccBmBq3+HY+8tH+IYFkO30CVBfwivxxfHwOhSacVjwVKEoOLjV7jnJJNqW0Y5hfbuoedeqam85sIqr9ShaGrjzrUghQNbv1gwiFPHBsy7YViYCRx8yVXu51U6yU6xyxJ80uAVEvZp3kEIHOzuVWOjn0dtMSNSjssr96pPVVW70kEhXFc2jIxKba2kbX19/UMqqftVBhx9lhUlRfzCU4fhvvy88tHAXprpOQFLbuFeUOuwMzQ9wWbz0Wp0CUxKMxQ3bnZ6eaqxoO2hQZsSCdBSuq6pFJp8wIN6cwQOLlM+JN8xsvwMjnVaXbiHjF8LuwIQQT7e/Edo+EBGA5n/sRfMaCH3KIPaEGuQQK5E3ED4T8yv2uPr9GT21zsHDc+nv8d6Sp9EstlGelobPCc3H7jx8t8Arqapo+CSd1Qk8HFfhTgkT4EGgo5hLi1VBxoNk8AhvrxLNZmtNsQJejw6qSEHSuBoE8OliztqH0E7S2AcDi8iFmLV+NE0EJPkg21XH3deT70yg2rKVoLmOUiGMKQnH7/LfHYyWZ/fzYybJDlbaN12hykqb8l450fXlS3GwNCn1lj8ZJl4A6NaHGltCee2f4lFmxhwmPU3N0qhVoFmayj/BhwZZTKQc9HSu5RhuG1wLVc5F41s8V8uTaWmApqN5CUMaTadj5e36Op4FFnTWVC8MHtdaqK1iIw7lP926bWJDZkN1UL2rdM8PFDqLId+vtsHhJI5d2V9M9pZX/ysr5YMGGO68mHU8G1n9OouI53/bWZjMaLj39vohPFnEsG1o/KbJ4Re+b2l56AlzpRE2euGfWkXzWG+V6vCzcJWCKSeM1goXmOk0XAxsYlhxk32u6UrNAbTMrIEKKrJy54mk8nlJ/9ULxz0NbbAvHCyOJKiwFStoMN/qnC4K/6jRrC0tu8du5aHwDDgd88tj44RmOjwlpxvqEzY40svhtFLHInBgpq5HImVWc0wMUoTAydolbCIAi7RA3u2GI/f8QaBlHwLaepDv3k7VSkti2BuKV6IMnYLowLwxgg2DBd4iyq6xdWMzJutvq6gGY/jpiTPipFN6cqk3Yr8qALUNCzVDzjTxK4MR30SGrD7p3v64y1n0Fyag="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -271,6 +271,56 @@ async function decryptPort(enc, passphrase) {
   const plain = await crypto.subtle.decrypt({ name:"AES-GCM", iv }, key, data);
   return JSON.parse(new TextDecoder().decode(plain));   // lève une erreur si la phrase est fausse
 }
+/* ═══ SYNCHRONISATION CHIFFRÉE ENTRE APPAREILS ═══
+   Le contenu est chiffré SUR L'APPAREIL (AES-GCM 256, clé dérivée par PBKDF2 de ta phrase
+   secrète) avant d'être envoyé au relais. Le serveur ne stocke qu'un blob illisible : ni
+   Cloudflare ni personne d'autre ne peut lire tes positions. Perdre la phrase = perdre l'accès
+   à la sauvegarde distante (rien ne permet de la retrouver — c'est le prix du vrai chiffrement). */
+const _b64e = a => { let s=""; const u=new Uint8Array(a); for(let i=0;i<u.length;i++) s+=String.fromCharCode(u[i]); return btoa(s); };
+const SYNC_ITER = 250000;
+async function encryptBlob(obj, passphrase) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv   = crypto.getRandomValues(new Uint8Array(12));
+  const baseKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey({ name:"PBKDF2", salt, iterations:SYNC_ITER, hash:"SHA-256" },
+    baseKey, { name:"AES-GCM", length:256 }, false, ["encrypt"]);
+  const data = await crypto.subtle.encrypt({ name:"AES-GCM", iv }, key,
+    new TextEncoder().encode(JSON.stringify(obj)));
+  return { v:1, iter:SYNC_ITER, salt:_b64e(salt), iv:_b64e(iv), data:_b64e(data), at:Date.now() };
+}
+async function decryptBlob(enc, passphrase) {
+  const salt=_b64d(enc.salt), iv=_b64d(enc.iv), data=_b64d(enc.data);
+  const baseKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey({ name:"PBKDF2", salt, iterations:enc.iter||SYNC_ITER, hash:"SHA-256" },
+    baseKey, { name:"AES-GCM", length:256 }, false, ["decrypt"]);
+  const plain = await crypto.subtle.decrypt({ name:"AES-GCM", iv }, key, data);
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+const SYNC_ID_KEY = "fab-sync-id";
+// Rassemble TOUT ce qui doit voyager : positions, analyses, registre, journal, seuils, historique.
+async function buildSyncPayload(port) {
+  const grab = k => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch(e){ return null; } };
+  let snapshots = [];
+  try { snapshots = await snapshotsRange(0); } catch(e) {}
+  return { app:"port.folio Fab", version:3, at:Date.now(), port,
+    overrides:grab(AN_OVERRIDE_KEY), registry:grab(REGISTRY_KEY), journal:grab(JOURNAL_KEY),
+    alerts:grab("fab-pf-alerts-v6"), watch:grab("fab-pf-watch-v6"), snapshots };
+}
+// Applique une sauvegarde reçue : écrase les réglages, FUSIONNE l'historique (jamais d'écrasement).
+async function applySyncPayload(data) {
+  const put = (k,v) => { if(v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
+  put(AN_OVERRIDE_KEY, data.overrides); put(REGISTRY_KEY, data.registry);
+  put(JOURNAL_KEY, data.journal); put("fab-pf-alerts-v6", data.alerts); put("fab-pf-watch-v6", data.watch);
+  let added = 0;
+  const snapIn = Array.isArray(data.snapshots) ? data.snapshots.filter(x=>x && Number.isFinite(x.ts) && Array.isArray(x.port)) : [];
+  if(snapIn.length){
+    let existing=[]; try { existing = await snapshotsRange(0); } catch(e){}
+    const known = new Set(existing.map(x=>x.ts));
+    for(const sn of snapIn){ if(known.has(sn.ts)) continue; try { await snapshotAdd(sn); added++; } catch(e){} }
+  }
+  return { added, port: Array.isArray(data.port) ? data.port : null };
+}
+
 // Filet : si toutes les positions sont vidées manuellement, on guide vers l'import
 const isUnconfigured = arr => !arr || !arr.length || arr.every(p => !(p.q > 0));
 
@@ -4015,6 +4065,72 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap, fetchCount, no
 }
 
 // INDICATEUR DE CALIBRATION — suit la progression vers l'auto-correction du moteur
+/* Carte de synchronisation : envoyer / récupérer une sauvegarde CHIFFRÉE via le relais. */
+function SyncCard({ port, onPortChange }) {
+  const [id, setId] = useState(()=>{ try { return localStorage.getItem(SYNC_ID_KEY) || ""; } catch(e){ return ""; } });
+  const [pass, setPass] = useState("");
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const inp = {background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"7px 9px",width:"100%"};
+  const url = () => { const w = getWorkerUrl(); return w ? w + (w.includes("?")?"&":"?") + "sync=" + encodeURIComponent(id.trim()) : null; };
+  const ok = () => {
+    if(!/^[A-Za-z0-9_-]{8,64}$/.test(id.trim())) { setMsg({t:"err",m:"Identifiant : 8 à 64 caractères (lettres, chiffres, _ et -)."}); return false; }
+    if(pass.length < 8) { setMsg({t:"err",m:"Phrase secrète : 8 caractères minimum."}); return false; }
+    if(!url()) { setMsg({t:"err",m:"Relais non configuré."}); return false; }
+    try { localStorage.setItem(SYNC_ID_KEY, id.trim()); } catch(e){}
+    return true;
+  };
+  const push = async () => {
+    if(!ok()) return; setBusy(true); setMsg(null);
+    try {
+      const payload = await buildSyncPayload(port);
+      const blob = await encryptBlob(payload, pass);
+      const r = await fetch(url(), { method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(blob) });
+      const j = await r.json();
+      if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+      try { localStorage.setItem("fab-last-backup", String(Date.now())); } catch(e){}
+      setMsg({t:"ok",m:`Envoyé (${(payload.snapshots||[]).length} relevés, ${Math.round((j.bytes||0)/1024)} Ko chiffrés).`});
+    } catch(e) { setMsg({t:"err",m:"Échec de l'envoi : "+(e.message||e)}); }
+    setBusy(false);
+  };
+  const pull = async () => {
+    if(!ok()) return; setBusy(true); setMsg(null);
+    try {
+      const r = await fetch(url());
+      const j = await r.json();
+      if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+      let data;
+      try { data = await decryptBlob(j, pass); }
+      catch(e) { throw new Error("phrase secrète incorrecte (ou sauvegarde illisible)"); }
+      const res = await applySyncPayload(data);
+      if(res.port && res.port.length && onPortChange) onPortChange(res.port);
+      setMsg({t:"ok",m:`Récupéré : ${res.port?res.port.length:0} positions, ${res.added} relevé(s) ajouté(s) par fusion. Recharge la page pour tout appliquer.`});
+    } catch(e) { setMsg({t:"err",m:"Échec : "+(e.message||e)}); }
+    setBusy(false);
+  };
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Synchronisation entre appareils</h3><span className="dim" style={{fontSize:9}}>chiffrée de bout en bout</span></div>
+      <div style={{fontSize:10,color:"#8892a8",lineHeight:1.5,marginBottom:9}}>
+        Positions, analyses, journal et <strong>historique complet</strong> sont chiffrés <strong>sur cet appareil</strong> avant l'envoi : le serveur ne stocke qu'un blob illisible. Utilise le <strong>même identifiant et la même phrase</strong> sur chaque appareil.
+      </div>
+      <div style={{display:"grid",gap:6,marginBottom:8}}>
+        <input placeholder="Identifiant de synchro (ex. fab-portfolio-2026)" value={id} onChange={e=>setId(e.target.value)} style={inp}/>
+        <input type="password" placeholder="Phrase secrète (jamais transmise)" value={pass} onChange={e=>setPass(e.target.value)} style={inp}/>
+      </div>
+      <div className="g2" style={{gap:6}}>
+        <button className="bn bn-b" onClick={push} disabled={busy}>⬆ Envoyer</button>
+        <button className="bn" onClick={pull} disabled={busy}>⬇ Récupérer</button>
+      </div>
+      {busy && <div className="dim" style={{fontSize:10,marginTop:7}}>Chiffrement en cours…</div>}
+      {msg && <div style={{fontSize:10,marginTop:7,lineHeight:1.45,color:msg.t==="ok"?"#2ecc8f":"#e85d5d"}}>{msg.m}</div>}
+      <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.45}}>
+        ⚠️ La phrase secrète n'est stockée nulle part : si tu l'oublies, la sauvegarde distante devient définitivement illisible. Nécessite un stockage <strong>SYNC</strong> activé sur le Worker.
+      </div>
+    </div>
+  );
+}
+
 function CalibrationStatus() {
   const [snaps, setSnaps] = useState(null);
   useEffect(() => { snapshotsRange(0).then(setSnaps).catch(()=>setSnaps([])); }, []);
@@ -4079,6 +4195,25 @@ function CalibrationStatus() {
             {snaps.length>0 && <span> Dernier : {new Date(Math.max(...snaps.map(x=>x.ts))).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}.</span>}
             {snaps.length>0 && withFc===0 && <span style={{color:"#f0a020"}}> Aucune prévision stockée : elles seront ajoutées aux prochains relevés.</span>}
             {snaps.length===0 && <span style={{color:"#f0a020"}}> Base d'historique vide sur cet appareil (l'historique est local au navigateur).</span>}
+          </div>
+          {(() => {
+            // PRÉVENTION : l'historique vit dans le navigateur de CET appareil. S'il est vide
+            // ou si la dernière sauvegarde date, on le dit clairement plutôt que de laisser
+            // l'utilisateur découvrir la perte trop tard.
+            let lastBk = 0; try { lastBk = +(localStorage.getItem("fab-last-backup")||0); } catch(e) {}
+            const daysBk = lastBk ? Math.round((Date.now()-lastBk)/86400000) : null;
+            const vide = snaps.length === 0;
+            const vieux = daysBk == null || daysBk > 30;
+            if(!vide && !vieux) return <div style={{fontSize:9,color:"#3a4560",marginTop:6}}>Dernière sauvegarde il y a {daysBk} j.</div>;
+            return (
+              <div style={{marginTop:8,padding:"8px 10px",borderRadius:7,background:"rgba(240,160,32,.08)",border:"1px solid rgba(240,160,32,.3)",fontSize:10,lineHeight:1.5,color:"#f0a020"}}>
+                {vide
+                  ? <>Cet appareil n'a aucun historique. Si tu en as sur un autre appareil : ⚙ <strong>Exporter</strong> là-bas, puis <strong>Importer</strong> ici — les relevés seront <strong>fusionnés</strong>, rien ne sera écrasé.</>
+                  : <>{daysBk == null ? "Aucune sauvegarde enregistrée." : "Dernière sauvegarde il y a " + daysBk + " j."} L'historique est <strong>local à ce navigateur</strong> : exporte-le régulièrement pour ne pas le perdre.</>}
+              </div>
+            );
+          })()}
+          <div style={{fontSize:9,color:"#3a4560",marginTop:6,lineHeight:1.45}}>
             Un point de contrôle naît de deux snapshots de la même position espacés de 15 à 75 jours — ouvrir l'app régulièrement les fait progresser.
           </div>
         </div>
@@ -4152,29 +4287,36 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
 
   // ===== Sauvegarde / restauration (confidentialité : données hors du code source) =====
   const fileRef = useRef(null);
-  const exportPortfolio = () => {
+  const exportPortfolio = async () => {
     // v2 : on sauvegarde AUSSI le travail d'analyse (thèses saisies, statuts des catalyseurs
     // et risques, supports ajoutés, journal, seuils). Avant, seules les positions étaient
     // exportées — un changement d'appareil effaçait tout ce travail.
     const grab = k => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch(e) { return null; } };
-    const data = { app:"port.folio Fab", type:"portfolio-backup", version:2,
+    // v3 : on embarque AUSSI l'historique des snapshots (IndexedDB). C'est lui qui alimente
+    // la calibration du moteur, le Sharpe réel, le benchmark et la fiabilité par position —
+    // et il est LOCAL AU NAVIGATEUR : sans ça, changer d'appareil le perdait définitivement.
+    let snapshots = [];
+    try { snapshots = await snapshotsRange(0); } catch(e) { snapshots = []; }
+    const data = { app:"port.folio Fab", type:"portfolio-backup", version:3,
       exportedAt:new Date().toISOString().slice(0,10), port,
       overrides: grab(AN_OVERRIDE_KEY),   // thèses éditées + statuts réalisé/en attente/caduc
       registry:  grab(REGISTRY_KEY),      // supports ajoutés depuis l'app
       journal:   grab(JOURNAL_KEY),       // journal des décisions
       alerts:    grab("fab-pf-alerts-v6"),
-      watch:     grab("fab-pf-watch-v6") };
+      watch:     grab("fab-pf-watch-v6"),
+      snapshots };                        // historique complet (calibration, Sharpe, benchmark)
+    try { localStorage.setItem("fab-last-backup", String(Date.now())); } catch(e) {}
     const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "portfolio-fab-sauvegarde.json"; a.click();
+    a.href = url; a.download = "portfolio-fab-sauvegarde-" + new Date().toISOString().slice(0,10) + ".json"; a.click();
     setTimeout(()=>URL.revokeObjectURL(url), 1000);
   };
   const importPortfolio = (e) => {
     const file = e.target.files && e.target.files[0];
     if(!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const parsed = JSON.parse(ev.target.result);
         const arr = Array.isArray(parsed) ? parsed : parsed.port;
@@ -4188,6 +4330,8 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
         if(parsed.registry)  extras.push("supports ajoutés");
         if(parsed.journal)   extras.push("journal des décisions");
         if(parsed.alerts)    extras.push("seuils d'alerte");
+        const snapIn = Array.isArray(parsed.snapshots) ? parsed.snapshots.filter(x=>x && Number.isFinite(x.ts) && Array.isArray(x.port)) : [];
+        if(snapIn.length) extras.push(snapIn.length + " relevés d'historique");
         const msg = "Importer "+clean.length+" positions"+(extras.length?" + "+extras.join(", "):"")+" ?\nCela remplace les données actuelles.";
         if(!confirm(msg)) return;
         const put = (k,v) => { if(v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} } };
@@ -4196,9 +4340,22 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
         put(JOURNAL_KEY,     parsed.journal);
         put("fab-pf-alerts-v6", parsed.alerts);
         put("fab-pf-watch-v6",  parsed.watch);
+        // Historique : FUSION (jamais d'écrasement). Les relevés déjà présents sur cet appareil
+        // sont conservés ; seuls les horodatages absents sont ajoutés.
+        let added = 0;
+        if(snapIn.length) {
+          let existing = [];
+          try { existing = await snapshotsRange(0); } catch(e) {}
+          const known = new Set(existing.map(x=>x.ts));
+          for(const sn of snapIn) {
+            if(known.has(sn.ts)) continue;
+            try { await snapshotAdd(sn); added++; } catch(e) {}
+          }
+        }
         onPortChange(clean);
-        alert("✅ "+clean.length+" positions importées"+(extras.length?" + "+extras.join(", "):"")+".\n"+
-              (extras.length?"Recharge la page pour appliquer les données d'analyse.":"Sauvegardé."));
+        alert("✅ "+clean.length+" positions importées"+(extras.length?" + "+extras.join(", "):"")+"."+
+              (added?"\n"+added+" relevé(s) d'historique ajouté(s) (fusion, aucun écrasement).":"")+"\n"+
+              (extras.length?"Recharge la page pour tout appliquer.":"Sauvegardé."));
       } catch(err) { alert("Fichier illisible : "+err.message); }
     };
     reader.readAsText(file);
@@ -4209,6 +4366,7 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
     <>
       <SystemHealth port={port} prices={prices} eurusd={eurusd} lastTs={lastTs} priceTsMap={priceTsMap}
         fetchCount={fetchCount} notifPerm={notifPerm} onAskNotif={onAskNotif}/>
+      <SyncCard port={port} onPortChange={onPortChange}/>
       <CalibrationStatus/>
       <div className="card">
         <div className="cd-ti"><h3>Empreinte digitale</h3></div>
