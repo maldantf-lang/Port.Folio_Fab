@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v19.4-2026-09-15-005";
+const BUILD = "v19.5-2026-09-15-006";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -257,7 +257,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"T5vDIY101lcN6UeOFUGi3g==","iv":"r0qvfsn5NrlcuLy2","data":"r8yNJyfwFHf/Ibdk2BbE4X/PgcoODt46D4KtKeKEl1eJVWEmFH3+2r44gRvYhccBmBq3+HY+8tH+IYFkO30CVBfwivxxfHwOhSacVjwVKEoOLjV7jnJJNqW0Y5hfbuoedeqam85sIqr9ShaGrjzrUghQNbv1gwiFPHBsy7YViYCRx8yVXu51U6yU6xyxJ80uAVEvZp3kEIHOzuVWOjn0dtMSNSjssr96pPVVW70kEhXFc2jIxKba2kbX19/UMqqftVBhx9lhUlRfzCU4fhvvy88tHAXprpOQFLbuFeUOuwMzQ9wWbz0Wp0CUxKMxQ3bnZ6eaqxoO2hQZsSCdBSuq6pFJp8wIN6cwQOLlM+JN8xsvwMjnVaXbiHjF8LuwIQQT7e/Edo+EBGA5n/sRfMaCH3KIPaEGuQQK5E3ED4T8yv2uPr9GT21zsHDc+nv8d6Sp9EstlGelobPCc3H7jx8t8Arqapo+CSd1Qk8HFfhTgkT4EGgo5hLi1VBxoNk8AhvrxLNZmtNsQJejw6qSEHSuBoE8OliztqH0E7S2AcDi8iFmLV+NE0EJPkg21XH3deT70yg2rKVoLmOUiGMKQnH7/LfHYyWZ/fzYybJDlbaN12hykqb8l450fXlS3GwNCn1lj8ZJl4A6NaHGltCee2f4lFmxhwmPU3N0qhVoFmayj/BhwZZTKQc9HSu5RhuG1wLVc5F41s8V8uTaWmApqN5CUMaTadj5e36Op4FFnTWVC8MHtdaqK1iIw7lP926bWJDZkN1UL2rdM8PFDqLId+vtsHhJI5d2V9M9pZX/ysr5YMGGO68mHU8G1n9OouI53/bWZjMaLj39vohPFnEsG1o/KbJ4Re+b2l56AlzpRE2euGfWkXzWG+V6vCzcJWCKSeM1goXmOk0XAxsYlhxk32u6UrNAbTMrIEKKrJy54mk8nlJ/9ULxz0NbbAvHCyOJKiwFStoMN/qnC4K/6jRrC0tu8du5aHwDDgd88tj44RmOjwlpxvqEzY40svhtFLHInBgpq5HImVWc0wMUoTAydolbCIAi7RA3u2GI/f8QaBlHwLaepDv3k7VSkti2BuKV6IMnYLowLwxgg2DBd4iyq6xdWMzJutvq6gGY/jpiTPipFN6cqk3Yr8qALUNCzVDzjTxK4MR30SGrD7p3v64y1n0Fyag="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -296,6 +296,66 @@ async function decryptBlob(enc, passphrase) {
   const plain = await crypto.subtle.decrypt({ name:"AES-GCM", iv }, key, data);
   return JSON.parse(new TextDecoder().decode(plain));
 }
+/* ═══ HISTORIQUE QUOTIDIEN SERVEUR ═══
+   Le Worker enregistre chaque jour les cours de clôture (donnée publique). L'application les
+   récupère et RATTRAPE les relevés manqués pendant qu'elle était fermée : les quantités, elles,
+   restent locales — c'est l'appareil qui recalcule la valeur du portefeuille jour par jour.
+   Conséquence : Sharpe, drawdown, benchmark et statistiques cessent de dépendre de tes ouvertures. */
+const DAILY_KEY = "fab-daily-px";
+const DAILY_TTL = 6 * 60 * 60 * 1000;     // 6 h : inutile de re-télécharger plus souvent
+
+async function fetchDailyHistory(force) {
+  try {
+    const c = JSON.parse(localStorage.getItem(DAILY_KEY) || "null");
+    if(!force && c && c.ts && Date.now()-c.ts < DAILY_TTL && c.data) return c.data;
+  } catch(e) {}
+  const w = getWorkerUrl(); if(!w) return null;
+  const r = await fetch(w + (w.includes("?")?"&":"?") + "history=1");
+  if(!r.ok) throw new Error("HTTP " + r.status);
+  const data = await r.json();
+  if(!data || !data.days) return null;
+  try { localStorage.setItem(DAILY_KEY, JSON.stringify({ ts:Date.now(), data })); } catch(e) {}
+  return data;
+}
+
+/* Reconstitue les snapshots des jours où l'app n'a pas été ouverte, à partir des cours du jour
+   et des quantités LOCALES. N'écrase jamais un relevé existant ; ignore les jours déjà couverts. */
+async function backfillSnapshots(daily, port, eurusdNow) {
+  if(!daily || !daily.days || !port || !port.length) return { added:0 };
+  const holdings = port.filter(p => p && p.q > 0);
+  if(!holdings.length) return { added:0 };
+  let existing = [];
+  try { existing = await snapshotsRange(0); } catch(e) {}
+  const covered = new Set(existing.map(x => new Date(x.ts).toISOString().slice(0,10)));
+  const days = Object.keys(daily.days).sort();
+  let added = 0;
+  for(const d of days) {
+    if(covered.has(d)) continue;                       // ce jour a déjà un relevé réel
+    const px = daily.days[d]; if(!px) continue;
+    const fx = (px.eurusd > 0) ? px.eurusd : eurusdNow;
+    let tot = 0, inv = 0, ok = true;
+    const pos = [];
+    for(const p of holdings) {
+      const raw = px[p.t];
+      if(raw == null || !(raw > 0)) { ok = false; break; }   // ticker absent ce jour-là
+      const meta = REG[p.t];
+      const pxE = (meta && meta.ccy === "EUR") ? raw : (fx > 0 ? raw/fx : raw);
+      const val = p.q * pxE;
+      tot += val; inv += p.q * ((meta && meta.ccy === "EUR") ? p.b : (fx > 0 ? p.b/fx : p.b));
+      pos.push({ t:p.t, q:p.q, b:p.b, pxE:+pxE.toFixed(4), val:+val.toFixed(2) });
+    }
+    if(!ok || !(tot > 0)) continue;
+    // 12h00 UTC : un horodatage neutre, au milieu du jour concerné
+    const ts = new Date(d + "T12:00:00Z").getTime();
+    try {
+      await snapshotAdd({ ts, date:d, tot:+tot.toFixed(2), inv:+inv.toFixed(2), pnl:+(tot-inv).toFixed(2),
+        eurusd:fx, spy:px.SPY || null, port:pos, backfilled:true });
+      added++; covered.add(d);
+    } catch(e) {}
+  }
+  return { added };
+}
+
 const SYNC_ID_KEY = "fab-sync-id";
 const SYNC_CFG_KEY = "fab-sync-cfg";      // { auto, pass } — la phrase ne quitte JAMAIS l'appareil
 const SYNC_BASE_KEY = "fab-sync-base";    // horodatage de la version distante connue de cet appareil
@@ -5381,6 +5441,28 @@ function App() {
   const [spyHistRaw, setSpyHist] = useState([]);
   const [status, setStatus] = useState("ld");
   const [tab, setTab] = useState("today");
+
+  /* Rattrapage de l'historique au démarrage : récupère les clôtures enregistrées par le Worker
+     et reconstitue les relevés des jours où l'app n'a pas été ouverte. Ne s'exécute qu'une fois
+     le portefeuille chiffré déverrouillé et les cours disponibles. */
+  const backfillDone = useRef(false);
+  useEffect(() => {
+    if(backfillDone.current || needDecrypt) return;
+    if(!port || !port.some(p => p && p.q > 0)) return;
+    backfillDone.current = true;
+    (async () => {
+      try {
+        const daily = await fetchDailyHistory(false);
+        if(!daily || !daily.days || !Object.keys(daily.days).length) return;
+        const r = await backfillSnapshots(daily, port, eurusd);
+        if(r.added > 0) {
+          const fresh = await snapshotsRange(0);
+          setSnapshots(fresh);
+          setSyncNote({ t:"ok", m:`${r.added} jour(s) d'historique reconstitué(s) depuis le relais.` });
+        }
+      } catch(e) { DBG && console.warn("[Backfill]", e && e.message); }
+    })();
+  }, [port, needDecrypt, eurusd]);
 
   /* ═══ SYNCHRONISATION AUTOMATIQUE ═══
      Au démarrage : RÉCUPÉRATION (lecture seule, sans risque) — fusionne l'historique et
