@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v19.5-2026-09-15-006";
+const BUILD = "v19.6-2026-09-15-007";
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -257,7 +257,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"T5vDIY101lcN6UeOFUGi3g==","iv":"r0qvfsn5NrlcuLy2","data":"r8yNJyfwFHf/Ibdk2BbE4X/PgcoODt46D4KtKeKEl1eJVWEmFH3+2r44gRvYhccBmBq3+HY+8tH+IYFkO30CVBfwivxxfHwOhSacVjwVKEoOLjV7jnJJNqW0Y5hfbuoedeqam85sIqr9ShaGrjzrUghQNbv1gwiFPHBsy7YViYCRx8yVXu51U6yU6xyxJ80uAVEvZp3kEIHOzuVWOjn0dtMSNSjssr96pPVVW70kEhXFc2jIxKba2kbX19/UMqqftVBhx9lhUlRfzCU4fhvvy88tHAXprpOQFLbuFeUOuwMzQ9wWbz0Wp0CUxKMxQ3bnZ6eaqxoO2hQZsSCdBSuq6pFJp8wIN6cwQOLlM+JN8xsvwMjnVaXbiHjF8LuwIQQT7e/Edo+EBGA5n/sRfMaCH3KIPaEGuQQK5E3ED4T8yv2uPr9GT21zsHDc+nv8d6Sp9EstlGelobPCc3H7jx8t8Arqapo+CSd1Qk8HFfhTgkT4EGgo5hLi1VBxoNk8AhvrxLNZmtNsQJejw6qSEHSuBoE8OliztqH0E7S2AcDi8iFmLV+NE0EJPkg21XH3deT70yg2rKVoLmOUiGMKQnH7/LfHYyWZ/fzYybJDlbaN12hykqb8l450fXlS3GwNCn1lj8ZJl4A6NaHGltCee2f4lFmxhwmPU3N0qhVoFmayj/BhwZZTKQc9HSu5RhuG1wLVc5F41s8V8uTaWmApqN5CUMaTadj5e36Op4FFnTWVC8MHtdaqK1iIw7lP926bWJDZkN1UL2rdM8PFDqLId+vtsHhJI5d2V9M9pZX/ysr5YMGGO68mHU8G1n9OouI53/bWZjMaLj39vohPFnEsG1o/KbJ4Re+b2l56AlzpRE2euGfWkXzWG+V6vCzcJWCKSeM1goXmOk0XAxsYlhxk32u6UrNAbTMrIEKKrJy54mk8nlJ/9ULxz0NbbAvHCyOJKiwFStoMN/qnC4K/6jRrC0tu8du5aHwDDgd88tj44RmOjwlpxvqEzY40svhtFLHInBgpq5HImVWc0wMUoTAydolbCIAi7RA3u2GI/f8QaBlHwLaepDv3k7VSkti2BuKV6IMnYLowLwxgg2DBd4iyq6xdWMzJutvq6gGY/jpiTPipFN6cqk3Yr8qALUNCzVDzjTxK4MR30SGrD7p3v64y1n0Fyag="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -1899,7 +1899,7 @@ function calibrationByTicker(snapshots) {
     const s0 = snaps[i]; if(!s0.forecasts) continue;
     for(let j=i+1;j<snaps.length;j++){
       const dt = (snaps[j].ts - s0.ts)/86400000;
-      if(dt < 15) continue;
+      if(dt < CALIB_MIN_DAYS) continue;
       if(dt > 75) break;
       const sL = snaps[j];
       Object.entries(s0.forecasts).forEach(([t,fc])=>{
@@ -1921,7 +1921,8 @@ function calibrationByTicker(snapshots) {
   })).sort((a,b)=> b.cov - a.cov || b.n - a.n);
 }
 
-const CALIB_MIN = 12;   // nb minimum de comparaisons avant activation (affiché dans les Réglages)
+const CALIB_MIN = 12;
+const CALIB_MIN_DAYS = 15;   // délai minimal entre une prévision et son évaluation   // nb minimum de comparaisons avant activation (affiché dans les Réglages)
 let CALIB = { sigMult:1, muBias:0, samples:0, cov:null, ready:false };
 function calcCalibration(snapshots) {
   const pairs = [];
@@ -1929,7 +1930,7 @@ function calcCalibration(snapshots) {
     const s0 = snapshots[i]; if(!s0.forecasts) continue;
     for(let j=i+1;j<snapshots.length;j++){
       const dt = (snapshots[j].ts - s0.ts)/86400000;
-      if(dt < 15) continue;
+      if(dt < CALIB_MIN_DAYS) continue;
       if(dt > 75) break;
       const sL = snapshots[j];
       Object.entries(s0.forecasts).forEach(([t,fc])=>{
@@ -1946,7 +1947,20 @@ function calcCalibration(snapshots) {
       break;                                          // un seul point de contrôle par prévision
     }
   }
-  if(pairs.length < CALIB_MIN) return { sigMult:1, muBias:0, samples:pairs.length, cov:null, ready:false };
+  if(pairs.length < CALIB_MIN) {
+    // Honnêteté : une comparaison exige qu'un délai RÉEL se soit écoulé entre la prévision et
+    // son résultat. On indique donc quand la prochaine deviendra disponible, plutôt que de
+    // laisser croire à un blocage. (Aucun moyen légitime d'accélérer : reconstituer des
+    // prévisions passées reviendrait à prédire avec la connaissance d'aujourd'hui.)
+    let next = null;
+    const withFc = snapshots.filter(x => x.forecasts && (x.port||[]).some(p=>p.pxE>0));
+    if(withFc.length) {
+      const oldest = Math.min(...withFc.map(x => x.ts));
+      const due = oldest + CALIB_MIN_DAYS*86400000;
+      if(due > Date.now()) next = due;
+    }
+    return { sigMult:1, muBias:0, samples:pairs.length, cov:null, ready:false, nextAt:next };
+  }
   const cov = pairs.filter(p=>p.inBand).length/pairs.length;   // couverture observée (cible 0.80)
   // Cône trop étroit (réalité s'échappe trop) → élargir ; trop large → resserrer. Borné.
   const sigMult = cov<0.65 ? 1.30 : cov<0.75 ? 1.15 : cov>0.92 ? 0.85 : 1.0;
@@ -4316,6 +4330,7 @@ function CalibrationStatus() {
             {snaps.length} snapshot{snaps.length>1?"s":""} enregistré{snaps.length>1?"s":""} · {withFc} avec prévisions.
             {snaps.length>0 && <span> Dernier : {new Date(Math.max(...snaps.map(x=>x.ts))).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}.</span>}
             {snaps.length>0 && withFc===0 && <span style={{color:"#f0a020"}}> Aucune prévision stockée : elles seront ajoutées aux prochains relevés.</span>}
+            {!ready && cal.nextAt && <span> Première comparaison possible le <strong style={{color:"#4f83f5"}}>{new Date(cal.nextAt).toLocaleDateString("fr-FR",{day:"2-digit",month:"long"})}</strong> — une prévision ne peut être jugée qu'après {CALIB_MIN_DAYS} jours écoulés.</span>}
             {snaps.length===0 && <span style={{color:"#f0a020"}}> Base d'historique vide sur cet appareil (l'historique est local au navigateur).</span>}
           </div>
           {(() => {
