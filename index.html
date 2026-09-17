@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.3-2026-09-16-004";
+const BUILD = "v20.6-2026-09-16-007";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -237,9 +237,9 @@ const REGISTRY = {
   GAD:  { n:"Global Aero & Def", y:"DFND.MI", ccy:"EUR", role:"port", s:"Défense", v:18, sig:"buy",  def:8.42,  bounds:[2,50],    acct:"CTO" },
   MSFT: { n:"Microsoft",         y:"MSFT",    ccy:"USD", role:"port", s:"Tech",    v:22, sig:"buy",  def:390.0, bounds:[100,1200], acct:"CTO" },
   // ── PEA (ETF éligibles, cotés EUR) — symbole Yahoo <ISIN>.PA À VALIDER on-device (sinon repli sur def) ──
-  SPEA: { n:"iShares S&P 500 Swap PEA",   y:"IE000DQLYVB9.PA", ccy:"EUR", role:"port", s:"Actions US",        v:15, sig:"hold", def:6.40,  bounds:[3,20],  acct:"PEA", pea:true, ter:0.10 },
+  SPEA: { n:"iShares S&P 500 Swap PEA",   y:"SPEA.PA",  ccy:"EUR", role:"port", s:"Actions US",        v:15, sig:"hold", def:5.90,  bounds:[3,20],  acct:"PEA", pea:true, ter:0.10 },
   AWAT: { n:"Amundi PEA Eau (Water)",     y:"FR0011882364.PA", ccy:"EUR", role:"port", s:"Thématique Eau",    v:18, sig:"hold", def:31.40, bounds:[15,60], acct:"PEA", pea:true, ter:0.60 },
-  SLMA: { n:"iShares MSCI EMU Screened",  y:"IE00BFNM3B99.PA", ccy:"EUR", role:"port", s:"Actions zone euro", v:16, sig:"hold", def:11.50, bounds:[5,30],  acct:"PEA", pea:true, ter:0.12 },
+  SLMA: { n:"iShares MSCI EMU Screened",  y:"SLMA.DE",  ccy:"EUR", role:"port", s:"Actions zone euro", v:16, sig:"hold", def:11.30, bounds:[5,30],  acct:"PEA", pea:true, ter:0.12 },
   // ── Référence ──
   SPY:  { n:"S&P 500",           y:"SPY",     ccy:"USD", role:"bench", def:748.0, bounds:[200,1500] },
   // ── Watchlist (cours live, sans position) ──
@@ -313,7 +313,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"VOW/9fc6E1DrYhuYCjihrw==","iv":"FOcLdBOB07lDF/D3","data":"q8oJ+gT+/qSL2k3fIkYRCua2C1I/h18Ni28DClIc1Cu6t8OktMz3Bw7B+UNZs0F7YWwKX5uHlTU2dDHk93zY+iSIvj84FehwnMXPWn/peoLDySNnr/Mdd8RzHvfeXryti1P+LK2fkpmr+j0jNZs6VNAObt65kZmKIDIjI6rJjHPeeWW4u4Ill3rLHlqB9l/ApKMdGtJc04EUoLXoghPfEzzConhxgN020dohhy5LBp+ZOAx03blxIL0r4vBnbN+/3zI+K0BNNQQJgu4b9HKIaUb+hTdCisnSPDLWA1XWqYMZ1yYIg+S260WZxx0+xLpv8iJ94rS3zIkByy6ddusOeWFC/9N8rGjtVULrch3ojDsq3QvkxEhA4wQjpCNu2Od60Cqyu5FpZS1+iDDmHh2ZgJs3EqyYCEhGoIaiCt74rshPfIrpY6aXofg50uSAPiUWufar/ij0serx9hI8SJNscybD+IT+OC/7TuT5ahYzhtFFQyPJR/HFbqs6bKxs1uiB27ifY6HnP5BM7x5Mr53v2Uet0rlrN6IGOQQMNJhpMc378UcA1HJsIqGtbqbpRZB4JmjVw7VHkkqWdLO1C4ZNg+5/m8ZOoNyGlSjsPSAoZ6aHEvCug4M6a2UwJk8YS/Eye5IjBUyHuGzpJLYFhuwnK813OPXx/yPv7arJP4Zvjnjyo3NGkJY2H33bEFgqMVj9/r0dUp6Wcg1fqOC6cII8dOQOx+Ar/7Z/I7vCWEtKLNyabNE9j1uo9hW5KoRZZeOdqw1pvNgJcMFP7bS+o2GDu+ZOg3B2kWspUaHaikbeTrhpy0sLTZ8jhFXMfdfBPwO+HVPLQIKUr8zx/FCJKKitSTs9as8JnVfqmHwoknO//J/lm0ktIo7y+Y7+MfoX4Q7aTX3zc8hVyWVeXXrlABYALTB76MnbMGH9bCbBru6zvHGZNut449ZNjzf2nS4r612pPZyhKTkliVwdWiFTtIS+k7WmddYvE0roDMVTHt78wiYhvMfsPzwqvmbgc0aRMqnM+MnrlHUZLyN2baL/5bT6yOGu4yyK4pOAjvBb2/S+3s2WM839N8EG0e+5V9IdP64F/Fy2rKsnuv9YiJZhNtQVcPklPHYdflUQZTJKAHpXufIXHGpplPDmGpy5Xnd/YOT1n7c9dWkSPIC5aDZajbDlSj8="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -3871,6 +3871,7 @@ function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
   return (
     <>
       <HistoryView snapshots={snapshots} port={port} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/>
+      <MoteurAdjustments port={port}/>
       <ReliabilityByTickerCard snapshots={snapshots}/>
       <JournalCard port={port}/>
       {precision ? (
@@ -5080,9 +5081,8 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     <div className="dt-ovr">
       <div className="bk" onClick={onBack}>← Retour</div>
 
-      {/* EN-TÊTE : identité + earnings */}
-      <div className="card" style={{marginBottom:9}}>
-        <div className="cd-ti">
+      <div className="card" style={{marginBottom:9,border:"1px solid "+sigCol+"40",background:`linear-gradient(135deg, ${sigCol}14, transparent)`}}>
+        <div className="cd-ti" style={{marginBottom:10}}>
           <div>
             <div style={{fontSize:22,fontWeight:800,letterSpacing:"-.01em"}}>{p.t}</div>
             <div className="dim" style={{fontSize:12}}>{p.n} • {p.s}</div>
@@ -5097,9 +5097,6 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
             Verdict ajusté au prix : <strong>{p.effReason}</strong>. La vue analyste de fond reste « {p.effBase} ».
           </div>
         )}
-      </div>
-
-      <div className="card" style={{marginBottom:9,border:"1px solid "+sigCol+"40",background:`linear-gradient(135deg, ${sigCol}14, transparent)`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
           <div style={{flex:1}}>
             <div style={{fontSize:9,color:"#3a4560",fontWeight:800,letterSpacing:".08em",marginBottom:4}}>VERDICT</div>
@@ -5353,33 +5350,33 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
         </div>
       )}
 
-      {a.th && (
+      {(a.th || a.cat || a.act) && (
         <div className="card">
-          <div className="cd-ti"><h3>Thèse</h3><span className={"chip "+a.sig}>{a.r}</span></div>
-          <div style={{lineHeight:1.55}}>{a.th}</div>
-          {a.edg && <div className="warn" style={{marginTop:10}}><strong>Edge :</strong> {a.edg}</div>}
-        </div>
-      )}
-
-      {a.cat && (
-        <div className="g2">
-          <div className="card">
-            <div className="cd-ti"><h3 style={{color:"#2ecc8f"}}>Catalyseurs</h3></div>
-            {a.cat.map((c,i)=>{const j=c.indexOf(" — ");return <ItemTracker key={i} ticker={ticker} ikey={"cat"+i} kind="cat"
-              label={j<0?c:c.slice(0,j)} detail={j<0?"":c.slice(j+3)} pxNow={p.pxNative} bump={reviewBump} onChange={()=>setReviewBump(b=>b+1)}/>;})}
-          </div>
-          <div className="card">
-            <div className="cd-ti"><h3 style={{color:"#e85d5d"}}>Risques</h3></div>
-            {a.ris.map((r,i)=>{const j=r.indexOf(" — ");return <ItemTracker key={i} ticker={ticker} ikey={"ris"+i} kind="ris"
-              label={j<0?r:r.slice(0,j)} detail={j<0?"":r.slice(j+3)} pxNow={p.pxNative} bump={reviewBump} onChange={()=>setReviewBump(b=>b+1)}/>;})}
-          </div>
-        </div>
-      )}
-
-      {a.act && (
-        <div className="card" style={{background:"rgba(79,131,245,.08)",borderColor:"rgba(79,131,245,.3)"}}>
-          <div className="cd-ti"><h3 style={{color:"#4f83f5"}}>Action recommandée</h3></div>
-          <div style={{fontSize:14,fontWeight:600}}>{a.act}</div>
+          {a.th && <>
+            <div className="cd-ti"><h3>Thèse</h3><span className={"chip "+a.sig}>{a.r}</span></div>
+            <div style={{lineHeight:1.55}}>{a.th}</div>
+            {a.edg && <div className="warn" style={{marginTop:10}}><strong>Edge :</strong> {a.edg}</div>}
+          </>}
+          {a.cat && (
+            <div className="g2" style={{marginTop:a.th?12:0,paddingTop:a.th?12:0,borderTop:a.th?"1px solid rgba(255,255,255,.06)":"none"}}>
+              <div>
+                <div className="cd-ti"><h3 style={{color:"#2ecc8f"}}>Catalyseurs</h3></div>
+                {a.cat.map((c,i)=>{const j=c.indexOf(" — ");return <ItemTracker key={i} ticker={ticker} ikey={"cat"+i} kind="cat"
+                  label={j<0?c:c.slice(0,j)} detail={j<0?"":c.slice(j+3)} pxNow={p.pxNative} bump={reviewBump} onChange={()=>setReviewBump(b=>b+1)}/>;})}
+              </div>
+              <div>
+                <div className="cd-ti"><h3 style={{color:"#e85d5d"}}>Risques</h3></div>
+                {a.ris.map((r,i)=>{const j=r.indexOf(" — ");return <ItemTracker key={i} ticker={ticker} ikey={"ris"+i} kind="ris"
+                  label={j<0?r:r.slice(0,j)} detail={j<0?"":r.slice(j+3)} pxNow={p.pxNative} bump={reviewBump} onChange={()=>setReviewBump(b=>b+1)}/>;})}
+              </div>
+            </div>
+          )}
+          {a.act && (
+            <div style={{marginTop:12,background:"rgba(79,131,245,.08)",border:"1px solid rgba(79,131,245,.3)",borderRadius:8,padding:"10px 12px"}}>
+              <div className="cd-ti"><h3 style={{color:"#4f83f5"}}>Action recommandée</h3></div>
+              <div style={{fontSize:14,fontWeight:600}}>{a.act}</div>
+            </div>
+          )}
         </div>
       )}
 
@@ -5547,6 +5544,90 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 }
 
 /* ============== APP PRINCIPALE ============== */
+function MoteurAdjustments({ port }) {
+  const rows = (port||[]).filter(p=>p.val!=null).map(p=>{
+    const f = forecast(p, MACRO);
+    const ret = +(f.p50*100).toFixed(1);
+    const impact = +(ret - f.mu12Raw).toFixed(1);
+    const causes = [["Fraîcheur analyste", f.freshnessAdj],["Ta thèse", f.thesisAdj],["Calibration", f.calibAdj]]
+      .filter(c=>Math.abs(c[1])>=0.5).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+    return { t:p.t, raw:f.mu12Raw, ret, impact, causes };
+  }).sort((a,b)=>Math.abs(b.impact)-Math.abs(a.impact));
+  if(!rows.length) return null;
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Journal des ajustements</h3><span className="dim" style={{fontSize:9}}>initiale → retenue</span></div>
+      <div className="dim" style={{fontSize:9,marginBottom:6,lineHeight:1.4}}>Comment le moteur corrige la projection brute de chaque position, et pourquoi : fraîcheur des objectifs analystes, ton suivi de thèse, calibration sur l'erreur passée.</div>
+      {rows.map(r=>(
+        <div key={r.t} style={{padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.05)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontWeight:700,fontSize:12}}>{r.t}</span>
+            <span className="mono" style={{fontSize:11}}>{fp(r.raw,1)} <span style={{color:"#3a4560"}}>→</span> <span style={{color:"#4f83f5"}}>{fp(r.ret,1)}</span> <span style={{color:cl(r.impact),fontSize:10}}>({(r.impact>=0?"+":"")+r.impact} pts)</span></span>
+          </div>
+          {r.causes.length>0
+            ? <div style={{fontSize:9,color:"#8892a8",marginTop:2}}>{r.causes.map((c,i)=><span key={i}>{i>0?" · ":""}{c[0]} <span style={{color:cl(c[1])}}>{(c[1]>=0?"+":"")+(+c[1].toFixed(1))}</span></span>)}</div>
+            : <div style={{fontSize:9,color:"#3a4560",marginTop:2}}>Projection brute conservée.</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NavIcon({ k }) {
+  const p = { width:20, height:20, viewBox:"0 0 24 24", fill:"none", stroke:"currentColor", strokeWidth:1.8, strokeLinecap:"round", strokeLinejoin:"round" };
+  if(k==="global")   return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18"/></svg>;
+  if(k==="cto")      return <svg {...p}><path d="M4 18l5-5 4 3 6.5-8.5"/><path d="M15 7.5h4.5V12"/></svg>;
+  if(k==="pea")      return <svg {...p}><path d="M12 3l7 3v5c0 4.6-3 7.7-7 9-4-1.3-7-4.4-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>;
+  if(k==="forecast") return <svg {...p}><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>;
+  if(k==="moteur")   return <svg {...p}><path d="M4 15.5a8 8 0 0116 0"/><path d="M12 15.5l4.5-4.5"/><circle cx="12" cy="15.5" r="1.2"/></svg>;
+  return null;
+}
+
+function PEAView({ port, onSelect }) {
+  const tot = port.reduce((s,p)=>s+(p.val||0),0);
+  const inv = port.reduce((s,p)=>s+(p.inv||0),0);
+  const pnl = tot - inv;
+  const net = netAfterTax(pnl, "PEA", getPeaOpenDate());
+  const byS = {};
+  port.forEach(p => { const kk=p.s||"Autre"; byS[kk]=(byS[kk]||0)+(p.val||0); });
+  const expo = Object.entries(byS).map(([kk,v])=>({kk,v,pct:tot>0?v/tot*100:0})).sort((a,b)=>b.v-a.v);
+  const COL = ["#4f83f5","#2ecc8f","#f0a020","#8b7cf5","#d4a843","#e85d5d"];
+  return (<>
+    <div className="card" style={{margin:"9px 12px 0"}}>
+      <div className="cd-ti"><h3>Valeur PEA</h3></div>
+      <div className="g3">
+        <div style={{textAlign:"center"}}><div className="lbl">Valeur</div><div className="mono" style={{fontSize:15}}>{fe(tot)}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">+/- value</div><div className="mono" style={{fontSize:15,color:cl(pnl)}}>{fe(pnl)}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Net si vendu</div><div className="mono" style={{fontSize:15,color:"#8892a8"}}>{fe(tot - net.taxEUR)}</div></div>
+      </div>
+      <div className="dim" style={{fontSize:9,marginTop:5,lineHeight:1.4}}>{net.regle}. ETF <strong>capitalisants</strong> (Acc) : dividendes réinvestis, aucun revenu distribué.</div>
+    </div>
+    <div className="card" style={{margin:"9px 12px 0"}}>
+      <div className="cd-ti"><h3>Répartition par exposition</h3></div>
+      {expo.map((e,i)=>(
+        <div key={e.kk} style={{marginBottom:7}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:2}}><span style={{color:"#dde3f0"}}>{e.kk}</span><span className="mono" style={{color:"#8892a8"}}>{e.pct.toFixed(0)}%</span></div>
+          <div style={{height:5,background:"#161c2a",borderRadius:3,overflow:"hidden"}}><div style={{width:e.pct+"%",height:"100%",background:COL[i%COL.length]}}/></div>
+        </div>
+      ))}
+    </div>
+    <div className="card" style={{margin:"9px 12px 12px"}}>
+      <div className="cd-ti"><h3>Supports</h3><span className="dim" style={{fontSize:9}}>{port.length}</span></div>
+      {port.map(p=>{
+        const ter = REG[p.t] && REG[p.t].ter;
+        return (
+          <div key={p.t} className="row" onClick={()=>onSelect(p)} style={{cursor:"pointer",alignItems:"center"}}>
+            <div style={{flex:"1 1 40%"}}><div style={{fontWeight:700,fontSize:12}}>{p.t}</div><div className="dim" style={{fontSize:8}}>{p.n}{ter!=null?` · TER ${ter}%`:""}</div></div>
+            <div className="num" style={{flex:1}}>{fe(p.val,0)}</div>
+            <div className="num" style={{flex:1,color:cl(p.pnl)}}>{fp(p.pct)}</div>
+            <div className="num dim" style={{flex:"0 0 14%"}}>{(p.wt||0).toFixed(0)}%</div>
+          </div>
+        );
+      })}
+    </div>
+  </>);
+}
+
 function PEAHeader({ port }) {
   const [dp, setDp] = useState(() => getPeaOpenDate());
   const [ed, setEd] = useState(false);
@@ -5958,14 +6039,14 @@ function App() {
         onSettings={() => setCfgOpen(true)}
       />
 
-      <Strip m={curM} alertCount={curSells}/>
+      {tab !== "pea" && <Strip m={curM} alertCount={curSells}/>}
 
       {tab === "global" && <ErrorBoundary inline label="Global"><TodayView port={enriched} m={m} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
       {tab === "cto" && <ErrorBoundary inline label="CTO"><TodayView port={enrichedCTO} m={mCTO} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
       {tab === "pea" && <ErrorBoundary inline label="PEA"><>
         <PEAHeader port={enrichedPEA}/>
         {enrichedPEA.length
-          ? <TodayView port={enrichedPEA} m={mPEA} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/>
+          ? <PEAView port={enrichedPEA} onSelect={setDetail}/>
           : <div className="card" style={{margin:12}}><div className="lbl">Onglet PEA</div><div className="dim" style={{fontSize:12,marginTop:6,lineHeight:1.5}}>Aucune position PEA pour l'instant. Tes 3 ETF (SPEA, AWAT, SLMA) sont pré-configurés et éligibles ; ils s'ajoutent automatiquement au 1ᵉʳ lancement, ou via ⚙ Réglages.</div></div>}
       </></ErrorBoundary>}
       {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={liveHistMap} macroCtx={macroCtx}/></ErrorBoundary>}
@@ -6003,14 +6084,14 @@ function App() {
 
       <nav className="tab">
         {[
-          {k:"global",  ic:"🌐",l:"Global"},
-          {k:"cto",     ic:"📈",l:"CTO"},
-          {k:"pea",     ic:"🇪🇺",l:"PEA"},
-          {k:"forecast",ic:"◔",l:"Forecast"},
-          {k:"moteur",  ic:"🔧",l:"Moteur"}
+          {k:"global",  l:"Global"},
+          {k:"cto",     l:"CTO"},
+          {k:"pea",     l:"PEA"},
+          {k:"forecast",l:"Forecast"},
+          {k:"moteur",  l:"Moteur"}
         ].map(t => (
           <div key={t.k} className={"tb"+(tab===t.k?" ac":"")} onClick={() => { setTab(t.k); setDetail(null); setCfgOpen(false); }}>
-            <div className="ic">{t.ic}</div>
+            <div className="ic"><NavIcon k={t.k}/></div>
             <div>{t.l}</div>
           </div>
         ))}
