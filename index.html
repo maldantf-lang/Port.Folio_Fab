@@ -122,7 +122,59 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v19.6-2026-09-15-007";
+const BUILD = "v20.3-2026-09-16-004";
+
+/* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
+   CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
+   PEA : retrait <5 ans = clôture → PFU 30 % ; ≥5 ans = IR exonéré, 17,2 % PS seuls.
+   La taxe ne porte QUE sur le gain (>0) ; une moins-value ne crée aucun impôt. */
+const PEA_OPEN_KEY = "fab-pea-open";
+const PEA_OPEN_DEFAULT = "2026-09-15";        // date d'ouverture du PEA (règle des 5 ans)
+function getPeaOpenDate() {
+  try { return localStorage.getItem(PEA_OPEN_KEY) || PEA_OPEN_DEFAULT; } catch(e) { return PEA_OPEN_DEFAULT; }
+}
+function peaMature(datePEA, horizonDate) {     // le PEA a-t-il ≥5 ans à l'horizon ?
+  const open = new Date(datePEA || PEA_OPEN_DEFAULT).getTime();
+  const at = horizonDate ? new Date(horizonDate).getTime() : Date.now();
+  if(!isFinite(open) || !isFinite(at)) return false;
+  return at >= open + 5*365.25*24*3600*1000;
+}
+function netAfterTax(gainEUR, acct, datePEA, horizonDate) {
+  const g = +gainEUR;
+  if(!isFinite(g) || g <= 0)
+    return { taxEUR:0, netEUR:isFinite(g)?g:0, tauxPct:0, regle:"Moins-value : aucun impôt" };
+  const isPEA = acct === "PEA";
+  const mature = isPEA && peaMature(datePEA, horizonDate);
+  let tauxPct, regle;
+  if(!isPEA)      { tauxPct = 30;   regle = "CTO : PFU 30 % à la revente"; }
+  else if(mature) { tauxPct = 17.2; regle = "PEA >5 ans : IR exonéré, PS 17,2 %"; }
+  else            { tauxPct = 30;   regle = "PEA <5 ans : retrait = clôture, PFU 30 %"; }
+  const taxEUR = g * tauxPct / 100;
+  return { taxEUR, netEUR: g - taxEUR, tauxPct, regle };
+}
+
+/* ═══ INTÉGRATION AUTO DES SUPPORTS PEA (v20.1) ═══
+   Ajoute une seule fois les 3 ETF PEA au portefeuille de l'appareil (les positions vivent en
+   local, hors du code chiffré). N'écrase jamais une ligne existante ; un drapeau localStorage
+   empêche toute ré-injection (si tu en supprimes un plus tard, il n'est pas re-créé). */
+const PEA_SEED_KEY = "fab-pea-seed-v1";
+const PEA_SEED = [
+  { t:"SPEA", q:1, b:6.39  },
+  { t:"AWAT", q:1, b:30.79 },
+  { t:"SLMA", q:1, b:11.10 },
+];
+function seedPeaPositions(port) {
+  const have = new Set((port||[]).map(p=>p.t));
+  const out = (port||[]).slice();
+  let added = 0;
+  for(const s of PEA_SEED){
+    if(have.has(s.t)) continue;
+    const e = REG[s.t] || {};
+    out.push({ t:s.t, n:e.n||s.t, q:s.q, b:s.b, s:e.s||"Autre", sig:e.sig||"hold", v:e.v||20, acct:"PEA" });
+    added++;
+  }
+  return { port:out, added };
+}
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -178,12 +230,16 @@ const REGISTRY = {
   FTI:  { n:"TechnipFMC",        y:"FTI",     ccy:"USD", role:"port", s:"Énergie", v:28, sig:"sell", def:68.34, bounds:[10,300],  acct:"CTO" },
   HPE:  { n:"HP Enterprise",     y:"HPE",     ccy:"USD", role:"port", s:"Tech",    v:32, sig:"hold", def:45.0,  bounds:[5,200],  acct:"CTO" },
   AMZN: { n:"Amazon",            y:"AMZN",    ccy:"USD", role:"port", s:"Tech",    v:25, sig:"buy",  def:245.0, bounds:[50,900],  acct:"CTO" },
-  MC:   { n:"LVMH",              y:"MC.PA",   ccy:"EUR", role:"port", s:"Luxe",    v:24, sig:"hold", def:490.0, bounds:[150,1500],acct:"CTO" },
+  MC:   { n:"LVMH",              y:"MC.PA",   ccy:"EUR", role:"port", s:"Luxe",    v:24, sig:"hold", def:490.0, bounds:[150,1500],acct:"CTO", pea:true },
   NATO: { n:"Future of Defence", y:"NATO.L",  ccy:"USD", role:"port", s:"Défense", v:20, sig:"buy",  def:21.3,  bounds:[5,80],    acct:"CTO" },
   NVDA: { n:"NVIDIA",            y:"NVDA",    ccy:"USD", role:"port", s:"Tech",    v:38, sig:"buy",  def:196.0, bounds:[20,600],  acct:"CTO" },
   ABUS: { n:"Arbutus Biopharma", y:"ABUS",    ccy:"USD", role:"port", s:"Biotech", v:65, sig:"spec", def:4.70,  bounds:[0.5,40],  acct:"CTO" },
   GAD:  { n:"Global Aero & Def", y:"DFND.MI", ccy:"EUR", role:"port", s:"Défense", v:18, sig:"buy",  def:8.42,  bounds:[2,50],    acct:"CTO" },
   MSFT: { n:"Microsoft",         y:"MSFT",    ccy:"USD", role:"port", s:"Tech",    v:22, sig:"buy",  def:390.0, bounds:[100,1200], acct:"CTO" },
+  // ── PEA (ETF éligibles, cotés EUR) — symbole Yahoo <ISIN>.PA À VALIDER on-device (sinon repli sur def) ──
+  SPEA: { n:"iShares S&P 500 Swap PEA",   y:"IE000DQLYVB9.PA", ccy:"EUR", role:"port", s:"Actions US",        v:15, sig:"hold", def:6.40,  bounds:[3,20],  acct:"PEA", pea:true, ter:0.10 },
+  AWAT: { n:"Amundi PEA Eau (Water)",     y:"FR0011882364.PA", ccy:"EUR", role:"port", s:"Thématique Eau",    v:18, sig:"hold", def:31.40, bounds:[15,60], acct:"PEA", pea:true, ter:0.60 },
+  SLMA: { n:"iShares MSCI EMU Screened",  y:"IE00BFNM3B99.PA", ccy:"EUR", role:"port", s:"Actions zone euro", v:16, sig:"hold", def:11.50, bounds:[5,30],  acct:"PEA", pea:true, ter:0.12 },
   // ── Référence ──
   SPY:  { n:"S&P 500",           y:"SPY",     ccy:"USD", role:"bench", def:748.0, bounds:[200,1500] },
   // ── Watchlist (cours live, sans position) ──
@@ -257,7 +313,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"waem+Nrd6IkJbG9TAzW0Ow==","iv":"Y7OXUXQMnMU4h4j2","data":"SkTzfjsbh9OkqO8uvFx4rGhUD/NF9qqoFvKezvZSkhcAmwO7JHnpji4g+cnynOlLWsvi8f9JL0wT3RGhpjX1Cf5m4sZOh2bVKSowQDX0UN3v4H38Us+Vw9mybQ/zxMdaev2Y7SJz1Q0hMUXOXKfuSMAfWHQeDtWA5OQAEFipyeM7degdiHH0rqIkvCC8X688O/7BFNlt9bu/mUtdYKbjRY69Eo56ZTiZAPXp6omzacQSd0wHfukobUz/C6ZJpjhXUqQGYgT2kIbSZF7hLUoLXL/du4YaCiGTUjn+GHD13wWyhlOAr9ZO6Hm8EeLYChbYNs2D9yy44XVtE44OEaMcxRP+zCKKcwyNH6WYlmGm8XI5uZq8YGZPk6mYpNIcoxsGKdmP3VeDsGWe5whGbkkK9xCvBw02IPsdpNagbs9DHABlWcPe8JSEVlE5bdgiHWW4tbv8flKaUX3xTI1XyuEC79v7lI+FZpZxxw3JT5joe9E6iNbXtpoDnLeZxe/yTpHVvk76uz4BTGr2YcPSGdmZRroKYYkG+94iXpoBHpcBIQdNa9c8gZ+2kz6VsNg1I9zZbE2PszbEbzf/pVYo2d/9YWdiVmZPbtFTiQBpwSBZB3AO0pkx/MDjrTdgCRbXobJCUggzyKWnGir9RkFKv4T4F52IG7lS+rJW/r+8GLdDQKw0otoO0XPGTFkSs7TodliBk0LGAjEN86LQr/eIcLmRwb3zqg4DTqF206OoBKzefWRHVG41H5qZvTHMwopUb7PfU4EdBVarIy2GObktPSxVn/FkzjZGpGcJogHRWylPYaJlJ63W14lEyVXe6ZPcl4QJOgHIfhVoFXjJWYKl215F8UHq46tna1qLYSmWngnHcLBz7jsj2ntow3BMG8B5kmBdFujaH+6TCRzrtLSm8NTCHiratu9qiM3mFD1UYy3zKcsW2p3cN3uZ9fnclJKKtxQQ2Fchnf0dTyUqQl4FCnOjT4iD31dvse7ElwD7msHifvAJa22e9a6/ud/ZqfnaBTnBYLSlr/1NHRyovDaIEcm2adu7JA/Zhu4vT0opci0voCfd8uefQCRy6poAae6VvX+beP9678ny10Ow2H4OnGYS2cDt5epH8c8R7eC9EO6ElA0YM9AnYQt5hgBa9jWToWTB+qi7jiL2g41IiMBAqD5t2qU="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -2001,6 +2057,9 @@ function forecast(pos, mac) {
   const f10 = (an.tgt && ref > 0) ? (an.tgt.a / ref - 1) * 0.3 : 0;
   const fresh = analystFreshness(an.lu);   // décote l'influence analyste selon l'âge de la revue (lu)
   let mu12 = f3*0.5*fresh + (f1-0.5)*0.10 + f2*0.06 + f4*0.04 + f6*0.08 + f7 + f8 + f9 + f10*0.4*fresh;
+  // v20.1 — projection INITIALE (avant décote de fraîcheur analyste, avant ta thèse, avant calibration)
+  const mu12Raw = f3*0.5 + (f1-0.5)*0.10 + f2*0.06 + f4*0.04 + f6*0.08 + f7 + f8 + f9 + f10*0.4;
+  const freshnessAdj = (fresh-1)*(f3*0.5 + f10*0.4);   // effet de la décote de fraîcheur sur la projection
   // Volatilité RÉELLE si disponible (largeur du cône ancrée sur le comportement observé)
   const baseVol = (pos.rvol != null && pos.rvol > 0) ? pos.rvol : (pos.v || 25)/100 * 1.2;
   // Calibration adaptative : correction de largeur (sigMult) et de biais (muBias) apprise du passé
@@ -2028,6 +2087,9 @@ function forecast(pos, mac) {
     basis: thesis ? "thèse" : "statistique",
     hist: pos.wret ? pos.wret.length : 0,
     confidence: (thesis ? (fresh >= 0.9 ? "élevée" : "moyenne") : ((pos.wret && pos.wret.length >= 40) ? "moyenne" : "faible")),
+    mu12Raw: +(mu12Raw*100).toFixed(1),            // projection initiale, %/an
+    freshnessAdj: +(freshnessAdj*100).toFixed(1),  // effet fraîcheur analyste (pts)
+    calibAdj: +((CALIB.muBias||0)*100).toFixed(1), // effet calibration moteur (pts)
     factors: { f1,f2,f3,f4,f5,f6,f7,f8,f9,f10 }
   };
 }
@@ -2142,6 +2204,13 @@ function AnticipatoryAlerts({ port, onSelect }) {
     if(p.rsiLive != null && p.rsiLive <= 30) alerts.push({ t:p.t, level:"gr", icon:"📉", msg:`RSI ${p.rsiLive} — survente, fenêtre d'entrée possible` });
     if(p.rsiLive != null && p.rsiLive >= 70) alerts.push({ t:p.t, level:"am", icon:"📈", msg:`RSI ${p.rsiLive} — surachat, prudence` });
     if(p.effDrift) alerts.push({ t:p.t, level:"pu", icon:"↻", msg:`Verdict ajusté au prix : ${p.effReason}` });
+    // v20.2 — franchissement des seuils Haut/Bas (objectifs analystes) → signal à regarder
+    { const an = AN[p.t];
+      if(an && an.tgt && p.pxNative != null){
+        if(p.pxNative >= an.tgt.h) alerts.push({ t:p.t, level:"gr", icon:"🎯", msg:`Seuil HAUT franchi (obj. ${an.tgt.h}) — envisager une prise de bénéfice` });
+        else if(p.pxNative <= an.tgt.l) alerts.push({ t:p.t, level:"rd", icon:"🛡️", msg:`Seuil BAS franchi (obj. ${an.tgt.l}) — protéger la position (stop)` });
+      }
+    }
     // Revue de thèse programmée : rappel automatique au-delà de 90 jours
     if(p.dynConv && p.dynConv.lu){
       const age = Math.floor((Date.now() - new Date(p.dynConv.lu)) / 86400000);
@@ -3384,6 +3453,8 @@ function ScenariosView({ port, m, qHistMap }) {
     return {
       t: p.t,
       val: p.val,
+      inv: p.inv,
+      acct: p.acct || "CTO",
       p10: p.val * (1 + f.p10 * h),
       p50: p.val * (1 + f.p50 * h),
       p90: p.val * (1 + f.p90 * h),
@@ -3401,6 +3472,20 @@ function ScenariosView({ port, m, qHistMap }) {
   const sHi = pfMat ? corrAggregate(items.map(x=>x.hi), tks, pfMat) : items.reduce((s,x)=>s+x.hi,0);
   const tot10 = tot50 - sLo;
   const tot90 = tot50 + sHi;
+
+  // v20.2 — fiscalité projetée « à la revente » : net après impôt par scénario (règle des 5 ans PEA)
+  const _datePEA = getPeaOpenDate();
+  const _horizonDate = new Date(Date.now() + horizon*30.4*24*3600*1000).toISOString().slice(0,10);
+  const projNet = (totX, key) => {
+    let gCTO=0, gPEA=0;
+    items.forEach(x => { const gain = x[key] - (x.inv||0); if(x.acct==="PEA") gPEA+=gain; else gCTO+=gain; });
+    const tax = netAfterTax(gCTO,"CTO",_datePEA,_horizonDate).taxEUR + netAfterTax(gPEA,"PEA",_datePEA,_horizonDate).taxEUR;
+    return { net: totX - tax, tax };
+  };
+  const fNet10 = projNet(tot10,"p10"), fNet50 = projNet(tot50,"p50"), fNet90 = projNet(tot90,"p90");
+  const hasPEA = items.some(x=>x.acct==="PEA");
+  const peaGainNow = items.reduce((s,x)=> s + ((x.acct==="PEA" && (x.val-(x.inv||0))>0) ? (x.val-(x.inv||0)) : 0), 0);
+  const peaSaving = peaGainNow * (0.30 - 0.172);
 
   // Éventail portefeuille : P10/P50/P90 à plusieurs échéances (0→12M) pour le graphe en éventail.
   const fcs = port.filter(p=>p.val!=null).map(p => ({ t:p.t, val:p.val, f: forecast(p, MACRO) }));
@@ -3559,6 +3644,18 @@ function ScenariosView({ port, m, qHistMap }) {
           <div className="mono" style={{fontSize:18,color:"#2ecc8f"}}>{fe(tot90)}</div>
           <div className="num" style={{fontSize:11,color:"#2ecc8f"}}>{fp((tot90/m.tot-1)*100,0)}</div>
         </div>
+      </div>
+      <div className="card">
+        <div className="cd-ti"><h3>Après impôt à {horizon}M</h3><span className="dim" style={{fontSize:9}}>à la revente · CTO 30 % · PEA règle 5 ans</span></div>
+        <div className="g3">
+          <div style={{textAlign:"center"}}><div style={{fontSize:9,color:"#3a4560"}}>Net P10</div><div className="mono" style={{fontSize:14,color:"#e85d5d"}}>{fe(fNet10.net)}</div></div>
+          <div style={{textAlign:"center"}}><div style={{fontSize:9,color:"#3a4560"}}>Net P50</div><div className="mono" style={{fontSize:14,color:"#4f83f5",fontWeight:800}}>{fe(fNet50.net)}</div></div>
+          <div style={{textAlign:"center"}}><div style={{fontSize:9,color:"#3a4560"}}>Net P90</div><div className="mono" style={{fontSize:14,color:"#2ecc8f"}}>{fe(fNet90.net)}</div></div>
+        </div>
+        <div className="dim" style={{fontSize:9,marginTop:6,lineHeight:1.5}}>Impôt estimé au scénario médian : <strong style={{color:"#e85d5d"}}>{fe(fNet50.tax)}</strong>. Estimation à la revente — pas un montant garanti.</div>
+        {hasPEA && <div className="dim" style={{fontSize:9,marginTop:5,lineHeight:1.5,paddingTop:5,borderTop:"1px solid rgba(255,255,255,.05)"}}>
+          🇪🇺 PEA ouvert le 15/09/2026 : sur cet horizon (moins de 5 ans) un retrait est taxé <strong>comme un CTO (30 %)</strong>. À maturité fiscale (<strong>15/09/2031</strong>) le taux tombe à <strong>17,2 %</strong>{peaGainNow>0 ? <> — sur ta plus-value PEA latente de {fe(peaGainNow)}, économie d'environ <strong style={{color:"#2ecc8f"}}>{fe(peaSaving)}</strong> vs une revente aujourd'hui</> : null}.
+        </div>}
       </div>
       <div className="card">
         <div className="cd-ti"><h3>Cône en éventail</h3><span className="dim" style={{fontSize:9}}>0 → 12 mois · repère {horizon}M</span></div>
@@ -4626,7 +4723,7 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
             <span className="tk" style={{flex:"0 0 20%"}}>{p.t}</span>
             <div style={{display:"flex",gap:6}}>
               {["CTO","PEA"].map(a=>(
-                <button key={a} onClick={()=>onPortChange(port.map(x=>x.t===p.t?{...x,acct:a}:x))}
+                <button key={a} onClick={()=>{ if(a==="PEA" && !(REG[p.t]&&REG[p.t].pea)){ alert("Ce support n'est pas éligible au PEA (actions hors UE/EEE) — il reste au CTO."); return; } onPortChange(port.map(x=>x.t===p.t?{...x,acct:a}:x)); }}
                   style={{padding:"3px 10px",borderRadius:4,fontSize:10,fontWeight:700,cursor:"pointer",
                     background:(p.acct||"CTO")===a?"rgba(79,131,245,.25)":"#161c2a",
                     border:(p.acct||"CTO")===a?"1px solid #4f83f5":"1px solid rgba(255,255,255,.06)",
@@ -4838,8 +4935,8 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   const fiscal = useMemo(() => {
     if(!p.pnl||p.pnl<=0) return null;
     const acct = p.acct || "CTO";
-    const tax = acct==="CTO" ? p.pnl*0.30 : p.pnl*0.172; // CTO=30%, PEA=17.2% PS uniquement
-    return {acct, tax, net:p.pnl-tax, taxPct:acct==="CTO"?30:17.2};
+    const r = netAfterTax(p.pnl, acct, getPeaOpenDate());  // règle des 5 ans (PEA ouvert 15/09/2026)
+    return {acct, tax:r.taxEUR, net:r.netEUR, taxPct:r.tauxPct, regle:r.regle};
   }, [p.pnl, p.acct]);
   // Tout normalisé en % par rapport au cours actuel (0% = prix d'aujourd'hui)
   /* V19 — le cône FUTUR n'est tracé que s'il apporte plus d'information que la prévision passée
@@ -5178,6 +5275,25 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
                   Ton suivi des catalyseurs/risques ({f.thesisDecided} statué{f.thesisDecided>1?"s":""}) ajuste la projection de
                   <strong style={{color:cl(f.thesisAdj)}}> {fp(f.thesisAdj,1)}</strong> sur 12 mois.
                 </div>}
+                {(()=>{ const ret = +(f.p50*100).toFixed(1); const impact = +(ret - f.mu12Raw).toFixed(1);
+                  const rows = [];
+                  if(Math.abs(f.freshnessAdj)>=0.5) rows.push(["Fraîcheur des objectifs analystes", f.freshnessAdj]);
+                  if(Math.abs(f.thesisAdj)>=0.5)    rows.push(["Ton suivi catalyseurs / risques", f.thesisAdj]);
+                  if(Math.abs(f.calibAdj)>=0.5)     rows.push(["Calibration du moteur (erreur passée)", f.calibAdj]);
+                  return (
+                    <div style={{marginTop:8,paddingTop:8,borderTop:"1px dashed rgba(255,255,255,.08)"}}>
+                      <div style={{color:"#dde3f0",fontWeight:700,marginBottom:3}}>Le moteur a réadapté la prévision</div>
+                      {Math.abs(impact)<0.5
+                        ? <div>Projection brute retenue telle quelle — aucun ajustement significatif.</div>
+                        : <>
+                            <div>Initiale <strong>{fp(f.mu12Raw,1)}</strong>/an → retenue <strong style={{color:"#4f83f5"}}>{fp(ret,1)}</strong>/an · impact <strong style={{color:cl(impact)}}>{(impact>=0?"+":"")+impact} pts</strong></div>
+                            {rows.map(([lbl,val],i)=>(
+                              <div key={i} style={{marginTop:2}}>· {lbl} : <strong style={{color:cl(val)}}>{(val>=0?"+":"")+val} pts</strong></div>
+                            ))}
+                          </>}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
@@ -5422,6 +5538,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
               <div><div style={{fontSize:9,color:"#3a4560"}}>Taxe {fiscal.taxPct}%</div><div className="mono" style={{color:"#e85d5d",fontSize:12}}>-{fe(fiscal.tax)}</div></div>
               <div><div style={{fontSize:9,color:"#3a4560"}}>Net après impôt</div><div className="mono" style={{color:"#2ecc8f",fontSize:12,fontWeight:800}}>{fe(fiscal.net)}</div></div>
             </div>
+            <div className="dim" style={{fontSize:9,marginTop:5}}>{fiscal.regle} · estimation à la revente — pas un montant garanti.</div>
           </div>
         )}
       </div>
@@ -5430,6 +5547,49 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 }
 
 /* ============== APP PRINCIPALE ============== */
+function PEAHeader({ port }) {
+  const [dp, setDp] = useState(() => getPeaOpenDate());
+  const [ed, setEd] = useState(false);
+  const open = new Date(dp);
+  const okDate = !isNaN(open.getTime());
+  const total5 = 5*365.25*24*3600*1000;
+  const matur = okDate ? new Date(open.getTime() + total5) : null;
+  const now = new Date();
+  const prog = okDate ? Math.max(0, Math.min(1, (now-open)/total5)) : 0;
+  const mature = okDate && now >= matur;
+  const daysLeft = matur ? Math.max(0, Math.ceil((matur-now)/86400000)) : 0;
+  const yearsLeft = (daysLeft/365.25).toFixed(1);
+  const fmtD = d => d.toLocaleDateString("fr-FR");
+  let terW=0, wsum=0, totVal=0;
+  (port||[]).forEach(p => { totVal += (p.val||0); const ter = REG[p.t] && REG[p.t].ter; if(ter!=null && p.val>0){ terW += ter*p.val; wsum += p.val; } });
+  const terAvg = wsum>0 ? terW/wsum : null;
+  const setDate = v => { setDp(v); try{ localStorage.setItem(PEA_OPEN_KEY, v); }catch(e){} };
+  return (
+    <div className="card" style={{margin:"12px 12px 0"}}>
+      <div className="cd-ti"><h3>PEA · socle long terme</h3><span className="dim" style={{fontSize:9}}>{fe(totVal)}</span></div>
+      <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:6}}>
+        {!okDate ? "Date d'ouverture du PEA invalide — corrige-la ci-dessous."
+          : mature ? <>✅ Maturité fiscale atteinte — plus-values <strong>exonérées d'impôt sur le revenu</strong> (restent 17,2 % de prélèvements sociaux).</>
+          : <>Avantage fiscal PEA dans <strong style={{color:"#4f83f5"}}>{yearsLeft} an(s)</strong>, le <strong>{fmtD(matur)}</strong> : l'impôt passera de <strong>30 %</strong> à <strong>17,2 %</strong>.</>}
+      </div>
+      <div style={{height:6,background:"#161c2a",borderRadius:3,overflow:"hidden"}}>
+        <div style={{width:(prog*100).toFixed(1)+"%",height:"100%",background:mature?"#2ecc8f":"#4f83f5",transition:"width .3s"}}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#3a4560",marginTop:3}}>
+        <span>Ouvert {okDate?fmtD(open):"—"}</span><span>Exonération · {matur?fmtD(matur):"—"}</span>
+      </div>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:9,color:"#8892a8",marginTop:8,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.05)"}}>
+        {terAvg!=null && <span>Frais annuels moyens (TER) : <strong style={{color:"#dde3f0"}}>{terAvg.toFixed(2)} %</strong></span>}
+        <span>Plafond de versements : <strong style={{color:"#dde3f0"}}>150 000 €</strong></span>
+        <span onClick={()=>setEd(v=>!v)} style={{cursor:"pointer",color:"#4f83f5"}}>{ed?"Fermer":"Modifier la date d'ouverture"}</span>
+      </div>
+      {ed && <div style={{marginTop:6}}>
+        <input type="date" value={dp} onChange={e=>setDate(e.target.value)} style={{width:"100%",background:"#161c2a",border:"1px solid #3a4560",borderRadius:6,color:"#dde3f0",padding:"6px 8px",fontSize:12}}/>
+      </div>}
+    </div>
+  );
+}
+
 function App() {
   const [locked, setLocked] = useState(() => Boolean(getPinHash()));
   const [port, setPort] = useState(() => {
@@ -5455,7 +5615,7 @@ function App() {
   const [qHistMap, setQHistMap] = useState({});
   const [spyHistRaw, setSpyHist] = useState([]);
   const [status, setStatus] = useState("ld");
-  const [tab, setTab] = useState("today");
+  const [tab, setTab] = useState("global");
 
   /* Rattrapage de l'historique au démarrage : récupère les clôtures enregistrées par le Worker
      et reconstitue les relevés des jours où l'app n'a pas été ouverte. Ne s'exécute qu'une fois
@@ -5570,6 +5730,23 @@ function App() {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
   }, []);
+
+  // v20.1 — intègre automatiquement les 3 supports PEA une seule fois (respecte les positions existantes)
+  const peaSeedDone = useRef(false);
+  useEffect(() => {
+    if(peaSeedDone.current || needDecrypt || !port) return;
+    let already = false;
+    try { already = localStorage.getItem(PEA_SEED_KEY) === "1"; } catch(e){}
+    peaSeedDone.current = true;
+    if(already) return;
+    const r = seedPeaPositions(port);
+    try { localStorage.setItem(PEA_SEED_KEY, "1"); } catch(e){}
+    if(r.added > 0) {
+      setPort(r.port);
+      try { saveStore({ ...(loadStore()||{}), port:r.port }); } catch(e){}
+      showToast(`🇪🇺 ${r.added} support(s) PEA intégré(s)`);
+    }
+  }, [port, needDecrypt]);
 
   // Auto-init alertes pour positions sans seuils
   useEffect(() => {
@@ -5739,6 +5916,17 @@ function App() {
     return { ...base, sh: rs ? rs.sh : null, shN: rs ? rs.n : 0, dd3m: dd ? dd.loss : null, dd3mPct: dd ? dd.pct : null };
   }, [enriched, snapshots, liveHistMap]);
   const sells = enriched.filter(p => p.sig === "sell").length;
+  // v20 — sous-portefeuilles par enveloppe (poids intra-enveloppe : on ré-enrichit le sous-ensemble brut)
+  const rawCTO = useMemo(() => port.filter(p => (p.acct||"CTO")==="CTO"), [port]);
+  const rawPEA = useMemo(() => port.filter(p => p.acct==="PEA"), [port]);
+  const enrichedCTO = useMemo(() => enrich(rawCTO, prices, eurusd, priceTsMap, convMap, liveHistMap), [rawCTO, prices, eurusd, priceTsMap, convMap, liveHistMap]);
+  const enrichedPEA = useMemo(() => enrich(rawPEA, prices, eurusd, priceTsMap, convMap, liveHistMap), [rawPEA, prices, eurusd, priceTsMap, convMap, liveHistMap]);
+  const mCTO = useMemo(() => metrics(enrichedCTO), [enrichedCTO]);
+  const mPEA = useMemo(() => metrics(enrichedPEA), [enrichedPEA]);
+  const sellsCTO = enrichedCTO.filter(p => p.sig === "sell").length;
+  const sellsPEA = enrichedPEA.filter(p => p.sig === "sell").length;
+  const curM = tab==="cto" ? mCTO : tab==="pea" ? mPEA : m;
+  const curSells = tab==="cto" ? sellsCTO : tab==="pea" ? sellsPEA : sells;
 
   // Update countdown depuis lastTs
   useEffect(() => {
@@ -5770,11 +5958,18 @@ function App() {
         onSettings={() => setCfgOpen(true)}
       />
 
-      <Strip m={m} alertCount={sells}/>
+      <Strip m={curM} alertCount={curSells}/>
 
-      {tab === "today" && <ErrorBoundary inline label="Actual"><TodayView port={enriched} m={m} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
+      {tab === "global" && <ErrorBoundary inline label="Global"><TodayView port={enriched} m={m} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
+      {tab === "cto" && <ErrorBoundary inline label="CTO"><TodayView port={enrichedCTO} m={mCTO} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
+      {tab === "pea" && <ErrorBoundary inline label="PEA"><>
+        <PEAHeader port={enrichedPEA}/>
+        {enrichedPEA.length
+          ? <TodayView port={enrichedPEA} m={mPEA} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/>
+          : <div className="card" style={{margin:12}}><div className="lbl">Onglet PEA</div><div className="dim" style={{fontSize:12,marginTop:6,lineHeight:1.5}}>Aucune position PEA pour l'instant. Tes 3 ETF (SPEA, AWAT, SLMA) sont pré-configurés et éligibles ; ils s'ajoutent automatiquement au 1ᵉʳ lancement, ou via ⚙ Réglages.</div></div>}
+      </></ErrorBoundary>}
       {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={liveHistMap} macroCtx={macroCtx}/></ErrorBoundary>}
-      {tab === "memory" && <ErrorBoundary inline label="Mémoire"><MemoryView snapshots={snapshots} port={enriched} m={m} eurusd={eurusd} qHistMap={liveHistMap} spyHist={spyHist}/></ErrorBoundary>}
+      {tab === "moteur" && <ErrorBoundary inline label="Moteur"><MemoryView snapshots={snapshots} port={enriched} m={m} eurusd={eurusd} qHistMap={liveHistMap} spyHist={spyHist}/></ErrorBoundary>}
 
       {detail && detailPort && <ErrorBoundary inline label="Détail"><DetailView
         ticker={detail} port={enriched} snapshots={snapshots}
@@ -5808,9 +6003,11 @@ function App() {
 
       <nav className="tab">
         {[
-          {k:"today",   ic:"●",l:"Actual"},
+          {k:"global",  ic:"🌐",l:"Global"},
+          {k:"cto",     ic:"📈",l:"CTO"},
+          {k:"pea",     ic:"🇪🇺",l:"PEA"},
           {k:"forecast",ic:"◔",l:"Forecast"},
-          {k:"memory",  ic:"◷",l:"Mémoire"}
+          {k:"moteur",  ic:"🔧",l:"Moteur"}
         ].map(t => (
           <div key={t.k} className={"tb"+(tab===t.k?" ac":"")} onClick={() => { setTab(t.k); setDetail(null); setCfgOpen(false); }}>
             <div className="ic">{t.ic}</div>
