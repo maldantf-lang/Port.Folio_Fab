@@ -313,7 +313,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = null;
+const PORT_ENC = {"v":1,"iter":250000,"salt":"Npm39lwgFORcOrzAGVPBWg==","iv":"ON4LoOa0Q7QvAslM","data":"K7a9XFrwU389R01btakVgn1XLu6inEkWRRcHJQhUJsI9rDmIbRJZ0sy3LsI13EpoOuO08b2Bhv//SNV8kj9+ckIEnaUXvO+6AaG7+I3zHIcZvYGwXvLt6CbV56tgHDYwYVPgxGbZxnZEZ7qxOE99+UAcNU3boyZWfZh9bdwUJU13nXA3/WSj8q3jxQu76VHYOlacwprl/6HH78eg7WR00d8brkfZYRTEUUUmMt+PzGJvf+JI4TaWQduzqZZ7ic/E4ozNoFNVSdc5GpCtH4QyoOcZOxpRgbVnAzzTUSecPZPcAMxRpNlwL8y2sdx3MCZikqTknW+gPUeREPmknJvuA9bIq6i5o+AVNb0Se3EqBGGkPIrCDgrhJHwlUgNss16EsyvwcJL/EwnbQG8G6D/eLap93XATtPoDb1hLqgZ7rQar73DRRV7mAhm8mtPQE/aqj4qZW/msTxurStGk92EXWq9SIDs6sWL5U6HJfh84NaZHg16JrKmm5NrxOp+3B9WeKN0GzzIztjxbT9WbYd81Lidt/Evirw7o1i6/bzgVvAeXGgUOirBnUu+zIiRxcASGgBmukVI/2mdm/u35iBHYQUGvRxttKdB9WR5WoMmWYQ7gZsOvijREuHgWCfrr3fspvhkhnXVYmC62sDGgNhcNFLOjH291bVjY1IGL8BpAx/bqG3WoNXQ0RBeVZTjLuz1wInGWK2MgkvAdjoukmpCm7s8wd80oRGarbG6r1+14PfMMS/aZVwtvq1AXG0EOEm7GdPRyxi2PGGIGkiFC5OK3ni8t6q0CLsDXLuHcSAiEbQ52UUzpU6JpfZWF+thw5CPQi3qH10eIU/B6WRyTh/318LOS3GjPTWv8FenG0elBnJC2pL5WP1EbDQFelSZLiPEAapu7erYRa/Pu4nCRvDHIdrQMiHYxUEGrwYM2UopKRTC0Sh8sskq9f2lfan9fp04LlqjsvvQWPxkWOURxd4urJcxFGqlxKgoR9puKIaFu4+weLZIKnyDZ2srpiVVy4DJu9tvNgVsRMLspGlYGMOlIwr8ZqeDq4X7S+f7Rn9UrrQBxdmVQ28zYL4LMoU/grhuqQ5DEeShrT+JlVZlkS7nt5HfzbEcyF/8x9gwMOZLWlpiO5w5hmgWe+UMaZGzZAsqIF151GoZ81k19Xtqk10XSsNU="};
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
