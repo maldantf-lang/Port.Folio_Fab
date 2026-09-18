@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.7-2026-09-17-010";
+const BUILD = "v20.9-2026-09-17-012";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -231,15 +231,15 @@ const REGISTRY = {
   HPE:  { n:"HP Enterprise",     y:"HPE",     ccy:"USD", role:"port", s:"Tech",    v:32, sig:"hold", def:45.0,  bounds:[5,200],  acct:"CTO" },
   AMZN: { n:"Amazon",            y:"AMZN",    ccy:"USD", role:"port", s:"Tech",    v:25, sig:"buy",  def:245.0, bounds:[50,900],  acct:"CTO" },
   MC:   { n:"LVMH",              y:"MC.PA",   ccy:"EUR", role:"port", s:"Luxe",    v:24, sig:"hold", def:490.0, bounds:[150,1500],acct:"CTO", pea:true },
-  NATO: { n:"Future of Defence", y:"NATO.L",  ccy:"USD", role:"port", s:"Défense", v:20, sig:"buy",  def:21.3,  bounds:[5,80],    acct:"CTO" },
+  NATO: { n:"Future of Defence", y:"NATO.L",  ccy:"USD", role:"port", s:"Défense", v:20, sig:"buy",  def:21.3,  bounds:[5,80],    acct:"CTO", etf:true },
   NVDA: { n:"NVIDIA",            y:"NVDA",    ccy:"USD", role:"port", s:"Tech",    v:38, sig:"buy",  def:196.0, bounds:[20,600],  acct:"CTO" },
   ABUS: { n:"Arbutus Biopharma", y:"ABUS",    ccy:"USD", role:"port", s:"Biotech", v:65, sig:"spec", def:4.70,  bounds:[0.5,40],  acct:"CTO" },
-  GAD:  { n:"Global Aero & Def", y:"DFND.MI", ccy:"EUR", role:"port", s:"Défense", v:18, sig:"buy",  def:8.42,  bounds:[2,50],    acct:"CTO" },
+  GAD:  { n:"Global Aero & Def", y:"DFND.MI", ccy:"EUR", role:"port", s:"Défense", v:18, sig:"buy",  def:8.42,  bounds:[2,50],    acct:"CTO", etf:true },
   MSFT: { n:"Microsoft",         y:"MSFT",    ccy:"USD", role:"port", s:"Tech",    v:22, sig:"buy",  def:390.0, bounds:[100,1200], acct:"CTO" },
   // ── PEA (ETF éligibles, cotés EUR) — symbole Yahoo <ISIN>.PA À VALIDER on-device (sinon repli sur def) ──
-  SPEA: { n:"iShares S&P 500 Swap PEA",   y:"SPEA.PA",  ccy:"EUR", role:"port", s:"Actions US",        v:15, sig:"hold", def:5.90,  bounds:[3,20],  acct:"PEA", pea:true, ter:0.10 },
-  AWAT: { n:"Amundi PEA Eau (Water)",     y:"AWAT.PA", ccy:"EUR", role:"port", s:"Thématique Eau",    v:18, sig:"hold", def:32.60, bounds:[15,60], acct:"PEA", pea:true, ter:0.60 },
-  SLMA: { n:"iShares MSCI EMU Screened",  y:"SLMA.DE",  ccy:"EUR", role:"port", s:"Actions zone euro", v:16, sig:"hold", def:11.30, bounds:[5,30],  acct:"PEA", pea:true, ter:0.12 },
+  SPEA: { n:"iShares S&P 500 Swap PEA",   y:"SPEA.PA",  ccy:"EUR", role:"port", s:"Actions US",        v:15, sig:"hold", def:5.90,  bounds:[3,20],  acct:"PEA", pea:true, etf:true, ter:0.10 },
+  AWAT: { n:"Amundi PEA Eau (Water)",     y:"AWAT.PA", ccy:"EUR", role:"port", s:"Thématique Eau",    v:18, sig:"hold", def:32.60, bounds:[15,60], acct:"PEA", pea:true, etf:true, ter:0.60 },
+  SLMA: { n:"iShares MSCI EMU Screened",  y:"SLMA.DE",  ccy:"EUR", role:"port", s:"Actions zone euro", v:16, sig:"hold", def:11.30, bounds:[5,30],  acct:"PEA", pea:true, etf:true, ter:0.12 },
   // ── Référence ──
   SPY:  { n:"S&P 500",           y:"SPY",     ccy:"USD", role:"bench", def:748.0, bounds:[200,1500] },
   // ── Watchlist (cours live, sans position) ──
@@ -550,7 +550,16 @@ const AN_BASE = {
     th:"Supercycle dépenses militaires globales. Biais US (LMT, RTX, NOC, GD). Commandes pluriannuelles visibles.",
     cat:["Budget DoD record — dépenses de défense américaines au plus haut","Aéronautique civile — reprise du trafic aérien soutenant le segment aérospatial","Contrats Indo-Pacifique — programmes pluriannuels liés aux tensions régionales"],
     ris:["Shutdown US — blocages budgétaires retardant les commandes","Cycle pacifique — une accalmie géopolitique freinerait le secteur","Coûts programmes (F-35) — dépassements et retards sur les grands programmes"],
-    act:"Renforcer + DCA",edg:"ETF mondial bénéficie même si un pays sous-performe."}
+    act:"Renforcer + DCA",edg:"ETF mondial bénéficie même si un pays sous-performe."},
+  SPEA:{r:"CŒUR LONG TERME",c:80,p:8,sig:"buy",lu:"2026-09-15",tgt:{l:5.8,a:6.8,h:8},
+    th:"Cœur d'un PEA long terme : le S&P 500 capture la croissance des plus grandes entreprises mondiales, rendu éligible au PEA via un swap. Frais très bas (0,10 %).",
+    edg:"Une exposition US logée dans un PEA — rare et fiscalement avantageuse sur le long terme."},
+  AWAT:{r:"THÉMATIQUE EAU",c:72,p:8,sig:"hold",lu:"2026-09-15",tgt:{l:29,a:35,h:41},
+    th:"Pari structurel sur l'eau : ressource sous tension (climat, démographie, infrastructures vieillissantes). Croissance longue mais secteur concentré et frais élevés (0,60 %).",
+    edg:"Mégatendance largement décorrélée des cycles technologiques."},
+  SLMA:{r:"CŒUR ZONE EURO",c:70,p:7,sig:"hold",lu:"2026-09-15",tgt:{l:10.5,a:12.5,h:14},
+    th:"Cœur actions zone euro en détention physique : diversification hors dollar, valorisations plus basses que les US. Éligible PEA par nature, frais bas (0,12 %).",
+    edg:"Contrepoids européen à une exposition américaine dominante."}
 };
 
 /* Données analystes EFFECTIVES = celles du code + celles que tu saisis dans l'app
@@ -5638,7 +5647,7 @@ function NavIcon({ k }) {
   return null;
 }
 
-function PEAView({ port, onSelect }) {
+function PEAView({ port, onSelect, qHistMap = {} }) {
   const tot = port.reduce((s,p)=>s+(p.val||0),0);
   const inv = port.reduce((s,p)=>s+(p.inv||0),0);
   const pnl = tot - inv;
@@ -5667,15 +5676,26 @@ function PEAView({ port, onSelect }) {
       ))}
     </div>
     <div className="card" style={{margin:"9px 12px 12px"}}>
-      <div className="cd-ti"><h3>Supports</h3><span className="dim" style={{fontSize:9}}>{port.length}</span></div>
+      <div className="cd-ti"><h3>Positions ({port.length})</h3></div>
       {port.map(p=>{
         const ter = REG[p.t] && REG[p.t].ter;
         return (
-          <div key={p.t} className="row" onClick={()=>onSelect(p.t)} style={{cursor:"pointer",alignItems:"center"}}>
-            <div style={{flex:"1 1 40%"}}><div style={{fontWeight:700,fontSize:12}}>{p.t}</div><div className="dim" style={{fontSize:8}}>{p.n}{ter!=null?` · TER ${ter}%`:""}</div></div>
-            <div className="num" style={{flex:1}}>{fe(p.val,0)}</div>
-            <div className="num" style={{flex:1,color:cl(p.pnl)}}>{fp(p.pct)}</div>
-            <div className="num dim" style={{flex:"0 0 14%"}}>{(p.wt||0).toFixed(0)}%</div>
+          <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)} style={{alignItems:"center"}}>
+            <div style={{flex:"0 0 33%"}}>
+              <div className="tk">{p.t}</div>
+              <div className="nm">{p.n}{ter!=null?` · TER ${ter}%`:""}</div>
+            </div>
+            <div style={{flex:"0 0 15%",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <Sparkline hist={qHistMap && qHistMap[p.t]} id={p.t}/>
+            </div>
+            <div className="num" style={{flex:"0 0 26%"}}>
+              <div>{p.pxE!=null?fe(p.pxE):"—"}</div>
+              <div style={{fontSize:10}} className="dim">{p.q.toLocaleString("fr-FR",{maximumFractionDigits:4})} u.</div>
+            </div>
+            <div className="num" style={{flex:"0 0 26%"}}>
+              <div style={{color:cl(p.pnl)}}>{fe(p.pnl)}</div>
+              <div style={{fontSize:10}}><span style={{color:cl(p.pct)}}>{fp(p.pct)}</span> • <span style={{color:"#8892a8"}}>{fp(p.wt,0)}</span></div>
+            </div>
           </div>
         );
       })}
@@ -5724,6 +5744,71 @@ function PEAHeader({ port }) {
       </div>}
     </div>
   );
+}
+
+function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab }) {
+  const val = a => (a||[]).reduce((s,p)=>s+(p.val||0),0);
+  const inv = a => (a||[]).reduce((s,p)=>s+(p.inv||0),0);
+  const totVal = val(portAll), totInv = inv(portAll), pnl = totVal-totInv;
+  const pct = totInv>0 ? pnl/totInv*100 : 0;
+  const vCTO = val(portCTO), vPEA = val(portPEA);
+  const pCTO = totVal>0 ? vCTO/totVal*100 : 0, pPEA = totVal>0 ? vPEA/totVal*100 : 0;
+  const dPEA = getPeaOpenDate();
+  const taxTot = netAfterTax(val(portCTO)-inv(portCTO),"CTO",dPEA).taxEUR + netAfterTax(val(portPEA)-inv(portPEA),"PEA",dPEA).taxEUR;
+  const isETF = t => !!(REG[t] && REG[t].etf);
+  const actions = (portAll||[]).filter(p=>!isETF(p.t)).sort((a,b)=>(b.val||0)-(a.val||0));
+  const etfs = (portAll||[]).filter(p=>isETF(p.t)).sort((a,b)=>(b.val||0)-(a.val||0));
+  const Row = p => (
+    <div key={p.t} className="row tap" onClick={()=>{ onGoTab && onGoTab(p.acct==="PEA"?"pea":"cto"); onSelect && onSelect(p.t); }} style={{alignItems:"center"}}>
+      <div style={{flex:"1 1 46%"}}>
+        <div style={{fontSize:12,fontWeight:700}}>{p.t} <span style={{fontSize:8,fontWeight:800,padding:"1px 5px",borderRadius:4,marginLeft:4,background:p.acct==="PEA"?"rgba(46,204,143,.18)":"rgba(79,131,245,.18)",color:p.acct==="PEA"?"#2ecc8f":"#4f83f5"}}>{p.acct==="PEA"?"PEA":"CTO"}</span></div>
+        <div className="dim" style={{fontSize:8}}>{p.n}</div>
+      </div>
+      <div className="num" style={{flex:1}}>{fe(p.val,0)}</div>
+      <div className="num" style={{flex:"0 0 22%",color:cl(p.pnl)}}>{fp(p.pct)}</div>
+    </div>
+  );
+  return (<>
+    <div className="card" style={{margin:"9px 12px 0"}}>
+      <div className="lbl">Patrimoine total</div>
+      <div className="mono" style={{fontSize:28,fontWeight:800,letterSpacing:"-.01em"}}>{fe(totVal)}</div>
+      <div style={{display:"flex",gap:14,marginTop:6,fontSize:12,flexWrap:"wrap"}}>
+        <span style={{color:cl(pnl),fontWeight:700}}>{fe(pnl)} ({fp(pct)})</span>
+        <span className="dim">Net si vendu : {fe(totVal-taxTot)}</span>
+      </div>
+    </div>
+    <div className="card" style={{margin:"9px 12px 0"}}>
+      <div className="cd-ti"><h3>Répartition par enveloppe</h3></div>
+      <div style={{display:"flex",height:10,borderRadius:5,overflow:"hidden",marginBottom:10,background:"#161c2a"}}>
+        <div style={{width:pCTO+"%",background:"#4f83f5"}}/>
+        <div style={{width:pPEA+"%",background:"#2ecc8f"}}/>
+      </div>
+      <div className="g2">
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{width:8,height:8,borderRadius:2,background:"#4f83f5",display:"inline-block"}}/><span style={{fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".06em"}}>CTO</span></div>
+          <div className="mono" style={{fontSize:15}}>{fe(vCTO)}</div>
+          <div className="dim" style={{fontSize:10}}>{pCTO.toFixed(0)}% · {(portCTO||[]).length} lignes</div>
+        </div>
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{width:8,height:8,borderRadius:2,background:"#2ecc8f",display:"inline-block"}}/><span style={{fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".06em"}}>PEA</span></div>
+          <div className="mono" style={{fontSize:15}}>{fe(vPEA)}</div>
+          <div className="dim" style={{fontSize:10}}>{pPEA.toFixed(0)}% · {(portPEA||[]).length} lignes</div>
+        </div>
+      </div>
+    </div>
+    <div className="card" style={{margin:"9px 12px 12px"}}>
+      <div className="cd-ti"><h3>Positions par classe</h3><span className="dim" style={{fontSize:9}}>{(portAll||[]).length}</span></div>
+      {actions.length>0 && <>
+        <div style={{fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".06em",margin:"2px 0 4px"}}>ACTIONS · {actions.length}</div>
+        {actions.map(Row)}
+      </>}
+      {etfs.length>0 && <>
+        <div style={{fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".06em",margin:"12px 0 4px"}}>ETF · {etfs.length}</div>
+        {etfs.map(Row)}
+      </>}
+      <div className="dim" style={{fontSize:9,marginTop:8}}>Touche une ligne pour ouvrir sa fiche dans son onglet (CTO ou PEA).</div>
+    </div>
+  </>);
 }
 
 function App() {
@@ -6094,14 +6179,14 @@ function App() {
         onSettings={() => setCfgOpen(true)}
       />
 
-      {tab !== "pea" && <Strip m={curM} alertCount={curSells}/>}
+      {tab !== "pea" && tab !== "global" && <Strip m={curM} alertCount={curSells}/>}
 
-      {tab === "global" && <ErrorBoundary inline label="Global"><TodayView port={enriched} m={m} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
+      {tab === "global" && <ErrorBoundary inline label="Global"><GlobalDashboard portAll={enriched} portCTO={enrichedCTO} portPEA={enrichedPEA} onSelect={setDetail} onGoTab={setTab}/></ErrorBoundary>}
       {tab === "cto" && <ErrorBoundary inline label="CTO"><TodayView port={enrichedCTO} m={mCTO} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
       {tab === "pea" && <ErrorBoundary inline label="PEA"><>
         <PEAHeader port={enrichedPEA}/>
         {enrichedPEA.length
-          ? <PEAView port={enrichedPEA} onSelect={setDetail}/>
+          ? <PEAView port={enrichedPEA} onSelect={setDetail} qHistMap={liveHistMap}/>
           : <div className="card" style={{margin:12}}><div className="lbl">Onglet PEA</div><div className="dim" style={{fontSize:12,marginTop:6,lineHeight:1.5}}>Aucune position PEA pour l'instant. Tes 3 ETF (SPEA, AWAT, SLMA) sont pré-configurés et éligibles ; ils s'ajoutent automatiquement au 1ᵉʳ lancement, ou via ⚙ Réglages.</div></div>}
       </></ErrorBoundary>}
       {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={liveHistMap} macroCtx={macroCtx}/></ErrorBoundary>}
