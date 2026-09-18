@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.6-2026-09-16-007";
+const BUILD = "v20.7-2026-09-17-009";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -238,7 +238,7 @@ const REGISTRY = {
   MSFT: { n:"Microsoft",         y:"MSFT",    ccy:"USD", role:"port", s:"Tech",    v:22, sig:"buy",  def:390.0, bounds:[100,1200], acct:"CTO" },
   // ── PEA (ETF éligibles, cotés EUR) — symbole Yahoo <ISIN>.PA À VALIDER on-device (sinon repli sur def) ──
   SPEA: { n:"iShares S&P 500 Swap PEA",   y:"SPEA.PA",  ccy:"EUR", role:"port", s:"Actions US",        v:15, sig:"hold", def:5.90,  bounds:[3,20],  acct:"PEA", pea:true, ter:0.10 },
-  AWAT: { n:"Amundi PEA Eau (Water)",     y:"FR0011882364.PA", ccy:"EUR", role:"port", s:"Thématique Eau",    v:18, sig:"hold", def:31.40, bounds:[15,60], acct:"PEA", pea:true, ter:0.60 },
+  AWAT: { n:"Amundi PEA Eau (Water)",     y:"AWAT.PA", ccy:"EUR", role:"port", s:"Thématique Eau",    v:18, sig:"hold", def:32.60, bounds:[15,60], acct:"PEA", pea:true, ter:0.60 },
   SLMA: { n:"iShares MSCI EMU Screened",  y:"SLMA.DE",  ccy:"EUR", role:"port", s:"Actions zone euro", v:16, sig:"hold", def:11.30, bounds:[5,30],  acct:"PEA", pea:true, ter:0.12 },
   // ── Référence ──
   SPY:  { n:"S&P 500",           y:"SPY",     ccy:"USD", role:"bench", def:748.0, bounds:[200,1500] },
@@ -313,7 +313,7 @@ const PORT_SKEL = regEntries("port").map(([t,e]) => ({
 
    Pour générer/regénérer ce bloc : ouvrir chiffrer-portefeuille.html en local.
    Tant qu'il vaut null, l'app démarre sur PORT_SKEL (structure sans montants). */
-const PORT_ENC = {"v":1,"iter":250000,"salt":"6elZXbC0Ceov+LRZMc+9dw==","iv":"AF/RstYFjOQQOvqr","data":"fk/0qcYsn8IkNPeW88lBIkdwUHGC7CMAYKdZVfxqBQVzI+w40sJ7VtPZKal1xI/Olg+lazfCU9Vowy5R/izN/jY0IKSnkxcsFmQW8ZzyQDrnjy6vavM7dvmO/4wBQd7cQSMnp6CwxlF69/5CnXiZThOx89qvfEZeETAgIDIC7sgthVT4kAsHYOXmXxPSpPxRyCizIU2fVyZl7k7cC3auS08ixExSCq5XRstRaJKJDJK5UCDU0KuK+EzHszEQ/SrOsyxaeM4XJcFxxybpWcUL8TtPVJoy5d3DxQPPYTuLBnnq/bOU88c1RxJ3mj6tYykkmO1OiCyDsjyMk37ZObq1pesotOArafZ3mUo4GoOUmAOyAO1CptTJ3qr2wK1+zostoh6CMdI0sP0XfQqbeevizGHZcUU2QQ0TZ3fBON3vV2Ta783BjzvxQ/ya3i8JLS0RiCa8uPJVUyEUiC2BRfaX1TEaWkR7RIxa+bXdQRzb8OtMd+53T9QHb8bDQ87Bq8bd3oQW0aGNut6iYz0bb4L3qVmugePIpG06Owbedg0RON10J41Fy0EVYsa4qQ4tDMy3vonMFbsp7YsiAtX6NVtpKbxEYvYm/eIGKYe6kUKobMO0B/1Hhgnarb1xb0dAjlD/OqLcqyJm4rVqzPmhpfJm+YaExSkBz6LHzz0VcEHmwx89SgAzs/8OgEEO2Kdc8Hrc3k/wlDZGKZXR585/anGx1rjYymUwGG8qPONKa9b7yvzHdwM95USlico+Icu/Z8YAog7CP18t58qv8Bei0lhltWrrEK3fpjaspJObwUbD5KWZaTQSqd22L1m+idA8x/JDasGaWmLI/Ua6jAepPMklY0NRk3O99pRGNRlnhABba4xcaBZy+fNRB2coBSbFReGzhCwegOO62UcOED8W1PPpyFZmucH4o/ZkH1eyErWYY4GgobR4RisqrE02c3gHe+wTgmT/ej0mlT2ZQwzzrfQ0XJrAtVPLCxMfyUPmjD1AP9eVg/euFsPVY5TERShWRV66+KkETh2272xmscByTOui/BFGQJCI4cdDmGphoUndJVDJEsfTSMwxDA3yRNQH8X5gYul+5m44IZtAoFwc7YO4qjfdVWh3aw9BI51/KJi1D90rdZFMmFkXV0ZEbeM3sB7NNVMaZLfx7d2RPqjrcpXdSAs="};
+const PORT_ENC = null;
 const PORT_DEF = PORT_SKEL;
 
 // Déchiffrement AES-GCM (mêmes paramètres que l'outil de chiffrement)
@@ -4833,9 +4833,32 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
   );
 }
 
+const CMP_COL = ["#4f83f5","#2ecc8f","#f0a020","#8b7cf5","#d4a843","#e85d5d","#5a6a8a"];
+const FUND_INFO = {
+  SPEA: {
+    isin:"IE000DQLYVB9", indice:"S&P 500", repl:"Synthétique (swap)", dom:"Irlande",
+    desc:"Réplique le S&P 500 (500 grandes capitalisations américaines) via un swap, ce qui le rend éligible au PEA alors qu'il s'agit d'actions américaines.",
+    secteurs:[["Technologie",32],["Services financiers",13],["Santé",11],["Conso. cyclique",10],["Communication",9],["Industrie",8],["Autres",17]],
+    geo:[["États-Unis",100]]
+  },
+  AWAT: {
+    isin:"FR0011882364", indice:"MSCI ACWI IMI Water", repl:"Synthétique (swap)", dom:"France",
+    desc:"S'expose au secteur mondial de l'eau (traitement, distribution, équipements) via un swap ; le panier physique détenu est européen, d'où l'éligibilité PEA.",
+    secteurs:[["Industrie / équipements",40],["Services aux collectivités",18],["Technologie",15],["Matériaux",12],["Autres",15]],
+    geo:[["Amérique du Nord",50],["Europe",38],["Reste du monde",12]]
+  },
+  SLMA: {
+    isin:"IE00BFNM3B99", indice:"MSCI EMU (zone euro)", repl:"Physique", dom:"Irlande",
+    desc:"Détient réellement les grandes et moyennes capitalisations de la zone euro (filtrées ESG). 100 % actions zone euro, éligibles PEA par nature.",
+    secteurs:[["Industrie",22],["Services financiers",18],["Conso. cyclique",14],["Technologie",12],["Santé",9],["Autres",25]],
+    geo:[["France",34],["Allemagne",26],["Pays-Bas",12],["Italie",9],["Espagne",8],["Autres",11]]
+  }
+};
+
 function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   const p = port.find(x => x.t === ticker); if (!p) return null;
   const a = AN[ticker] || {};
+  const fi = FUND_INFO[ticker];
   const [history, setHistory] = useState(null);
   const [qHistRaw, setQHist] = useState(null); // historique hebdo 3A (brut, en cache)
   // Historique effectif = brut + cours live greffé → le graphe, le %3 ans, le RSI et le beta
@@ -5140,6 +5163,38 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
           </div>
         )}
       </div>
+
+      {fi && (
+        <div className="card">
+          <div className="cd-ti"><h3>Fiche du fonds</h3><span className="chip buy" style={{fontSize:9}}>Éligible PEA</span></div>
+          <div style={{fontSize:12,color:"#dde3f0",lineHeight:1.5,marginBottom:10}}>{fi.desc}</div>
+          <div className="g2" style={{fontSize:11}}>
+            <div><div className="lbl">ISIN</div><div className="mono" style={{fontSize:11}}>{fi.isin}</div></div>
+            <div><div className="lbl">Indice suivi</div><div>{fi.indice}</div></div>
+            <div><div className="lbl">Réplication</div><div>{fi.repl}</div></div>
+            <div><div className="lbl">Frais annuels (TER)</div><div className="mono">{REG[ticker]&&REG[ticker].ter!=null?REG[ticker].ter+" %":"—"}</div></div>
+            <div><div className="lbl">Domicile</div><div>{fi.dom}</div></div>
+            <div><div className="lbl">Dividendes</div><div>Capitalisés (Acc)</div></div>
+          </div>
+        </div>
+      )}
+
+      {fi && (
+        <div className="card">
+          <div className="cd-ti"><h3>Composition</h3><span className="dim" style={{fontSize:9}}>indicatif</span></div>
+          <div style={{fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".06em",marginBottom:6}}>SECTEURS</div>
+          {fi.secteurs.map((s,i)=>(
+            <div key={s[0]} style={{marginBottom:6}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:2}}><span style={{color:"#dde3f0"}}>{s[0]}</span><span className="mono" style={{color:"#8892a8"}}>{s[1]}%</span></div>
+              <div style={{height:5,background:"#161c2a",borderRadius:3,overflow:"hidden"}}><div style={{width:s[1]+"%",height:"100%",background:CMP_COL[i%CMP_COL.length]}}/></div>
+            </div>
+          ))}
+          <div style={{fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".06em",margin:"10px 0 6px"}}>ZONES GÉOGRAPHIQUES</div>
+          {fi.geo.map(g=>(
+            <div key={g[0]} style={{display:"flex",justifyContent:"space-between",fontSize:10,padding:"2px 0"}}><span style={{color:"#dde3f0"}}>{g[0]}</span><span className="mono" style={{color:"#8892a8"}}>{g[1]}%</span></div>
+          ))}
+        </div>
+      )}
 
       {chartData.length > 0 && (
         <div className="card">
