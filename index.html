@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.9-2026-09-17-012";
+const BUILD = "v20.11-2026-09-21-014";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -159,10 +159,14 @@ function netAfterTax(gainEUR, acct, datePEA, horizonDate) {
    empêche toute ré-injection (si tu en supprimes un plus tard, il n'est pas re-créé). */
 const PEA_SEED_KEY = "fab-pea-seed-v1";
 const PEA_SEED = [
-  { t:"SPEA", q:1, b:6.39  },
+  { t:"SPEA", q:5, b:6.482 },
   { t:"AWAT", q:1, b:30.79 },
-  { t:"SLMA", q:1, b:11.10 },
+  { t:"SLMA", q:2, b:11.171 },
 ];
+// Corrections ponctuelles de quantité/PRU appliquées UNE fois aux positions existantes
+// (les positions vivent en local ; ceci met l'appareil à jour sans ressaisie).
+const PEA_UPDATE_KEY = "fab-pea-update-2026-09-21";
+const PEA_UPDATE = [ { t:"SPEA", q:5, b:6.482 }, { t:"SLMA", q:2, b:11.171 } ];
 function seedPeaPositions(port) {
   const have = new Set((port||[]).map(p=>p.t));
   const out = (port||[]).slice();
@@ -237,9 +241,9 @@ const REGISTRY = {
   GAD:  { n:"Global Aero & Def", y:"DFND.MI", ccy:"EUR", role:"port", s:"Défense", v:18, sig:"buy",  def:8.42,  bounds:[2,50],    acct:"CTO", etf:true },
   MSFT: { n:"Microsoft",         y:"MSFT",    ccy:"USD", role:"port", s:"Tech",    v:22, sig:"buy",  def:390.0, bounds:[100,1200], acct:"CTO" },
   // ── PEA (ETF éligibles, cotés EUR) — symbole Yahoo <ISIN>.PA À VALIDER on-device (sinon repli sur def) ──
-  SPEA: { n:"iShares S&P 500 Swap PEA",   y:"SPEA.PA",  ccy:"EUR", role:"port", s:"Actions US",        v:15, sig:"hold", def:5.90,  bounds:[3,20],  acct:"PEA", pea:true, etf:true, ter:0.10 },
+  SPEA: { n:"iShares S&P 500 Swap PEA",   y:"SPEA.PA",  ccy:"EUR", role:"port", s:"Actions US",        v:15, sig:"hold", def:6.50,  bounds:[3,20],  acct:"PEA", pea:true, etf:true, ter:0.10 },
   AWAT: { n:"Amundi PEA Eau (Water)",     y:"AWAT.PA", ccy:"EUR", role:"port", s:"Thématique Eau",    v:18, sig:"hold", def:32.60, bounds:[15,60], acct:"PEA", pea:true, etf:true, ter:0.60 },
-  SLMA: { n:"iShares MSCI EMU Screened",  y:"SLMA.DE",  ccy:"EUR", role:"port", s:"Actions zone euro", v:16, sig:"hold", def:11.30, bounds:[5,30],  acct:"PEA", pea:true, etf:true, ter:0.12 },
+  SLMA: { n:"iShares MSCI EMU Screened",  y:"SLMA.DE",  ccy:"EUR", role:"port", s:"Actions zone euro", v:16, sig:"hold", def:11.23, bounds:[5,30],  acct:"PEA", pea:true, etf:true, ter:0.12 },
   // ── Référence ──
   SPY:  { n:"S&P 500",           y:"SPY",     ccy:"USD", role:"bench", def:748.0, bounds:[200,1500] },
   // ── Watchlist (cours live, sans position) ──
@@ -5966,6 +5970,28 @@ function App() {
       setPort(r.port);
       try { saveStore({ ...(loadStore()||{}), port:r.port }); } catch(e){}
       showToast(`🇪🇺 ${r.added} support(s) PEA intégré(s)`);
+    }
+  }, [port, needDecrypt]);
+
+  // v20.10 — corrige une fois quantité/PRU de certains supports PEA sur l'appareil existant
+  const peaUpdateDone = useRef(false);
+  useEffect(() => {
+    if(peaUpdateDone.current || needDecrypt || !port) return;
+    let already = false;
+    try { already = localStorage.getItem(PEA_UPDATE_KEY) === "1"; } catch(e){}
+    peaUpdateDone.current = true;
+    if(already) return;
+    let changed = false;
+    const np = port.map(x => {
+      const u = PEA_UPDATE.find(u => u.t === x.t);
+      if(u && (x.q !== u.q || x.b !== u.b)) { changed = true; return { ...x, q:u.q, b:u.b }; }
+      return x;
+    });
+    try { localStorage.setItem(PEA_UPDATE_KEY, "1"); } catch(e){}
+    if(changed) {
+      setPort(np);
+      try { saveStore({ ...(loadStore()||{}), port:np }); } catch(e){}
+      showToast("🇪🇺 Quantités PEA mises à jour");
     }
   }, [port, needDecrypt]);
 
