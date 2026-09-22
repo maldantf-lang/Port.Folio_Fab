@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.11-2026-09-21-014";
+const BUILD = "v20.13-2026-09-21-016";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -378,12 +378,52 @@ async function fetchDailyHistory(force) {
   return data;
 }
 
+/* ═══ REGISTRE DE TRANSACTIONS (A1) ═══
+   Journal daté des achats/ventes. Sert à : reconstituer les quantités RÉELLES à chaque date
+   passée (historique juste), et calculer le P&L RÉALISÉ (coût moyen). N'affecte pas les
+   positions courantes (toujours gérées via le port). */
+const TXN_KEY = "fab-txns-v1";
+function loadTxns(){ try { const v = JSON.parse(localStorage.getItem(TXN_KEY)); return Array.isArray(v) ? v : []; } catch(e){ return []; } }
+function saveTxns(txns){ try { localStorage.setItem(TXN_KEY, JSON.stringify(txns||[])); } catch(e){} }
+// Quantités détenues par ticker À une date (incluse), reconstituées depuis le journal.
+function holdingsAsOf(txns, dateStr){
+  const cut = dateStr ? new Date(dateStr + "T23:59:59Z").getTime() : Date.now();
+  const h = {};
+  for(const x of (txns||[])){
+    if(!x || !(x.ts <= cut)) continue;
+    h[x.t] = (h[x.t]||0) + (x.type === "sell" ? -1 : 1) * (+x.q || 0);
+  }
+  return h;
+}
+// P&L réalisé (méthode du coût moyen) + coût courant par ticker.
+function ledgerStats(txns){
+  const byT = {};
+  const sorted = (txns||[]).slice().sort((a,b)=> (a.ts||0) - (b.ts||0));
+  for(const x of sorted){
+    if(!x) continue;
+    const t = x.t; if(!byT[t]) byT[t] = { q:0, cost:0, realized:0 };
+    const s = byT[t]; const q = +x.q||0, px = +x.px||0;
+    if(x.type === "sell"){
+      const avg = s.q > 1e-9 ? s.cost / s.q : 0;
+      const qs = Math.min(q, s.q);
+      s.realized += (px - avg) * qs;
+      s.cost -= avg * qs; s.q -= qs;
+      if(s.q < 1e-9){ s.q = 0; s.cost = 0; }
+    } else {
+      s.cost += px * q; s.q += q;
+    }
+  }
+  let realizedTot = 0; Object.keys(byT).forEach(t=> realizedTot += byT[t].realized);
+  return { byT, realizedTot };
+}
+
 /* Reconstitue les snapshots des jours où l'app n'a pas été ouverte, à partir des cours du jour
-   et des quantités LOCALES. N'écrase jamais un relevé existant ; ignore les jours déjà couverts. */
+   et des quantités RÉELLES de ce jour (registre si présent, sinon quantités courantes). */
 async function backfillSnapshots(daily, port, eurusdNow) {
   if(!daily || !daily.days || !port || !port.length) return { added:0 };
   const holdings = port.filter(p => p && p.q > 0);
   if(!holdings.length) return { added:0 };
+  const ledger = loadTxns();
   let existing = [];
   try { existing = await snapshotsRange(0); } catch(e) {}
   const covered = new Set(existing.map(x => new Date(x.ts).toISOString().slice(0,10)));
@@ -393,16 +433,19 @@ async function backfillSnapshots(daily, port, eurusdNow) {
     if(covered.has(d)) continue;                       // ce jour a déjà un relevé réel
     const px = daily.days[d]; if(!px) continue;
     const fx = (px.eurusd > 0) ? px.eurusd : eurusdNow;
+    const asOf = ledger.length ? holdingsAsOf(ledger, d) : null;   // A1 : quantités RÉELLES ce jour-là
     let tot = 0, inv = 0, ok = true;
     const pos = [];
     for(const p of holdings) {
+      const qd = asOf ? (asOf[p.t]||0) : p.q;
+      if(qd <= 0) continue;                              // pas encore détenu ce jour-là
       const raw = px[p.t];
       if(raw == null || !(raw > 0)) { ok = false; break; }   // ticker absent ce jour-là
       const meta = REG[p.t];
       const pxE = (meta && meta.ccy === "EUR") ? raw : (fx > 0 ? raw/fx : raw);
-      const val = p.q * pxE;
-      tot += val; inv += p.q * ((meta && meta.ccy === "EUR") ? p.b : (fx > 0 ? p.b/fx : p.b));
-      pos.push({ t:p.t, q:p.q, b:p.b, pxE:+pxE.toFixed(4), val:+val.toFixed(2) });
+      const val = qd * pxE;
+      tot += val; inv += qd * ((meta && meta.ccy === "EUR") ? p.b : (fx > 0 ? p.b/fx : p.b));
+      pos.push({ t:p.t, q:qd, b:p.b, pxE:+pxE.toFixed(4), val:+val.toFixed(2) });
     }
     if(!ok || !(tot > 0)) continue;
     // 12h00 UTC : un horodatage neutre, au milieu du jour concerné
@@ -4616,6 +4659,7 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
         fetchCount={fetchCount} notifPerm={notifPerm} onAskNotif={onAskNotif}/>
       <SyncCard port={port} onPortChange={onPortChange}/>
       <CalibrationStatus/>
+      <TxnLedger port={port} eurusd={eurusd}/>
       <div className="card">
         <div className="cd-ti"><h3>Empreinte digitale</h3></div>
         <BioSettings pinActive={pinActive}/>
@@ -5750,7 +5794,30 @@ function PEAHeader({ port }) {
   );
 }
 
-function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab }) {
+function dayActions(port, qHistMap){
+  const items = [];
+  (port||[]).forEach(p=>{
+    const an = AN[p.t] || {};
+    const conv = an.c || 50;
+    const qh = qHistMap && qHistMap[p.t];
+    const rsi = (qh && qh.length>=16) ? calcRSI(qh.map(d=>d.px),14) : null;
+    const push = (urg, kind, color, msg) => items.push({ t:p.t, acct:p.acct, kind, color, msg, score: urg*(0.5+conv/200) });
+    if(an.tgt && p.pxNative!=null){
+      if(p.pxNative <= an.tgt.l) push(90,"Plancher","#e85d5d",`Sous ton seuil plancher (${an.tgt.l}) — protéger ou couper la perte`);
+      else if(p.pxNative >= an.tgt.h) push(85,"Sécuriser","#2ecc8f",`Au-dessus de ton objectif (${an.tgt.h}) — envisager une prise de bénéfice`);
+    }
+    if(p.wt > 35) push(80,"Concentration","#f0a020",`${p.wt.toFixed(0)}% du portefeuille — alléger pour diversifier`);
+    if((p.effSig||p.sig)==="sell") push(70,"Vendre","#e85d5d","Signal négatif — réévaluer la sortie");
+    if(rsi!=null){
+      if(rsi>=75) push(55,"Suracheté","#f0a020",`RSI ${rsi.toFixed(0)} — a beaucoup monté, potentiel court terme entamé`);
+      else if(rsi<=25) push(55,"Survendu","#4f83f5",`RSI ${rsi.toFixed(0)} — a beaucoup baissé, rebond possible`);
+    }
+    if(p.effDrift) push(40,"Verdict ajusté","#8b7cf5",p.effReason||"Verdict ajusté au prix récent");
+  });
+  return items.sort((a,b)=>b.score-a.score);
+}
+
+function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMap = {} }) {
   const val = a => (a||[]).reduce((s,p)=>s+(p.val||0),0);
   const inv = a => (a||[]).reduce((s,p)=>s+(p.inv||0),0);
   const totVal = val(portAll), totInv = inv(portAll), pnl = totVal-totInv;
@@ -5773,6 +5840,24 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab }) {
     </div>
   );
   return (<>
+    {(()=>{ const acts = dayActions(portAll, qHistMap).slice(0,8);
+      return (
+        <div className="card" style={{margin:"9px 12px 0"}}>
+          <div className="cd-ti"><h3>Actions du jour</h3>{acts.length>0 && <span className="dim" style={{fontSize:9}}>{acts.length}</span>}</div>
+          {acts.length===0
+            ? <div className="dim" style={{fontSize:11,lineHeight:1.4}}>Rien d'urgent — aucun seuil franchi, pas de concentration ni de signal fort. Portefeuille sous contrôle.</div>
+            : acts.map((a,i)=>(
+                <div key={i} className="row tap" onClick={()=>{ onGoTab && onGoTab(a.acct==="PEA"?"pea":"cto"); onSelect && onSelect(a.t); }} style={{alignItems:"center",gap:8}}>
+                  <span style={{alignSelf:"stretch",width:3,borderRadius:2,background:a.color,flex:"0 0 3px"}}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,fontWeight:700}}>{a.t} <span style={{fontSize:8,fontWeight:800,color:a.color,marginLeft:2,letterSpacing:".04em"}}>{a.kind.toUpperCase()}</span></div>
+                    <div className="dim" style={{fontSize:9,lineHeight:1.3}}>{a.msg}</div>
+                  </div>
+                </div>
+              ))}
+        </div>
+      );
+    })()}
     <div className="card" style={{margin:"9px 12px 0"}}>
       <div className="lbl">Patrimoine total</div>
       <div className="mono" style={{fontSize:28,fontWeight:800,letterSpacing:"-.01em"}}>{fe(totVal)}</div>
@@ -5813,6 +5898,63 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab }) {
       <div className="dim" style={{fontSize:9,marginTop:8}}>Touche une ligne pour ouvrir sa fiche dans son onglet (CTO ou PEA).</div>
     </div>
   </>);
+}
+
+function TxnLedger({ port, eurusd }) {
+  const [txns, setTxns] = useState(() => loadTxns());
+  const [f, setF] = useState({ t:"", type:"buy", date:new Date().toISOString().slice(0,10), q:"", px:"" });
+  const commit = next => { const s = (next||[]).slice().sort((a,b)=>(a.ts||0)-(b.ts||0)); setTxns(s); saveTxns(s); };
+  const add = () => {
+    if(!f.t || !f.q || !f.px){ alert("Ticker, quantité et prix obligatoires"); return; }
+    commit([...txns, { id:"tx"+Date.now()+Math.floor(Math.random()*1000), ts:new Date(f.date+"T12:00:00Z").getTime(), date:f.date, t:f.t.toUpperCase().trim(), type:f.type, q:+f.q, px:+f.px }]);
+    setF({ ...f, q:"", px:"" });
+  };
+  const del = id => commit(txns.filter(x=>x.id!==id));
+  const seed = () => {
+    if(txns.length && !confirm("Ajouter un achat initial (aujourd'hui, au PRU actuel) pour chaque position ?")) return;
+    const today = new Date().toISOString().slice(0,10), now = new Date(today+"T12:00:00Z").getTime();
+    const seeded = (port||[]).filter(p=>p.q>0).map((p,i)=>({ id:"txseed"+now+i, ts:now, date:today, t:p.t, type:"buy", q:p.q, px:p.b }));
+    commit([...txns, ...seeded]);
+  };
+  const stats = ledgerStats(txns);
+  const realizedEUR = Object.keys(stats.byT).reduce((s,t)=>{ const r=stats.byT[t].realized; return s + ((REG[t]&&REG[t].ccy!=="EUR"&&eurusd>0)?r/eurusd:r); },0);
+  const inp = { width:"100%", background:"#161c2a", border:"1px solid #3a4560", borderRadius:6, color:"#dde3f0", padding:"7px 8px", fontSize:12, boxSizing:"border-box" };
+  const list = txns.slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Registre de transactions</h3><span className="dim" style={{fontSize:9}}>{txns.length}</span></div>
+      <div className="dim" style={{fontSize:10,marginBottom:8,lineHeight:1.4}}>Journalise tes achats/ventes datés → historique juste (quantités réelles à chaque date) et <strong>P&L réalisé</strong>. N'affecte pas tes positions courantes.</div>
+      <div className="g2" style={{marginBottom:6}}>
+        <input style={inp} placeholder="Ticker (ex. SPEA)" value={f.t} onChange={e=>setF({...f,t:e.target.value})}/>
+        <input style={inp} type="date" value={f.date} onChange={e=>setF({...f,date:e.target.value})}/>
+      </div>
+      <div className="g2" style={{marginBottom:6}}>
+        <input style={inp} type="number" placeholder="Quantité" value={f.q} onChange={e=>setF({...f,q:e.target.value})}/>
+        <input style={inp} type="number" placeholder="Prix unitaire" value={f.px} onChange={e=>setF({...f,px:e.target.value})}/>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:8}}>
+        <button onClick={()=>setF({...f,type:"buy"})} style={{flex:1,padding:"7px",borderRadius:6,cursor:"pointer",border:"1px solid "+(f.type==="buy"?"#2ecc8f":"#3a4560"),background:f.type==="buy"?"rgba(46,204,143,.15)":"transparent",color:f.type==="buy"?"#2ecc8f":"#8892a8",fontSize:11,fontWeight:700}}>Achat</button>
+        <button onClick={()=>setF({...f,type:"sell"})} style={{flex:1,padding:"7px",borderRadius:6,cursor:"pointer",border:"1px solid "+(f.type==="sell"?"#e85d5d":"#3a4560"),background:f.type==="sell"?"rgba(232,93,93,.15)":"transparent",color:f.type==="sell"?"#e85d5d":"#8892a8",fontSize:11,fontWeight:700}}>Vente</button>
+        <button onClick={add} className="bn bn-b" style={{flex:1,fontSize:11}}>Ajouter</button>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderTop:"1px solid rgba(255,255,255,.06)",borderBottom:"1px solid rgba(255,255,255,.06)",marginBottom:8}}>
+        <span style={{fontSize:10,color:"#8892a8",fontWeight:800,letterSpacing:".05em"}}>P&L RÉALISÉ (CUMUL)</span>
+        <span className="mono" style={{fontSize:14,fontWeight:800,color:cl(realizedEUR)}}>{fe(realizedEUR)}</span>
+      </div>
+      {list.length===0
+        ? <div style={{textAlign:"center",padding:"6px 0"}}><button onClick={seed} className="bn" style={{fontSize:11}}>Initialiser depuis mes positions actuelles</button></div>
+        : <>
+            {list.map(x=>(
+              <div key={x.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
+                <span style={{fontSize:8,fontWeight:800,padding:"1px 5px",borderRadius:4,background:x.type==="sell"?"rgba(232,93,93,.18)":"rgba(46,204,143,.18)",color:x.type==="sell"?"#e85d5d":"#2ecc8f"}}>{x.type==="sell"?"VENTE":"ACHAT"}</span>
+                <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700}}>{x.t}</div><div className="dim" style={{fontSize:9}}>{x.date} · {x.q} @ {x.px}</div></div>
+                <span onClick={()=>del(x.id)} style={{color:"#e85d5d",cursor:"pointer",fontSize:15,padding:"0 4px"}}>×</span>
+              </div>
+            ))}
+            <div style={{textAlign:"center",marginTop:8}}><button onClick={seed} className="bn" style={{fontSize:10}}>+ Ajouter mes positions actuelles</button></div>
+          </>}
+    </div>
+  );
 }
 
 function App() {
@@ -6207,7 +6349,7 @@ function App() {
 
       {tab !== "pea" && tab !== "global" && <Strip m={curM} alertCount={curSells}/>}
 
-      {tab === "global" && <ErrorBoundary inline label="Global"><GlobalDashboard portAll={enriched} portCTO={enrichedCTO} portPEA={enrichedPEA} onSelect={setDetail} onGoTab={setTab}/></ErrorBoundary>}
+      {tab === "global" && <ErrorBoundary inline label="Global"><GlobalDashboard portAll={enriched} portCTO={enrichedCTO} portPEA={enrichedPEA} onSelect={setDetail} onGoTab={setTab} qHistMap={liveHistMap}/></ErrorBoundary>}
       {tab === "cto" && <ErrorBoundary inline label="CTO"><TodayView port={enrichedCTO} m={mCTO} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
       {tab === "pea" && <ErrorBoundary inline label="PEA"><>
         <PEAHeader port={enrichedPEA}/>
