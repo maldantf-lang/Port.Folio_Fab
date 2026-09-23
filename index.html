@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.13-2026-09-21-016";
+const BUILD = "v20.15-2026-09-21-018";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -3908,6 +3908,64 @@ function JournalCard({ port }) {
   );
 }
 
+function hhiIndex(port){
+  const tot = (port||[]).reduce((s,p)=>s+(p.val||0),0);
+  if(!(tot>0)) return 0;
+  return (port||[]).reduce((s,p)=>{ const w=(p.val||0)/tot; return s+w*w; },0);
+}
+function RiskDashboard({ port, m, qHistMap, spyHist }) {
+  const valid = (port||[]).filter(p=>p.val!=null);
+  const totVal = valid.reduce((s,p)=>s+p.val,0);
+  // VaR paramétrique hebdo 95% à partir de la vol annualisée déjà calculée dans metrics()
+  const volWeekly = (m.wv||0)/100 / Math.sqrt(52);
+  const var95 = totVal * volWeekly * 1.65;
+  // Beta portefeuille : moyenne pondérée des beta individuels (calculés sur l'historique réel)
+  const spyPx = spyHist ? spyHist.map(d=>d.px) : [];
+  let betaW = 0, betaWsum = 0;
+  valid.forEach(p=>{ const qh=(qHistMap||{})[p.t]; if(!qh||qh.length<8||spyPx.length<8) return;
+    const b = calcBeta(qh.map(d=>d.px), spyPx); if(b==null) return;
+    betaW += b*(p.wt||0); betaWsum += (p.wt||0); });
+  const betaPF = betaWsum>0 ? betaW/betaWsum : null;
+  // Concentration
+  const hhi = hhiIndex(valid);
+  const hhiLabel = hhi>=0.25?["Très concentré","#e85d5d"]:hhi>=0.15?["Concentré","#f0a020"]:["Bien diversifié","#2ecc8f"];
+  // Exposition devises (devise de cotation)
+  let eur=0, usd=0; valid.forEach(p=>{ const c=(REG[p.t]&&REG[p.t].ccy)||"USD"; if(c==="EUR") eur+=p.val; else usd+=p.val; });
+  const pEur = totVal>0?eur/totVal*100:0, pUsd = totVal>0?usd/totVal*100:0;
+  const swapUSD = valid.filter(p=>p.t==="SPEA").reduce((s,p)=>s+(p.val||0),0);
+  // Corrélations fortes (réutilise le moteur existant, pas de duplication)
+  const corr = calcHistCorrelations(valid, qHistMap);
+  const clusters = corr ? hiddenClusters(valid, corr.mat) : [];
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Risque consolidé</h3><span className="dim" style={{fontSize:9}}>toutes enveloppes</span></div>
+      <div className="g3" style={{marginBottom:10}}>
+        <div style={{textAlign:"center"}}><div className="lbl">VaR 1 sem. (95%)</div><div className="mono" style={{fontSize:14,color:"#e85d5d"}}>−{fe(var95)}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Beta portefeuille</div><div className="mono" style={{fontSize:14}}>{betaPF!=null?betaPF.toFixed(2):"—"}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Concentration</div><div className="mono" style={{fontSize:14,color:hhiLabel[1]}}>{hhi.toFixed(3)}</div></div>
+      </div>
+      <div className="dim" style={{fontSize:9,marginBottom:10,lineHeight:1.4}}>
+        VaR : perte plausible sur 1 semaine, 95 % du temps — un ordre de grandeur, pas un plafond garanti. Beta : sensibilité moyenne au S&P 500 (1 = suit le marché). Concentration (HHI) : <strong style={{color:hhiLabel[1]}}>{hhiLabel[0]}</strong>.
+      </div>
+      <div style={{marginBottom:10}}>
+        <div style={{fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".05em",marginBottom:4}}>EXPOSITION DEVISES (cotation)</div>
+        <div style={{display:"flex",height:8,borderRadius:4,overflow:"hidden",background:"#161c2a",marginBottom:4}}>
+          <div style={{width:pEur+"%",background:"#4f83f5"}}/><div style={{width:pUsd+"%",background:"#f0a020"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:10}}><span>EUR {pEur.toFixed(0)}%</span><span>USD {pUsd.toFixed(0)}%</span></div>
+        {swapUSD>0 && <div className="dim" style={{fontSize:9,marginTop:4,lineHeight:1.4}}>⚠ SPEA est coté en EUR mais réplique le S&P 500 (swap) : son exposition économique réelle est en <strong>dollar</strong>, non reflétée ci-dessus.</div>}
+      </div>
+      {clusters.length>0 && (
+        <div>
+          <div style={{fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".05em",marginBottom:4}}>CORRÉLATIONS FORTES (&gt;0,7)</div>
+          {clusters.map((c,i)=>(
+            <div key={i} style={{fontSize:10,padding:"3px 0",color:"#dde3f0"}}>{c.tickers.join(" ↔ ")} <span className="dim">— {c.wt}% du portefeuille bouge ensemble</span></div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
   const precision = useMemo(()=>calcMotorPrecision(snapshots),[snapshots]);
   const [backtest, setBacktest] = useState(null);
@@ -3927,6 +3985,7 @@ function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
   return (
     <>
       <HistoryView snapshots={snapshots} port={port} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/>
+      <RiskDashboard port={port} m={m} qHistMap={qHistMap} spyHist={spyHist}/>
       <MoteurAdjustments port={port}/>
       <ReliabilityByTickerCard snapshots={snapshots}/>
       <JournalCard port={port}/>
@@ -5817,13 +5876,33 @@ function dayActions(port, qHistMap){
   return items.sort((a,b)=>b.score-a.score);
 }
 
-function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMap = {} }) {
+const REBAL_KEY = "fab-rebal-target";
+function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMap = {}, snapshots = [], spyHist, eurusd }) {
+  const [tgtCTO, setTgtCTO] = useState(() => { try { return +localStorage.getItem(REBAL_KEY) || 50; } catch(e){ return 50; } });
+  const setTarget = v => { const n = Math.max(0,Math.min(100,+v||0)); setTgtCTO(n); try{ localStorage.setItem(REBAL_KEY, String(n)); }catch(e){} };
   const val = a => (a||[]).reduce((s,p)=>s+(p.val||0),0);
   const inv = a => (a||[]).reduce((s,p)=>s+(p.inv||0),0);
   const totVal = val(portAll), totInv = inv(portAll), pnl = totVal-totInv;
   const pct = totInv>0 ? pnl/totInv*100 : 0;
   const vCTO = val(portCTO), vPEA = val(portPEA);
   const pCTO = totVal>0 ? vCTO/totVal*100 : 0, pPEA = totVal>0 ? vPEA/totVal*100 : 0;
+
+  // A2 — drawdown courant (depuis le plus-haut historique) et max sur la période connue
+  const validSnaps = (snapshots||[]).filter(s=>Number.isFinite(s.tot) && s.tot>0);
+  const allVals = validSnaps.map(s=>s.tot).concat(totVal>0?[totVal]:[]);
+  const peak = allVals.length ? Math.max(...allVals) : totVal;
+  const ddCur = peak>0 ? (totVal-peak)/peak*100 : 0;
+  let ddMax = 0, run = -Infinity;
+  validSnaps.slice().sort((a,b)=>a.ts-b.ts).concat([{tot:totVal}]).forEach(s=>{ run=Math.max(run,s.tot); const d=run>0?(s.tot-run)/run*100:0; if(d<ddMax) ddMax=d; });
+
+  // A3 — alpha vs S&P 500 (meilleur horizon disponible dans calcHistBenchmark)
+  const hb = spyHist ? calcHistBenchmark(portAll, qHistMap, spyHist, eurusd) : null;
+  const bestHb = hb ? hb.find(h=>h.avail) : null;
+
+  // C2 — rééquilibrage vs cible CTO/PEA
+  const drift = pCTO - tgtCTO;
+  const needsRebal = Math.abs(drift) >= 5 && totVal>0;
+  const moveEUR = needsRebal ? Math.abs(drift)/100*totVal : 0;
   const dPEA = getPeaOpenDate();
   const taxTot = netAfterTax(val(portCTO)-inv(portCTO),"CTO",dPEA).taxEUR + netAfterTax(val(portPEA)-inv(portPEA),"PEA",dPEA).taxEUR;
   const isETF = t => !!(REG[t] && REG[t].etf);
@@ -5867,6 +5946,16 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
       </div>
     </div>
     <div className="card" style={{margin:"9px 12px 0"}}>
+      <div className="cd-ti"><h3>Performance</h3>{bestHb && <span className="dim" style={{fontSize:9}}>vs S&P 500 · {bestHb.label}</span>}</div>
+      <div className="g3">
+        <div style={{textAlign:"center"}}><div className="lbl">Drawdown actuel</div><div className="mono" style={{fontSize:15,color:ddCur<-0.1?"#e85d5d":"#8892a8"}}>{fp(ddCur,1)}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Drawdown max</div><div className="mono" style={{fontSize:15,color:"#e85d5d"}}>{fp(ddMax,1)}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Alpha</div><div className="mono" style={{fontSize:15,color:bestHb?cl(bestHb.alpha):"#3a4560"}}>{bestHb?fp(bestHb.alpha,1):"—"}</div></div>
+      </div>
+      <div className="dim" style={{fontSize:9,marginTop:6,lineHeight:1.4}}>{bestHb?`Toi ${fp(bestHb.portRet,1)} vs S&P ${fp(bestHb.spyRet,1)} sur ${bestHb.label}.`:"Historique insuffisant pour comparer au S&P 500."} Courbe détaillée et backtest dans l'onglet Moteur.</div>
+    </div>
+
+    <div className="card" style={{margin:"9px 12px 0"}}>
       <div className="cd-ti"><h3>Répartition par enveloppe</h3></div>
       <div style={{display:"flex",height:10,borderRadius:5,overflow:"hidden",marginBottom:10,background:"#161c2a"}}>
         <div style={{width:pCTO+"%",background:"#4f83f5"}}/>
@@ -5883,6 +5972,17 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
           <div className="mono" style={{fontSize:15}}>{fe(vPEA)}</div>
           <div className="dim" style={{fontSize:10}}>{pPEA.toFixed(0)}% · {(portPEA||[]).length} lignes</div>
         </div>
+      </div>
+      <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.05)"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".05em",marginBottom:5}}>
+          <span>CIBLE CTO / PEA</span>
+          <span>
+            <input type="number" min="0" max="100" value={tgtCTO} onChange={e=>setTarget(e.target.value)} style={{width:42,background:"#161c2a",border:"1px solid #3a4560",borderRadius:4,color:"#dde3f0",padding:"2px 4px",fontSize:10,textAlign:"center"}}/> % CTO / {100-tgtCTO} % PEA
+          </span>
+        </div>
+        {needsRebal
+          ? <div style={{fontSize:10,color:"#f0a020",lineHeight:1.4}}>Dérive de <strong>{Math.abs(drift).toFixed(0)} pts</strong> vs cible — transférer environ <strong>{fe(moveEUR)}</strong> {drift>0?"du CTO vers le PEA":"du PEA vers le CTO"} pour revenir à la cible.</div>
+          : <div style={{fontSize:10,color:"#2ecc8f"}}>Allocation proche de la cible (écart &lt; 5 pts).</div>}
       </div>
     </div>
     <div className="card" style={{margin:"9px 12px 12px"}}>
@@ -6349,7 +6449,7 @@ function App() {
 
       {tab !== "pea" && tab !== "global" && <Strip m={curM} alertCount={curSells}/>}
 
-      {tab === "global" && <ErrorBoundary inline label="Global"><GlobalDashboard portAll={enriched} portCTO={enrichedCTO} portPEA={enrichedPEA} onSelect={setDetail} onGoTab={setTab} qHistMap={liveHistMap}/></ErrorBoundary>}
+      {tab === "global" && <ErrorBoundary inline label="Global"><GlobalDashboard portAll={enriched} portCTO={enrichedCTO} portPEA={enrichedPEA} onSelect={setDetail} onGoTab={setTab} qHistMap={liveHistMap} snapshots={snapshots} spyHist={spyHist} eurusd={eurusd}/></ErrorBoundary>}
       {tab === "cto" && <ErrorBoundary inline label="CTO"><TodayView port={enrichedCTO} m={mCTO} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
       {tab === "pea" && <ErrorBoundary inline label="PEA"><>
         <PEAHeader port={enrichedPEA}/>
