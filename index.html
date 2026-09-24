@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.15-2026-09-21-018";
+const BUILD = "v20.16-2026-09-22-019";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -415,6 +415,52 @@ function ledgerStats(txns){
   }
   let realizedTot = 0; Object.keys(byT).forEach(t=> realizedTot += byT[t].realized);
   return { byT, realizedTot };
+}
+function ledgerRealizedEUR(txns, eurusd){ const s=ledgerStats(txns); let tot=0; Object.keys(s.byT).forEach(t=> tot+=(nativeToEUR(t, s.byT[t].realized, eurusd)||0)); return tot; }
+
+/* Le registre devient la SOURCE DE VÉRITÉ des positions détenues : après chaque ajout/suppression
+   de transaction, on rejoue tout le journal (coût moyen pondéré) et on écrase q/b des positions
+   concernées — plus de double saisie entre « Registre » et « Ajouter une position ». Une position
+   entièrement soldée (q≈0) est retirée ; une nouvelle ligne jamais ajoutée manuellement est créée
+   à partir du registre du support (REG) si connu. */
+function syncPortFromLedger(port, txns){
+  if(!txns || !txns.length) return port||[];
+  const stats = ledgerStats(txns).byT;
+  const out = (port||[]).slice();
+  Object.keys(stats).forEach(t=>{
+    const s = stats[t];
+    const idx = out.findIndex(p=>p.t===t);
+    if(s.q > 1e-9){
+      const avgB = s.cost / s.q;
+      if(idx>=0) out[idx] = { ...out[idx], q:+s.q.toFixed(6), b:+avgB.toFixed(6) };
+      else { const meta = REG[t]||{}; out.push({ t, n:meta.n||t, q:+s.q.toFixed(6), b:+avgB.toFixed(6), s:meta.s||"Autre", sig:meta.sig||"hold", v:meta.v||20, acct:meta.acct||"CTO" }); }
+    } else if(idx>=0) out.splice(idx,1);
+  });
+  return out;
+}
+
+/* TWR (méthode de Dietz modifiée) : rendement neutre aux apports/retraits, sur la période
+   couverte par l'historique de valeur (snapshots). Sans cette méthode, un simple apport de
+   capital (ex. achat de nouvelles parts) se lit à tort comme de la performance. Chaque
+   transaction du registre est un flux externe, pondéré par le temps restant dans la période. */
+function twrModifiedDietz(snapshots, txns, eurusd, curVal){
+  const valid = (snapshots||[]).filter(s=>Number.isFinite(s.tot) && s.tot>0).sort((a,b)=>a.ts-b.ts);
+  if(!valid.length || !(curVal>0)) return null;
+  const start = valid[0].ts, end = Date.now();
+  const BMV = valid[0].tot, EMV = curVal;
+  const span = end - start; if(span <= 0) return null;
+  let CF = 0, weighted = 0;
+  (txns||[]).forEach(x=>{
+    if(!x || x.ts < start || x.ts > end) return;
+    const amt = nativeToEUR(x.t, (+x.q||0)*(+x.px||0), eurusd) || 0;
+    const flow = x.type === "sell" ? -amt : amt;   // achat = apport (+), vente = retrait (-)
+    const w = (end - x.ts) / span;
+    CF += flow; weighted += flow * w;
+  });
+  const denom = BMV + weighted;
+  if(Math.abs(denom) < 1e-6) return null;
+  const twr = (EMV - BMV - CF) / denom;
+  return { twr: +(twr*100).toFixed(1), days: Math.round(span/86400000), hasFlows: CF !== 0 };
 }
 
 /* Reconstitue les snapshots des jours où l'app n'a pas été ouverte, à partir des cours du jour
@@ -854,9 +900,6 @@ function saveAlerts(o) {
 }
 function loadDCA() {
   try { const s=localStorage.getItem(DCA_KEY); return s?JSON.parse(s):{}; } catch(e){ return {}; }
-}
-function saveDCA(d) {
-  try { localStorage.setItem(DCA_KEY, JSON.stringify(d)); } catch(e){}
 }
 
 const WATCH_KEY = "fab-pf-watch-v6";
@@ -4579,38 +4622,6 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
   const [pinA, setPinA] = useState("");
   const [pinB, setPinB] = useState("");
   const [pinMsg, setPinMsg] = useState("");
-  const [dcaTicker, setDcaTicker] = useState("");
-  const [dcaQty, setDcaQty] = useState("");
-  const [dcaPrice, setDcaPrice] = useState("");
-  const [dcaDate, setDcaDate] = useState(new Date().toISOString().slice(0,10));
-  const [dcaHistory, setDcaHistory] = useState(loadDCA);
-
-  const addDCA = () => {
-    const t=dcaTicker.toUpperCase().trim();
-    if(!t||!dcaQty||!dcaPrice) return;
-    const h={...dcaHistory,[t]:[...(dcaHistory[t]||[]),{date:dcaDate,qty:+dcaQty,price:+dcaPrice}]};
-    setDcaHistory(h); saveDCA(h); setDcaQty(""); setDcaPrice("");
-  };
-
-  const delDCAEntry = (t, entry) => {
-    let removed = false;
-    const next = (dcaHistory[t]||[]).filter(x => {
-      if (!removed && x.date===entry.date && x.qty===entry.qty && x.price===entry.price) { removed = true; return false; }
-      return true;
-    });
-    const h = { ...dcaHistory };
-    if (next.length) h[t] = next; else delete h[t];
-    setDcaHistory(h); saveDCA(h);
-  };
-
-  const applyDCAtoPosition = (t, totQ, pru) => {
-    if (!port.some(p => p.t === t)) {
-      alert(t + " n'est pas dans le portefeuille. Ajoute d'abord la position ci-dessous.");
-      return;
-    }
-    if (!confirm(`Remplacer le PRU et la quantité de ${t} par les valeurs DCA ?\nQté ${fnum(totQ,4)} · PRU ${fe(pru)}`)) return;
-    onPortChange(port.map(p => p.t === t ? { ...p, q: totQ, b: pru } : p));
-  };
 
   const removePos = (t) => {
     if (!confirm(`Supprimer ${t} du portefeuille ?`)) return;
@@ -4718,7 +4729,7 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
         fetchCount={fetchCount} notifPerm={notifPerm} onAskNotif={onAskNotif}/>
       <SyncCard port={port} onPortChange={onPortChange}/>
       <CalibrationStatus/>
-      <TxnLedger port={port} eurusd={eurusd}/>
+      <TxnLedger port={port} eurusd={eurusd} onPortChange={onPortChange}/>
       <div className="card">
         <div className="cd-ti"><h3>Empreinte digitale</h3></div>
         <BioSettings pinActive={pinActive}/>
@@ -4752,85 +4763,6 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
           </>
         )}
       </div>
-      {/* DCA TRACKER */}
-      <div className="card">
-        <div className="cd-ti"><h3>DCA Tracker</h3><span className="dim" style={{fontSize:9}}>achats · P&L latent · lissage</span></div>
-        <div className="g3" style={{marginBottom:6}}>
-          <div><div className="lbl">Ticker</div><input placeholder="NVDA" value={dcaTicker} onChange={e=>setDcaTicker(e.target.value.toUpperCase())}/></div>
-          <div><div className="lbl">Quantité</div><input type="number" step="0.001" value={dcaQty} onChange={e=>setDcaQty(e.target.value)}/></div>
-          <div><div className="lbl">Prix (€)</div><input type="number" step="0.01" value={dcaPrice} onChange={e=>setDcaPrice(e.target.value)}/></div>
-        </div>
-        <div style={{marginBottom:8}}><div className="lbl">Date</div><input type="date" value={dcaDate} onChange={e=>setDcaDate(e.target.value)}/></div>
-        <button className="bn bn-b" style={{width:"100%",marginBottom:10}} onClick={addDCA}>Enregistrer achat</button>
-        {Object.keys(dcaHistory).map(t=>{
-          const entries=[...(dcaHistory[t]||[])].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
-          const totQ=entries.reduce((s,x)=>s+x.qty,0);
-          const totV=entries.reduce((s,x)=>s+x.qty*x.price,0);
-          const pru=totQ>0?totV/totQ:0;
-          const pxE=priceEUR(t,prices,eurusd);
-          const val=pxE!=null?totQ*pxE:null;
-          const pnl=val!=null?val-totV:null;
-          const pnlPct=(pnl!=null&&totV>0)?pnl/totV*100:null;
-          const firstP=entries.length?entries[0].price:0;
-          const lumpVal=(pxE!=null&&firstP>0)?(totV/firstP)*pxE:null;
-          const dcaEdge=(val!=null&&lumpVal!=null)?val-lumpVal:null;
-          const inPort=port.some(p=>p.t===t);
-          const vals=entries.map(e=>e.price); if(pxE!=null)vals.push(pxE); if(pru>0)vals.push(pru);
-          const lo=Math.min(...vals), hi=Math.max(...vals);
-          const sx=v=>hi>lo?Math.max(0,Math.min(100,(v-lo)/(hi-lo)*100)):50;
-          return (
-            <div key={t} style={{padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,.04)"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                <strong className="tk">{t}</strong>
-                <span className="dim" style={{fontSize:10}}>{entries.length} achat{entries.length>1?"s":""}</span>
-              </div>
-              <div className="g3" style={{marginBottom:6}}>
-                <div><div className="lbl">Qté totale</div><div className="mono" style={{fontSize:11}}>{fnum(totQ,4)}</div></div>
-                <div><div className="lbl">Investi</div><div className="mono" style={{fontSize:11}}>{fe(totV)}</div></div>
-                <div><div className="lbl">PRU moyen</div><div className="mono" style={{fontSize:11,color:"#4f83f5"}}>{fe(pru)}</div></div>
-              </div>
-              {val!=null && (
-                <div className="g3" style={{marginBottom:8}}>
-                  <div><div className="lbl">Valeur actuelle</div><div className="mono" style={{fontSize:11}}>{fe(val)}</div></div>
-                  <div><div className="lbl">+/- value</div><div className="mono" style={{fontSize:11,color:cl(pnl)}}>{fe(pnl)}</div></div>
-                  <div><div className="lbl">Perf.</div><div className="mono" style={{fontSize:11,color:cl(pnlPct)}}>{fp(pnlPct)}</div></div>
-                </div>
-              )}
-              <div style={{position:"relative",height:30,margin:"2px 0 4px",background:"rgba(255,255,255,.04)",borderRadius:6}}>
-                {entries.map((e,i)=>(
-                  <div key={i} title={e.date+" · "+fnum(e.qty,3)+" @ "+fe(e.price)}
-                    style={{position:"absolute",left:sx(e.price)+"%",top:"50%",transform:"translate(-50%,-50%)",
-                      width:7,height:7,borderRadius:"50%",background:"#8892a8",border:"1px solid #0f1420"}}/>
-                ))}
-                <div style={{position:"absolute",left:sx(pru)+"%",top:0,bottom:0,width:2,background:"#4f83f5",transform:"translateX(-50%)"}}/>
-                {pxE!=null && <div style={{position:"absolute",left:sx(pxE)+"%",top:0,bottom:0,width:2,background:cl(pnl),transform:"translateX(-50%)"}}/>}
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#8892a8",marginBottom:8}}>
-                <span>{fe(lo)}</span>
-                <span><span style={{color:"#4f83f5"}}>│</span>PRU <span style={{color:cl(pnl)}}>│</span>cours ●achats</span>
-                <span>{fe(hi)}</span>
-              </div>
-              {dcaEdge!=null && (
-                <div className="dim" style={{fontSize:10,marginBottom:8}}>
-                  Lissage vs achat unique au {entries[0].date} : <span style={{color:cl(dcaEdge),fontWeight:700}}>{(dcaEdge>=0?"+":"")+fe(dcaEdge)}</span> ({dcaEdge>=0?"le DCA a payé":"le DCA a coûté"})
-                </div>
-              )}
-              <button className="bn bn-b" style={{width:"100%",fontSize:10,opacity:inPort?1:.5,marginBottom:8}} onClick={()=>applyDCAtoPosition(t,totQ,pru)}>→ Appliquer à la position</button>
-              <div>
-                {entries.map((e,i)=>(
-                  <div key={i} className="row" style={{padding:"3px 0",fontSize:10}}>
-                    <span className="dim" style={{flex:"0 0 30%"}}>{e.date}</span>
-                    <span className="mono" style={{flex:1,textAlign:"right"}}>{fnum(e.qty,3)} @ {fe(e.price)}</span>
-                    <button onClick={()=>delDCAEntry(t,e)} title="Supprimer cette ligne"
-                      style={{marginLeft:8,background:"none",border:"none",color:"#e85d5d",cursor:"pointer",fontSize:13,lineHeight:1}}>✕</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
       {/* COMPTES PEA / CTO */}
       <div className="card">
         <div className="cd-ti"><h3>Fiscalité des positions</h3><span className="dim" style={{fontSize:9}}>CTO=PFU 30% · PEA=17.2% PS</span></div>
@@ -5898,6 +5830,9 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
   // A3 — alpha vs S&P 500 (meilleur horizon disponible dans calcHistBenchmark)
   const hb = spyHist ? calcHistBenchmark(portAll, qHistMap, spyHist, eurusd) : null;
   const bestHb = hb ? hb.find(h=>h.avail) : null;
+  const txns = loadTxns();
+  const twr = twrModifiedDietz(snapshots, txns, eurusd, totVal);
+  const realizedEUR = ledgerRealizedEUR(txns, eurusd);
 
   // C2 — rééquilibrage vs cible CTO/PEA
   const drift = pCTO - tgtCTO;
@@ -5943,6 +5878,7 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
       <div style={{display:"flex",gap:14,marginTop:6,fontSize:12,flexWrap:"wrap"}}>
         <span style={{color:cl(pnl),fontWeight:700}}>{fe(pnl)} ({fp(pct)})</span>
         <span className="dim">Net si vendu : {fe(totVal-taxTot)}</span>
+        {realizedEUR !== 0 && <span className="dim">Réalisé (ventes) : <strong style={{color:cl(realizedEUR)}}>{fe(realizedEUR)}</strong></span>}
       </div>
     </div>
     <div className="card" style={{margin:"9px 12px 0"}}>
@@ -5952,7 +5888,13 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
         <div style={{textAlign:"center"}}><div className="lbl">Drawdown max</div><div className="mono" style={{fontSize:15,color:"#e85d5d"}}>{fp(ddMax,1)}</div></div>
         <div style={{textAlign:"center"}}><div className="lbl">Alpha</div><div className="mono" style={{fontSize:15,color:bestHb?cl(bestHb.alpha):"#3a4560"}}>{bestHb?fp(bestHb.alpha,1):"—"}</div></div>
       </div>
-      <div className="dim" style={{fontSize:9,marginTop:6,lineHeight:1.4}}>{bestHb?`Toi ${fp(bestHb.portRet,1)} vs S&P ${fp(bestHb.spyRet,1)} sur ${bestHb.label}.`:"Historique insuffisant pour comparer au S&P 500."} Courbe détaillée et backtest dans l'onglet Moteur.</div>
+      {twr && (
+        <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.05)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:10,color:"#8892a8"}}>Perf. réelle (TWR{twr.hasFlows?", neutre aux apports":""}) sur {twr.days}j</span>
+          <span className="mono" style={{fontSize:14,fontWeight:800,color:cl(twr.twr)}}>{fp(twr.twr,1)}</span>
+        </div>
+      )}
+      <div className="dim" style={{fontSize:9,marginTop:6,lineHeight:1.4}}>{bestHb?`Toi ${fp(bestHb.portRet,1)} vs S&P ${fp(bestHb.spyRet,1)} sur ${bestHb.label}.`:"Historique insuffisant pour comparer au S&P 500."} {twr&&twr.hasFlows?"Le % ci-dessus (Patrimoine) inclut tes apports ; le TWR les neutralise pour juger ta vraie performance.":""} Courbe détaillée et backtest dans l'onglet Moteur.</div>
     </div>
 
     <div className="card" style={{margin:"9px 12px 0"}}>
@@ -6000,10 +5942,30 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
   </>);
 }
 
-function TxnLedger({ port, eurusd }) {
+const DCA_MIGRATED_KEY = "fab-dca-migrated-v1";
+function TxnLedger({ port, eurusd, onPortChange }) {
   const [txns, setTxns] = useState(() => loadTxns());
   const [f, setF] = useState({ t:"", type:"buy", date:new Date().toISOString().slice(0,10), q:"", px:"" });
-  const commit = next => { const s = (next||[]).slice().sort((a,b)=>(a.ts||0)-(b.ts||0)); setTxns(s); saveTxns(s); };
+  const commit = next => {
+    const s = (next||[]).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
+    setTxns(s); saveTxns(s);
+    if(onPortChange) onPortChange(cur => syncPortFromLedger(cur, s));   // le registre pilote désormais les positions
+  };
+  // Migration unique : les anciennes entrées « DCA Tracker » (si tu en avais) deviennent des achats du registre.
+  useEffect(() => {
+    let already=false; try{ already = localStorage.getItem(DCA_MIGRATED_KEY)==="1"; }catch(e){}
+    if(already) return;
+    try { localStorage.setItem(DCA_MIGRATED_KEY, "1"); } catch(e){}
+    const dca = loadDCA();
+    const keys = Object.keys(dca||{});
+    if(!keys.length) return;
+    const imported = [];
+    keys.forEach(t => (dca[t]||[]).forEach((e,i) => {
+      imported.push({ id:"txdca"+t+i+Date.now(), ts:new Date((e.date||f.date)+"T12:00:00Z").getTime(), date:e.date||f.date, t, type:"buy", q:+e.qty, px:+e.price });
+    }));
+    if(imported.length) commit([...loadTxns(), ...imported]);
+    // eslint-disable-next-line
+  }, []);
   const add = () => {
     if(!f.t || !f.q || !f.px){ alert("Ticker, quantité et prix obligatoires"); return; }
     commit([...txns, { id:"tx"+Date.now()+Math.floor(Math.random()*1000), ts:new Date(f.date+"T12:00:00Z").getTime(), date:f.date, t:f.t.toUpperCase().trim(), type:f.type, q:+f.q, px:+f.px }]);
