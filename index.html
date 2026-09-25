@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.16-2026-09-22-019";
+const BUILD = "v20.17-2026-09-22-020";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -3598,6 +3598,13 @@ function ScenariosView({ port, m, qHistMap }) {
     const p10v = c50 - sl, p90v = c50 + sh2;
     return { mo: mo+"M", p10:+p10v.toFixed(0), p50:+c50.toFixed(0), p90:+p90v.toFixed(0), base:+p10v.toFixed(0), span:+(p90v-p10v).toFixed(0) };
   });
+  // Domaine Y serré : Recharts, sans domaine explicite, arrondit à un "beau" chiffre qui peut
+  // largement dépasser les données (ex. axe à 600€ pour un cône qui culmine à 350€) → grand vide
+  // visuel. On calcule le vrai min/max (p10 bas, p90 haut, valeur actuelle) + 8% de marge.
+  const fanVals = fan.flatMap(f=>[f.p10,f.p90]).concat([curVal]);
+  const fanMin = Math.min(...fanVals), fanMax = Math.max(...fanVals);
+  const fanPad = Math.max((fanMax-fanMin)*0.08, fanMax*0.02, 1);
+  const fanDomain = [Math.max(0, Math.floor(fanMin-fanPad)), Math.ceil(fanMax+fanPad)];
 
   // Calcul impacts portefeuille avec chocs dynamiques (sectoriel + change EUR/USD)
   const stressImpact = useMemo(() => {
@@ -3763,9 +3770,9 @@ function ScenariosView({ port, m, qHistMap }) {
             <ComposedChart data={fan} margin={{top:8,right:10,left:0,bottom:0}}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.05)"/>
               <XAxis dataKey="mo" tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false}/>
-              <YAxis tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false} width={44} tickFormatter={v=>"€"+Math.round(v)}/>
+              <YAxis domain={fanDomain} tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false} width={44} tickFormatter={v=>"€"+Math.round(v)}/>
               <Tooltip content={<FanTip/>}/>
-              <ReferenceLine y={curVal} stroke="#8892a8" strokeDasharray="4 3" strokeOpacity={0.6}/>
+              <ReferenceLine y={curVal} stroke="#8892a8" strokeDasharray="4 3" strokeOpacity={0.6} label={{value:"actuel",fill:"#8892a8",fontSize:9,position:"insideBottomLeft"}}/>
               <ReferenceLine x={horizon+"M"} stroke="#4f83f5" strokeDasharray="3 2" strokeOpacity={0.85} label={{value:horizon+"M",fill:"#4f83f5",fontSize:10,position:"top"}}/>
               <Area type="monotone" dataKey="base" stackId="cone" stroke="none" fill="transparent" isAnimationActive={false} connectNulls/>
               <Area type="monotone" dataKey="span" stackId="cone" stroke="none" fill="rgba(79,131,245,.18)" isAnimationActive={false} connectNulls/>
