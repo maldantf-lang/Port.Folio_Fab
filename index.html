@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.18-2026-09-22-021";
+const BUILD = "v20.19-2026-09-22-022";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -3517,7 +3517,7 @@ function FanTip({ active, payload, label }) {
   );
 }
 
-function ScenariosView({ port, m, qHistMap }) {
+function ScenariosView({ port, m, qHistMap, snapshots }) {
   const [horizon, setHorizon] = useState(3);   // V19 : 3 mois en détail par défaut
   const [sInfo, setSInfo] = useState(false);
   const [activeStress, setActiveStress] = useState(null);
@@ -3602,10 +3602,23 @@ function ScenariosView({ port, m, qHistMap }) {
     const moLbl = Number.isInteger(mo) ? mo+"M" : mo.toFixed(1)+"M";
     return { mo: moLbl, p10:+p10v.toFixed(0), p50:+c50.toFixed(0), p90:+p90v.toFixed(0), base:+p10v.toFixed(0), span:+(p90v-p10v).toFixed(0) };
   });
-  // Domaine Y serré : Recharts, sans domaine explicite, arrondit à un "beau" chiffre qui peut
-  // largement dépasser les données (ex. axe à 600€ pour un cône qui culmine à 350€) → grand vide
-  // visuel. On calcule le vrai min/max (p10 bas, p90 haut, valeur actuelle) + 8% de marge.
-  const fanVals = fan.flatMap(f=>[f.p10,f.p90]).concat([curVal]);
+  // HISTORIQUE : la courbe de valeur réelle du portefeuille jusqu'à aujourd'hui, prolongée par le
+  // cône de prévision — un seul graphique, passé et futur, comme demandé (plus besoin de deviner
+  // où en est le P&L : on le VOIT, raccordé à la projection).
+  const todayStr = new Date().toISOString().slice(0,10);
+  const pastRaw = (snapshots||[])
+    .filter(s => Number.isFinite(s.tot) && s.tot>0 && new Date(s.ts).toISOString().slice(0,10) < todayStr)
+    .sort((a,b)=>a.ts-b.ts);
+  const PAST_MAX = 24;
+  const pastDS = pastRaw.length>PAST_MAX
+    ? Array.from({length:PAST_MAX}, (_,i)=>pastRaw[Math.round(i*(pastRaw.length-1)/(PAST_MAX-1))])
+    : pastRaw;
+  const past = pastDS.map(s => ({
+    mo: new Date(s.ts).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"}),
+    p50:+s.tot.toFixed(0), p10:null, p90:null, base:null, span:null
+  }));
+  const fanFull = [...past, ...fan];
+  const fanVals = fanFull.flatMap(f=>[f.p10,f.p90,f.p50]).filter(v=>v!=null).concat([curVal]);
   const fanMin = Math.min(...fanVals), fanMax = Math.max(...fanVals);
   const fanPad = Math.max((fanMax-fanMin)*0.08, fanMax*0.02, 1);
   const fanDomain = [Math.max(0, Math.floor(fanMin-fanPad)), Math.ceil(fanMax+fanPad)];
@@ -3768,20 +3781,22 @@ function ScenariosView({ port, m, qHistMap }) {
         </div>}
       </div>
       <div className="card">
-        <div className="cd-ti"><h3>Cône en éventail</h3><span className="dim" style={{fontSize:9}}>0 → {horizon}M</span></div>
-        <div style={{display:"flex",gap:12,fontSize:9,color:"#8892a8",marginBottom:6}}>
+        <div className="cd-ti"><h3>Historique & prévisions</h3><span className="dim" style={{fontSize:9}}>{past.length>0?`${past.length} relevés → `:""}0 → {horizon}M</span></div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:9,color:"#8892a8",marginBottom:6}}>
+          {past.length>0 && <span><span style={{display:"inline-block",width:8,height:2,background:"#8892a8",marginRight:4,verticalAlign:"middle"}}/>Historique (réel)</span>}
           <span><span style={{display:"inline-block",width:8,height:8,borderRadius:4,background:"#2ecc8f",marginRight:4}}/>P90 optimiste</span>
           <span><span style={{display:"inline-block",width:8,height:2,background:"#4f83f5",marginRight:4,verticalAlign:"middle"}}/>P50 médian</span>
           <span><span style={{display:"inline-block",width:8,height:8,borderRadius:4,background:"#e85d5d",marginRight:4}}/>P10 pessimiste</span>
         </div>
         <div style={{height:190}}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={fan} margin={{top:8,right:10,left:0,bottom:0}}>
+            <ComposedChart data={fanFull} margin={{top:8,right:10,left:0,bottom:0}}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.05)"/>
               <XAxis dataKey="mo" tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false}/>
               <YAxis domain={fanDomain} tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false} width={44} tickFormatter={v=>"€"+Math.round(v)}/>
               <Tooltip content={<FanTip/>}/>
               <ReferenceLine y={curVal} stroke="#8892a8" strokeDasharray="4 3" strokeOpacity={0.6} label={{value:"actuel",fill:"#8892a8",fontSize:9,position:"insideBottomLeft"}}/>
+              {past.length>0 && <ReferenceLine x={fan[0].mo} stroke="#4f83f5" strokeOpacity={0.5} strokeDasharray="2 2" label={{value:"Aujourd'hui",fill:"#4f83f5",fontSize:9,position:"top"}}/>}
               <Area type="monotone" dataKey="base" stackId="cone" stroke="none" fill="transparent" isAnimationActive={false} connectNulls/>
               <Area type="monotone" dataKey="span" stackId="cone" stroke="none" fill="rgba(79,131,245,.18)" isAnimationActive={false} connectNulls/>
               <Line type="monotone" dataKey="p90" stroke="#2ecc8f" strokeWidth={1.5} strokeDasharray="3 3" dot={false} isAnimationActive={false}/>
@@ -3790,7 +3805,7 @@ function ScenariosView({ port, m, qHistMap }) {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-        <div style={{fontSize:9,color:"#3a4560",marginTop:6,textAlign:"center",lineHeight:1.4}}>Le graphique s'ajuste à l'horizon choisi ci-dessus ({horizon}M). Zone bleue = fourchette P10–P90 (corrélations incluses). Pointillé = valeur actuelle {fe(curVal)}.</div>
+        <div style={{fontSize:9,color:"#3a4560",marginTop:6,textAlign:"center",lineHeight:1.4}}>{past.length>0?"Trait gris = ta valeur réelle passée. ":""}Le graphique s'ajuste à l'horizon choisi ci-dessus ({horizon}M). Zone bleue = fourchette P10–P90 (corrélations incluses). Pointillé = valeur actuelle {fe(curVal)}.</div>
       </div>
       <div className="card">
         <div className="cd-ti" style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}} onClick={()=>setSInfo(v=>!v)}>
@@ -3869,7 +3884,7 @@ function TodayView(props) {
 
 // DEMAIN — la projection : contexte macro, stress-tests, thèses, watchlist
 // Calendrier earnings AGRÉGÉ au niveau portefeuille — anticipe la volatilité autour des publications
-function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx }) {
+function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx, snapshots }) {
   const [sub, setSub] = useState("prev");
   return (
     <>
@@ -3880,7 +3895,7 @@ function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx }) {
       </div>
       {sub==="prev" ? (
         <>
-          <ScenariosView port={port} m={m} qHistMap={qHistMap}/>
+          <ScenariosView port={port} m={m} qHistMap={qHistMap} snapshots={snapshots}/>
           <MacroView prices={prices} qHistMap={qHistMap} macroCtx={macroCtx} port={port}/>
           <AnalysisView port={port} onSelect={onSelect}/>
         </>
@@ -6436,7 +6451,7 @@ function App() {
           ? <PEAView port={enrichedPEA} onSelect={setDetail} qHistMap={liveHistMap}/>
           : <div className="card" style={{margin:12}}><div className="lbl">Onglet PEA</div><div className="dim" style={{fontSize:12,marginTop:6,lineHeight:1.5}}>Aucune position PEA pour l'instant. Tes 3 ETF (SPEA, AWAT, SLMA) sont pré-configurés et éligibles ; ils s'ajoutent automatiquement au 1ᵉʳ lancement, ou via ⚙ Réglages.</div></div>}
       </></ErrorBoundary>}
-      {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={liveHistMap} macroCtx={macroCtx}/></ErrorBoundary>}
+      {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={liveHistMap} macroCtx={macroCtx} snapshots={snapshots}/></ErrorBoundary>}
       {tab === "moteur" && <ErrorBoundary inline label="Moteur"><MemoryView snapshots={snapshots} port={enriched} m={m} eurusd={eurusd} qHistMap={liveHistMap} spyHist={spyHist}/></ErrorBoundary>}
 
       {detail && detailPort && <ErrorBoundary inline label="Détail"><DetailView
