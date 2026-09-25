@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.17-2026-09-22-020";
+const BUILD = "v20.18-2026-09-22-021";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -3590,13 +3590,17 @@ function ScenariosView({ port, m, qHistMap }) {
   const fcs = port.filter(p=>p.val!=null).map(p => ({ t:p.t, val:p.val, f: forecast(p, MACRO) }));
   const curVal = fcs.reduce((s,x)=>s+x.val, 0);
   const fanTks = fcs.map(x=>x.t);
-  const fan = [0,1,2,3,6,9,12].map(mo => {
+  // Le cône s'étend toujours de 0 à L'HORIZON CHOISI (3/6/9/12M) — jamais compressé dans un coin
+  // d'un axe fixe à 12M : à 3M, le graphique montre 0→3M en détail, pas 0→12M avec 3M écrasé à gauche.
+  const fanMonths = Array.from({length:7}, (_,i) => +(horizon*i/6).toFixed(2));
+  const fan = fanMonths.map(mo => {
     const hh = mo/12;
     const c50 = fcs.reduce((s,x)=>s + x.val*(1+x.f.p50*hh), 0);
     const sl = pfMat ? corrAggregate(fcs.map(x=>x.val*(x.f.p50-x.f.p10)*hh), fanTks, pfMat) : fcs.reduce((s,x)=>s+x.val*(x.f.p50-x.f.p10)*hh,0);
     const sh2 = pfMat ? corrAggregate(fcs.map(x=>x.val*(x.f.p90-x.f.p50)*hh), fanTks, pfMat) : fcs.reduce((s,x)=>s+x.val*(x.f.p90-x.f.p50)*hh,0);
     const p10v = c50 - sl, p90v = c50 + sh2;
-    return { mo: mo+"M", p10:+p10v.toFixed(0), p50:+c50.toFixed(0), p90:+p90v.toFixed(0), base:+p10v.toFixed(0), span:+(p90v-p10v).toFixed(0) };
+    const moLbl = Number.isInteger(mo) ? mo+"M" : mo.toFixed(1)+"M";
+    return { mo: moLbl, p10:+p10v.toFixed(0), p50:+c50.toFixed(0), p90:+p90v.toFixed(0), base:+p10v.toFixed(0), span:+(p90v-p10v).toFixed(0) };
   });
   // Domaine Y serré : Recharts, sans domaine explicite, arrondit à un "beau" chiffre qui peut
   // largement dépasser les données (ex. axe à 600€ pour un cône qui culmine à 350€) → grand vide
@@ -3764,7 +3768,12 @@ function ScenariosView({ port, m, qHistMap }) {
         </div>}
       </div>
       <div className="card">
-        <div className="cd-ti"><h3>Cône en éventail</h3><span className="dim" style={{fontSize:9}}>0 → 12 mois · repère {horizon}M</span></div>
+        <div className="cd-ti"><h3>Cône en éventail</h3><span className="dim" style={{fontSize:9}}>0 → {horizon}M</span></div>
+        <div style={{display:"flex",gap:12,fontSize:9,color:"#8892a8",marginBottom:6}}>
+          <span><span style={{display:"inline-block",width:8,height:8,borderRadius:4,background:"#2ecc8f",marginRight:4}}/>P90 optimiste</span>
+          <span><span style={{display:"inline-block",width:8,height:2,background:"#4f83f5",marginRight:4,verticalAlign:"middle"}}/>P50 médian</span>
+          <span><span style={{display:"inline-block",width:8,height:8,borderRadius:4,background:"#e85d5d",marginRight:4}}/>P10 pessimiste</span>
+        </div>
         <div style={{height:190}}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={fan} margin={{top:8,right:10,left:0,bottom:0}}>
@@ -3773,14 +3782,15 @@ function ScenariosView({ port, m, qHistMap }) {
               <YAxis domain={fanDomain} tick={{fontSize:10,fill:"#8892a8"}} axisLine={false} tickLine={false} width={44} tickFormatter={v=>"€"+Math.round(v)}/>
               <Tooltip content={<FanTip/>}/>
               <ReferenceLine y={curVal} stroke="#8892a8" strokeDasharray="4 3" strokeOpacity={0.6} label={{value:"actuel",fill:"#8892a8",fontSize:9,position:"insideBottomLeft"}}/>
-              <ReferenceLine x={horizon+"M"} stroke="#4f83f5" strokeDasharray="3 2" strokeOpacity={0.85} label={{value:horizon+"M",fill:"#4f83f5",fontSize:10,position:"top"}}/>
               <Area type="monotone" dataKey="base" stackId="cone" stroke="none" fill="transparent" isAnimationActive={false} connectNulls/>
               <Area type="monotone" dataKey="span" stackId="cone" stroke="none" fill="rgba(79,131,245,.18)" isAnimationActive={false} connectNulls/>
+              <Line type="monotone" dataKey="p90" stroke="#2ecc8f" strokeWidth={1.5} strokeDasharray="3 3" dot={false} isAnimationActive={false}/>
+              <Line type="monotone" dataKey="p10" stroke="#e85d5d" strokeWidth={1.5} strokeDasharray="3 3" dot={false} isAnimationActive={false}/>
               <Line type="monotone" dataKey="p50" stroke="#4f83f5" strokeWidth={2} dot={false} isAnimationActive={false}/>
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-        <div style={{fontSize:9,color:"#3a4560",marginTop:6,textAlign:"center",lineHeight:1.4}}>Zone bleue = fourchette P10–P90 (corrélations incluses). Ligne = trajectoire médiane. Trait bleu = ton horizon {horizon}M. Pointillé = valeur actuelle {fe(curVal)}.</div>
+        <div style={{fontSize:9,color:"#3a4560",marginTop:6,textAlign:"center",lineHeight:1.4}}>Le graphique s'ajuste à l'horizon choisi ci-dessus ({horizon}M). Zone bleue = fourchette P10–P90 (corrélations incluses). Pointillé = valeur actuelle {fe(curVal)}.</div>
       </div>
       <div className="card">
         <div className="cd-ti" style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}} onClick={()=>setSInfo(v=>!v)}>
