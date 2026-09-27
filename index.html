@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.19-2026-09-22-022";
+const BUILD = "v20.21-2026-09-22-024";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -2621,9 +2621,6 @@ function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, q
   const hcol = health.total>=70?"#2ecc8f":health.total>=50?"#f0a020":"#e85d5d";
   const spyPx = prices["SPY"] || 0;
   const top = port.find(p=>p.wt>35);
-  const sells = port.filter(p=>(p.effSig||p.sig)==="sell"&&p.val!=null);
-  const specs = port.filter(p=>(p.effSig||p.sig)==="spec"&&p.val!=null);
-  const buys = port.filter(p=>(p.effSig||p.sig)==="buy"&&p.val!=null).sort((a,b)=>(AN[b.t]&&AN[b.t].c||0)-(AN[a.t]&&AN[a.t].c||0));
   const sorted = [...port].filter(p=>p.pct!=null).sort((a,b)=>b.pct-a.pct);
   const top2 = sorted.slice(0,2), bot2 = sorted.slice(-2).reverse();
 
@@ -2715,50 +2712,6 @@ function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, q
       {top && (
         <div className="err" onClick={()=>onSelect(top.t)} style={{cursor:"pointer",marginBottom:9}}>
           <strong>Concentration critique</strong> — {top.t} représente {fp(top.wt,0)} du portefeuille. Diversifier prioritairement.
-        </div>
-      )}
-
-      {/* ACTIONS À PRENDRE */}
-      {(sells.length>0||specs.length>0) && (
-        <div className="card" style={{marginBottom:9}}>
-          <div className="cd-ti"><h3>Actions à prendre</h3></div>
-          {sells.map(p=>(
-            <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)} style={{padding:"8px 0"}}>
-              <span className="chip sell" style={{marginRight:8,padding:"3px 8px"}}>{AN[p.t]&&AN[p.t].r?AN[p.t].r:"VENDRE"}</span>
-              <div style={{flex:1}}><strong className="tk">{p.t}</strong>
-                <div className="dim" style={{fontSize:10}}>{AN[p.t]&&AN[p.t].act?AN[p.t].act:"Alléger"}</div>
-              </div>
-              <div className="num" style={{color:cl(p.pct),fontSize:11}}>{fp(p.pct)}</div>
-            </div>
-          ))}
-          {specs.map(p=>(
-            <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)} style={{padding:"8px 0"}}>
-              <span className="chip spec" style={{marginRight:8,padding:"3px 8px"}}>SPEC</span>
-              <div style={{flex:1}}><strong className="tk">{p.t}</strong> <span className="dim" style={{fontSize:11}}>Pari binaire en cours</span></div>
-              <div className="num" style={{color:"#8b7cf5",fontSize:11}}>en attente</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* RENFORCER EN PRIORITÉ */}
-      {buys.length>0 && (
-        <div className="card" style={{marginBottom:9}}>
-          <div className="cd-ti"><h3>Renforcer en priorité</h3></div>
-          {buys.slice(0,3).map((p,i)=>{
-            const an=AN[p.t]; const ec=p.dynConv?p.dynConv.value:effConv(p.t);
-            return (
-              <div key={p.t} className="row tap" onClick={()=>onSelect(p.t)} style={{padding:"6px 0"}}>
-                <div style={{flex:1}}>
-                  <div><span className="tk">{p.t}</span> <span style={{fontSize:9,color:"#2ecc8f"}}>{ec}/100</span>
-                    {ec<(an&&an.c||0)&&<span style={{fontSize:8,color:"#f0a020",marginLeft:4}}>↓decay</span>}
-                  </div>
-                  <div className="dim" style={{fontSize:10}}>{an&&an.r||""}</div>
-                </div>
-                <div className="num"><strong>{[50,30,20][i]||10}%</strong></div>
-              </div>
-            );
-          })}
         </div>
       )}
 
@@ -3885,23 +3838,18 @@ function TodayView(props) {
 // DEMAIN — la projection : contexte macro, stress-tests, thèses, watchlist
 // Calendrier earnings AGRÉGÉ au niveau portefeuille — anticipe la volatilité autour des publications
 function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx, snapshots }) {
-  const [sub, setSub] = useState("prev");
+  const [sub, setSub] = useState("scen");
   return (
     <>
       <div className="seg">
-        {[["prev","Prévisions"],["opp","Opportunités"]].map(([k,l])=>
+        {[["scen","Scénarios"],["macro","Macro"],["theses","Thèses"],["opp","Opportunités"]].map(([k,l])=>
           <div key={k} className={"it"+(sub===k?" ac":"")} onClick={()=>setSub(k)}>{l}</div>
         )}
       </div>
-      {sub==="prev" ? (
-        <>
-          <ScenariosView port={port} m={m} qHistMap={qHistMap} snapshots={snapshots}/>
-          <MacroView prices={prices} qHistMap={qHistMap} macroCtx={macroCtx} port={port}/>
-          <AnalysisView port={port} onSelect={onSelect}/>
-        </>
-      ) : (
-        <WatchlistView port={port} m={m}/>
-      )}
+      {sub==="scen" && <ScenariosView port={port} m={m} qHistMap={qHistMap} snapshots={snapshots}/>}
+      {sub==="macro" && <MacroView prices={prices} qHistMap={qHistMap} macroCtx={macroCtx} port={port}/>}
+      {sub==="theses" && <AnalysisView port={port} onSelect={onSelect}/>}
+      {sub==="opp" && <WatchlistView port={port} m={m}/>}
     </>
   );
 }
@@ -4057,10 +4005,17 @@ function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
     });
   }, [m.tot]);
 
+  const [sub, setSub] = useState("hist");
   return (
     <>
-      <HistoryView snapshots={snapshots} port={port} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/>
-      <RiskDashboard port={port} m={m} qHistMap={qHistMap} spyHist={spyHist}/>
+      <div className="seg">
+        {[["hist","Historique"],["risk","Risque"],["fiab","Fiabilité"]].map(([k,l])=>
+          <div key={k} className={"it"+(sub===k?" ac":"")} onClick={()=>setSub(k)}>{l}</div>
+        )}
+      </div>
+      {sub==="hist" && <HistoryView snapshots={snapshots} port={port} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/>}
+      {sub==="risk" && <RiskDashboard port={port} m={m} qHistMap={qHistMap} spyHist={spyHist}/>}
+      {sub==="fiab" && (<>
       <MoteurAdjustments port={port}/>
       <ReliabilityByTickerCard snapshots={snapshots}/>
       <JournalCard port={port}/>
@@ -4096,6 +4051,7 @@ function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
          </div>
         }
       </div>
+      </>)}
     </>
   );
 }
@@ -5849,6 +5805,9 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
   const totVal = val(portAll), totInv = inv(portAll), pnl = totVal-totInv;
   const pct = totInv>0 ? pnl/totInv*100 : 0;
   const vCTO = val(portCTO), vPEA = val(portPEA);
+  const iCTO = inv(portCTO), iPEA = inv(portPEA);
+  const pnlCTO = vCTO-iCTO, pnlPEA = vPEA-iPEA;
+  const pctCTO = iCTO>0 ? pnlCTO/iCTO*100 : 0, pctPEA = iPEA>0 ? pnlPEA/iPEA*100 : 0;
   const pCTO = totVal>0 ? vCTO/totVal*100 : 0, pPEA = totVal>0 ? vPEA/totVal*100 : 0;
 
   // A2 — drawdown courant (depuis le plus-haut historique) et max sur la période connue
@@ -5940,11 +5899,13 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
           <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{width:8,height:8,borderRadius:2,background:"#4f83f5",display:"inline-block"}}/><span style={{fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".06em"}}>CTO</span></div>
           <div className="mono" style={{fontSize:15}}>{fe(vCTO)}</div>
           <div className="dim" style={{fontSize:10}}>{pCTO.toFixed(0)}% · {(portCTO||[]).length} lignes</div>
+          <div className="mono" style={{fontSize:11,color:cl(pnlCTO),marginTop:2}}>{fe(pnlCTO)} ({fp(pctCTO,1)})</div>
         </div>
         <div>
           <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{width:8,height:8,borderRadius:2,background:"#2ecc8f",display:"inline-block"}}/><span style={{fontSize:9,color:"#8892a8",fontWeight:800,letterSpacing:".06em"}}>PEA</span></div>
           <div className="mono" style={{fontSize:15}}>{fe(vPEA)}</div>
           <div className="dim" style={{fontSize:10}}>{pPEA.toFixed(0)}% · {(portPEA||[]).length} lignes</div>
+          <div className="mono" style={{fontSize:11,color:cl(pnlPEA),marginTop:2}}>{fe(pnlPEA)} ({fp(pctPEA,1)})</div>
         </div>
       </div>
       <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.05)"}}>
