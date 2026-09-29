@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.21-2026-09-22-024";
+const BUILD = "v20.22-2026-09-22-025";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -163,10 +163,16 @@ const PEA_SEED = [
   { t:"AWAT", q:1, b:30.79 },
   { t:"SLMA", q:2, b:11.171 },
 ];
-// Corrections ponctuelles de quantité/PRU appliquées UNE fois aux positions existantes
-// (les positions vivent en local ; ceci met l'appareil à jour sans ressaisie).
-const PEA_UPDATE_KEY = "fab-pea-update-2026-09-21";
-const PEA_UPDATE = [ { t:"SPEA", q:5, b:6.482 }, { t:"SLMA", q:2, b:11.171 } ];
+// Correction de quantité/PRU pour les supports PEA : au lieu de patcher `port` directement (un
+// drapeau localStorage consommé AVANT que la correction n'ait pu s'appliquer — ex. si l'effet
+// tourne avant que `port` contienne encore ces tickers — la « corrige » sans jamais l'appliquer,
+// silencieusement, de façon non détectable), on SEED LE REGISTRE. L'idempotence se vérifie sur le
+// contenu RÉEL du registre (« ce ticker y est-il déjà ? »), jamais sur un drapeau à part qui peut
+// désynchroniser de la réalité : auto-réparateur à chaque chargement tant que ce n'est pas fait.
+const PEA_LEDGER_SEED = [
+  { t:"SPEA", q:5, b:6.482 },
+  { t:"SLMA", q:2, b:11.171 },
+];
 function seedPeaPositions(port) {
   const have = new Set((port||[]).map(p=>p.t));
   const out = (port||[]).slice();
@@ -4646,13 +4652,17 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
     // et il est LOCAL AU NAVIGATEUR : sans ça, changer d'appareil le perdait définitivement.
     let snapshots = [];
     try { snapshots = await snapshotsRange(0); } catch(e) { snapshots = []; }
-    const data = { app:"port.folio Fab", type:"portfolio-backup", version:3,
+    const txns = loadTxns();
+    const data = { app:"port.folio Fab", type:"portfolio-backup", version:4,
       exportedAt:new Date().toISOString().slice(0,10), port,
       overrides: grab(AN_OVERRIDE_KEY),   // thèses éditées + statuts réalisé/en attente/caduc
       registry:  grab(REGISTRY_KEY),      // supports ajoutés depuis l'app
       journal:   grab(JOURNAL_KEY),       // journal des décisions
       alerts:    grab("fab-pf-alerts-v6"),
       watch:     grab("fab-pf-watch-v6"),
+      txns,                               // v4 : registre de transactions — SOURCE DE VÉRITÉ des
+                                           // quantités/PRU (v20.16) ; sans lui, un changement
+                                           // d'appareil perdait la correction certaine des positions.
       snapshots };                        // historique complet (calibration, Sharpe, benchmark)
     try { localStorage.setItem("fab-last-backup", String(Date.now())); } catch(e) {}
     const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
@@ -4681,6 +4691,8 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
         if(parsed.alerts)    extras.push("seuils d'alerte");
         const snapIn = Array.isArray(parsed.snapshots) ? parsed.snapshots.filter(x=>x && Number.isFinite(x.ts) && Array.isArray(x.port)) : [];
         if(snapIn.length) extras.push(snapIn.length + " relevés d'historique");
+        const txnIn = Array.isArray(parsed.txns) ? parsed.txns.filter(x=>x && x.t && x.q>0 && x.px>0 && Number.isFinite(x.ts)) : [];
+        if(txnIn.length) extras.push(txnIn.length + " transactions du registre");
         const msg = "Importer "+clean.length+" positions"+(extras.length?" + "+extras.join(", "):"")+" ?\nCela remplace les données actuelles.";
         if(!confirm(msg)) return;
         const put = (k,v) => { if(v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} } };
@@ -4701,9 +4713,25 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
             try { await snapshotAdd(sn); added++; } catch(e) {}
           }
         }
-        onPortChange(clean);
+        // Registre : FUSION par id (jamais d'écrasement), puis on re-dérive q/b depuis le registre
+        // fusionné — garantit que les quantités restent CERTAINES même après restauration.
+        let txnsAdded = 0;
+        let finalPort = clean;
+        if(txnIn.length) {
+          const existingTxns = loadTxns();
+          const knownIds = new Set(existingTxns.map(t=>t.id));
+          const newOnes = txnIn.filter(t=>!knownIds.has(t.id));
+          txnsAdded = newOnes.length;
+          if(newOnes.length) {
+            const merged = [...existingTxns, ...newOnes];
+            saveTxns(merged);
+            finalPort = syncPortFromLedger(clean, merged);
+          }
+        }
+        onPortChange(finalPort);
         alert("✅ "+clean.length+" positions importées"+(extras.length?" + "+extras.join(", "):"")+"."+
-              (added?"\n"+added+" relevé(s) d'historique ajouté(s) (fusion, aucun écrasement).":"")+"\n"+
+              (added?"\n"+added+" relevé(s) d'historique ajouté(s) (fusion, aucun écrasement).":"")+
+              (txnsAdded?"\n"+txnsAdded+" transaction(s) de registre ajoutée(s) (quantités recalculées).":"")+"\n"+
               (extras.length?"Recharge la page pour tout appliquer.":"Sauvegardé."));
       } catch(err) { alert("Fichier illisible : "+err.message); }
     };
@@ -6170,26 +6198,28 @@ function App() {
     }
   }, [port, needDecrypt]);
 
-  // v20.10 — corrige une fois quantité/PRU de certains supports PEA sur l'appareil existant
-  const peaUpdateDone = useRef(false);
+  // Corrige de façon CERTAINE les quantités PEA : seed le registre (source de vérité, v20.16) si
+  // ces tickers n'y figurent pas encore, puis applique syncPortFromLedger. Auto-réparateur : tant
+  // que le registre ne contient pas ces tickers, ça réessaie à chaque chargement — aucun drapeau
+  // externe pouvant se faire consommer sans effet.
+  const peaLedgerSeedDone = useRef(false);
   useEffect(() => {
-    if(peaUpdateDone.current || needDecrypt || !port) return;
-    let already = false;
-    try { already = localStorage.getItem(PEA_UPDATE_KEY) === "1"; } catch(e){}
-    peaUpdateDone.current = true;
-    if(already) return;
-    let changed = false;
-    const np = port.map(x => {
-      const u = PEA_UPDATE.find(u => u.t === x.t);
-      if(u && (x.q !== u.q || x.b !== u.b)) { changed = true; return { ...x, q:u.q, b:u.b }; }
-      return x;
-    });
-    try { localStorage.setItem(PEA_UPDATE_KEY, "1"); } catch(e){}
-    if(changed) {
-      setPort(np);
-      try { saveStore({ ...(loadStore()||{}), port:np }); } catch(e){}
-      showToast("🇪🇺 Quantités PEA mises à jour");
-    }
+    if(peaLedgerSeedDone.current || needDecrypt || !port) return;
+    peaLedgerSeedDone.current = true;
+    const curTxns = loadTxns();
+    const missing = PEA_LEDGER_SEED.filter(s => !curTxns.some(t => t.t === s.t));
+    if(!missing.length) return;
+    const dateStr = getPeaOpenDate();
+    const toAdd = missing.map((s,i) => ({
+      id:"txpeafix"+Date.now()+i, ts:new Date(dateStr+"T12:00:00Z").getTime(), date:dateStr,
+      t:s.t, type:"buy", q:s.q, px:s.b
+    }));
+    const newTxns = [...curTxns, ...toAdd];
+    saveTxns(newTxns);
+    const corrected = syncPortFromLedger(port, newTxns);
+    setPort(corrected);
+    try { saveStore({ ...(loadStore()||{}), port:corrected }); } catch(e){}
+    showToast("🇪🇺 Quantités PEA corrigées via le registre");
   }, [port, needDecrypt]);
 
   // Auto-init alertes pour positions sans seuils
