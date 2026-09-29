@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.22-2026-09-22-025";
+const BUILD = "v20.24-2026-09-22-027";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -423,6 +423,35 @@ function ledgerStats(txns){
   return { byT, realizedTot };
 }
 function ledgerRealizedEUR(txns, eurusd){ const s=ledgerStats(txns); let tot=0; Object.keys(s.byT).forEach(t=> tot+=(nativeToEUR(t, s.byT[t].realized, eurusd)||0)); return tot; }
+
+/* RÉPARATION DES RELEVÉS HISTORIQUES PEA — le bug de quantités (v20.0→v20.22, SPEA/SLMA restés
+   bloqués à 1 unité) a laissé des relevés déjà enregistrés avec la MAUVAISE quantité figée dans
+   IndexedDB. Corriger le registre (v20.22) ne les répare pas rétroactivement : un relevé déjà
+   écrit n'est jamais réécrit par le backfill. Cette fonction relit chaque relevé, corrige
+   uniquement la quantité (le cours historique réel, déjà stocké, est conservé tel quel), et
+   RÉÉCRIT le relevé à la même date (upsert par `ts`). Naturellement idempotente : un relevé déjà
+   correct n'est jamais modifié — sûr à rejouer à chaque démarrage, aucun drapeau requis. */
+async function repairPeaSnapshotQty() {
+  const target = { SPEA: 5, SLMA: 2 };
+  let all = [];
+  try { all = await snapshotsRange(0); } catch(e) { return 0; }
+  let fixed = 0;
+  for (const snap of all) {
+    const key = Array.isArray(snap.pos) ? "pos" : (Array.isArray(snap.port) ? "port" : null);
+    if (!key) continue;
+    let changed = false;
+    const newArr = snap[key].map(p => {
+      const want = target[p.t];
+      if (want != null && p.q !== want && p.pxE > 0) { changed = true; return { ...p, q: want, val: +(want*p.pxE).toFixed(2) }; }
+      return p;
+    });
+    if (!changed) continue;
+    const newTot = newArr.reduce((s,p) => s + (p.val||0), 0);
+    const updated = { ...snap, [key]: newArr, tot: +newTot.toFixed(2), pnl: +(newTot - (snap.inv||0)).toFixed(2) };
+    try { await snapshotAdd(updated); fixed++; } catch(e) {}
+  }
+  return fixed;
+}
 
 /* Le registre devient la SOURCE DE VÉRITÉ des positions détenues : après chaque ajout/suppression
    de transaction, on rejoue tout le journal (coût moyen pondéré) et on écrase q/b des positions
@@ -2700,7 +2729,7 @@ function DashboardView({ port, m, eurusd, prices, lastTs, macroCtx, snapshots, q
         </div>
         {benchCmp ? (
           <div style={{background:"rgba(79,131,245,.06)",borderRadius:7,padding:"8px 10px"}}>
-            <div style={{fontSize:9,color:"#3a4560",fontWeight:700,letterSpacing:".04em",marginBottom:4}}>vs S&P 500 (sur {benchCmp.label}, panier constant)</div>
+            <div style={{fontSize:9,color:"#3a4560",fontWeight:700,letterSpacing:".04em",marginBottom:4}}>vs S&P 500 (sur {benchCmp.label.replace(/^-/,"")}, panier constant)</div>
             <div className="g3">
               <div><div className="lbl">Portef.</div><div className="mono" style={{color:cl(benchCmp.portRet),fontSize:13}}>{fp(benchCmp.portRet,1)}</div></div>
               <div><div className="lbl">SPY</div><div className="mono" style={{color:cl(benchCmp.spyRet),fontSize:13}}>{fp(benchCmp.spyRet,1)}</div></div>
@@ -3054,7 +3083,7 @@ function HistoryView({ snapshots, port, eurusd, qHistMap, spyHist }) {
         return (
           <div className="card">
             <div className="cd-ti"><h3>Benchmark vs S&P 500</h3>
-              <span className="num" style={{fontSize:11,color:cl(last.alpha)}}>Alpha {last.label} {last.alpha>=0?"+":""}{last.alpha}%</span>
+              <span className="num" style={{fontSize:11,color:cl(last.alpha)}}>Alpha sur {last.label.replace(/^-/,"")} {last.alpha>=0?"+":""}{last.alpha}%</span>
             </div>
             <div className="dim" style={{fontSize:9,marginBottom:8,lineHeight:1.4}}>Panier actuel rejoué sur l'historique réel (composition constante, effet de change neutralisé). Indépendant des snapshots.</div>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
@@ -5825,7 +5854,24 @@ function dayActions(port, qHistMap){
 }
 
 const REBAL_KEY = "fab-rebal-target";
+function InfoBtn({ active, onClick }) {
+  return (
+    <span onClick={onClick} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",
+      width:12,height:12,borderRadius:6,background:active?"#4f83f5":"rgba(255,255,255,.12)",
+      color:active?"#fff":"#8892a8",fontSize:8,fontWeight:800,fontStyle:"italic",cursor:"pointer",
+      lineHeight:1,marginLeft:3,verticalAlign:"middle",flexShrink:0}}>i</span>
+  );
+}
+
 function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMap = {}, snapshots = [], spyHist, eurusd }) {
+  const [infoKey, setInfoKey] = useState(null);
+  const PERF_INFO = {
+    ddCur: "Distance entre ta valeur actuelle et le plus-haut historique de ton portefeuille. 0% = tu es à ton record. Négatif = tu es en dessous de ton meilleur niveau connu.",
+    ddMax: "La pire chute jamais connue, du sommet jusqu'au creux, sur tout l'historique enregistré. Mesure le risque réellement vécu, pas un risque théorique.",
+    alpha: "Ta performance moins celle du S&P 500 sur la même période. Positif = tu fais mieux que le marché large ; négatif = moins bien.",
+    twr: "Ta performance réelle, en excluant l'effet de tes apports (ajouter de l'argent n'est pas un gain). Le % affiché dans « Patrimoine » ci-dessus mélange apports et performance ; le TWR les sépare."
+  };
+  const toggleInfo = k => setInfoKey(v => v===k ? null : k);
   const [tgtCTO, setTgtCTO] = useState(() => { try { return +localStorage.getItem(REBAL_KEY) || 50; } catch(e){ return 50; } });
   const setTarget = v => { const n = Math.max(0,Math.min(100,+v||0)); setTgtCTO(n); try{ localStorage.setItem(REBAL_KEY, String(n)); }catch(e){} };
   const val = a => (a||[]).reduce((s,p)=>s+(p.val||0),0);
@@ -5901,19 +5947,20 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
       </div>
     </div>
     <div className="card" style={{margin:"9px 12px 0"}}>
-      <div className="cd-ti"><h3>Performance</h3>{bestHb && <span className="dim" style={{fontSize:9}}>vs S&P 500 · {bestHb.label}</span>}</div>
+      <div className="cd-ti"><h3>Performance</h3>{bestHb && <span className="dim" style={{fontSize:9}}>vs S&P 500 · sur {bestHb.label.replace(/^-/,"")}</span>}</div>
       <div className="g3">
-        <div style={{textAlign:"center"}}><div className="lbl">Drawdown actuel</div><div className="mono" style={{fontSize:15,color:ddCur<-0.1?"#e85d5d":"#8892a8"}}>{fp(ddCur,1)}</div></div>
-        <div style={{textAlign:"center"}}><div className="lbl">Drawdown max</div><div className="mono" style={{fontSize:15,color:"#e85d5d"}}>{fp(ddMax,1)}</div></div>
-        <div style={{textAlign:"center"}}><div className="lbl">Alpha</div><div className="mono" style={{fontSize:15,color:bestHb?cl(bestHb.alpha):"#3a4560"}}>{bestHb?fp(bestHb.alpha,1):"—"}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Drawdown actuel<InfoBtn active={infoKey==="ddCur"} onClick={()=>toggleInfo("ddCur")}/></div><div className="mono" style={{fontSize:15,color:ddCur<-0.1?"#e85d5d":"#8892a8"}}>{fp(ddCur,1)}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Drawdown max<InfoBtn active={infoKey==="ddMax"} onClick={()=>toggleInfo("ddMax")}/></div><div className="mono" style={{fontSize:15,color:"#e85d5d"}}>{fp(ddMax,1)}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Alpha<InfoBtn active={infoKey==="alpha"} onClick={()=>toggleInfo("alpha")}/></div><div className="mono" style={{fontSize:15,color:bestHb?cl(bestHb.alpha):"#3a4560"}}>{bestHb?fp(bestHb.alpha,1):"—"}</div></div>
       </div>
       {twr && (
         <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.05)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontSize:10,color:"#8892a8"}}>Perf. réelle (TWR{twr.hasFlows?", neutre aux apports":""}) sur {twr.days}j</span>
+          <span style={{fontSize:10,color:"#8892a8"}}>Perf. réelle (TWR{twr.hasFlows?", neutre aux apports":""}) sur {twr.days}j<InfoBtn active={infoKey==="twr"} onClick={()=>toggleInfo("twr")}/></span>
           <span className="mono" style={{fontSize:14,fontWeight:800,color:cl(twr.twr)}}>{fp(twr.twr,1)}</span>
         </div>
       )}
-      <div className="dim" style={{fontSize:9,marginTop:6,lineHeight:1.4}}>{bestHb?`Toi ${fp(bestHb.portRet,1)} vs S&P ${fp(bestHb.spyRet,1)} sur ${bestHb.label}.`:"Historique insuffisant pour comparer au S&P 500."} {twr&&twr.hasFlows?"Le % ci-dessus (Patrimoine) inclut tes apports ; le TWR les neutralise pour juger ta vraie performance.":""} Courbe détaillée et backtest dans l'onglet Moteur.</div>
+      {infoKey && <div style={{fontSize:10,color:"#dde3f0",background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:7,padding:"8px 10px",marginTop:8,lineHeight:1.45}}>{PERF_INFO[infoKey]}</div>}
+      <div className="dim" style={{fontSize:9,marginTop:6,lineHeight:1.4}}>{bestHb?`Toi ${fp(bestHb.portRet,1)} vs S&P ${fp(bestHb.spyRet,1)} sur ${bestHb.label.replace(/^-/,"")}.`:"Historique insuffisant pour comparer au S&P 500."} {twr&&twr.hasFlows?"Le % ci-dessus (Patrimoine) inclut tes apports ; le TWR les neutralise pour juger ta vraie performance.":""} Courbe détaillée et backtest dans l'onglet Moteur.</div>
     </div>
 
     <div className="card" style={{margin:"9px 12px 0"}}>
@@ -6241,6 +6288,15 @@ function App() {
     setSnapshots(s.sort((a,b)=>a.ts-b.ts));
   }, []);
   useEffect(() => { reloadSnapshots(); }, [reloadSnapshots]);
+
+  // Répare les relevés historiques déjà enregistrés avec la mauvaise quantité PEA (voir
+  // repairPeaSnapshotQty). Auto-réparateur, sans drapeau : relance sans risque à chaque démarrage.
+  const peaSnapRepairDone = useRef(false);
+  useEffect(() => {
+    if(peaSnapRepairDone.current || needDecrypt) return;
+    peaSnapRepairDone.current = true;
+    repairPeaSnapshotQty().then(n => { if(n>0) reloadSnapshots(); });
+  }, [needDecrypt, reloadSnapshots]);
 
   // Fetch principal
   const fetchAll = useCallback(async (silent, fast) => {
