@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.24-2026-09-22-027";
+const BUILD = "v20.25-2026-09-22-028";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -5854,23 +5854,17 @@ function dayActions(port, qHistMap){
 }
 
 const REBAL_KEY = "fab-rebal-target";
-function InfoBtn({ active, onClick }) {
+function InfoBtn({ active, onClick, title }) {
   return (
-    <span onClick={onClick} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",
-      width:12,height:12,borderRadius:6,background:active?"#4f83f5":"rgba(255,255,255,.12)",
-      color:active?"#fff":"#8892a8",fontSize:8,fontWeight:800,fontStyle:"italic",cursor:"pointer",
-      lineHeight:1,marginLeft:3,verticalAlign:"middle",flexShrink:0}}>i</span>
+    <span onClick={onClick} title={title||"En savoir plus"}
+      style={{cursor:"pointer",width:14,height:14,borderRadius:7,border:"1px solid "+(active?"#4f83f5":"#3a4560"),
+        color:active?"#4f83f5":"#8892a8",fontSize:9,fontWeight:800,display:"inline-flex",alignItems:"center",
+        justifyContent:"center",fontStyle:"italic",fontFamily:"Georgia,serif",marginLeft:5,verticalAlign:"middle",flexShrink:0}}>i</span>
   );
 }
 
 function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMap = {}, snapshots = [], spyHist, eurusd }) {
   const [infoKey, setInfoKey] = useState(null);
-  const PERF_INFO = {
-    ddCur: "Distance entre ta valeur actuelle et le plus-haut historique de ton portefeuille. 0% = tu es à ton record. Négatif = tu es en dessous de ton meilleur niveau connu.",
-    ddMax: "La pire chute jamais connue, du sommet jusqu'au creux, sur tout l'historique enregistré. Mesure le risque réellement vécu, pas un risque théorique.",
-    alpha: "Ta performance moins celle du S&P 500 sur la même période. Positif = tu fais mieux que le marché large ; négatif = moins bien.",
-    twr: "Ta performance réelle, en excluant l'effet de tes apports (ajouter de l'argent n'est pas un gain). Le % affiché dans « Patrimoine » ci-dessus mélange apports et performance ; le TWR les sépare."
-  };
   const toggleInfo = k => setInfoKey(v => v===k ? null : k);
   const [tgtCTO, setTgtCTO] = useState(() => { try { return +localStorage.getItem(REBAL_KEY) || 50; } catch(e){ return 50; } });
   const setTarget = v => { const n = Math.max(0,Math.min(100,+v||0)); setTgtCTO(n); try{ localStorage.setItem(REBAL_KEY, String(n)); }catch(e){} };
@@ -5947,19 +5941,31 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
       </div>
     </div>
     <div className="card" style={{margin:"9px 12px 0"}}>
-      <div className="cd-ti"><h3>Performance</h3>{bestHb && <span className="dim" style={{fontSize:9}}>vs S&P 500 · sur {bestHb.label.replace(/^-/,"")}</span>}</div>
+      <div className="cd-ti"><h3>Performance</h3>
+        <span style={{display:"flex",alignItems:"center",gap:5}}>
+          {bestHb && <span className="dim" style={{fontSize:9}}>vs S&P 500 · sur {bestHb.label.replace(/^-/,"")}</span>}
+          <InfoBtn active={infoKey==="perf"} onClick={()=>toggleInfo("perf")} title="Comprendre ces 4 indicateurs"/>
+        </span>
+      </div>
+      {infoKey==="perf" && (
+        <div style={{background:"rgba(79,131,245,.06)",border:"1px solid rgba(79,131,245,.15)",borderRadius:8,padding:"10px 12px",marginBottom:10,fontSize:10,lineHeight:1.5,color:"#8892a8"}}>
+          <div style={{marginBottom:6}}><strong style={{color:"#dde3f0"}}>Drawdown actuel</strong> — distance entre ta valeur d'aujourd'hui et ton plus-haut historique. 0% = tu es à ton record.</div>
+          <div style={{marginBottom:6}}><strong style={{color:"#dde3f0"}}>Drawdown max</strong> — la pire chute jamais connue, du sommet au creux, sur tout l'historique. Le risque réellement vécu, pas théorique.</div>
+          <div style={{marginBottom:6}}><strong style={{color:"#dde3f0"}}>Alpha</strong> — ta performance moins celle du S&P 500 sur la même période. Positif = tu fais mieux que le marché large.</div>
+          <div><strong style={{color:"#dde3f0"}}>TWR</strong> — ta perf réelle, en excluant l'effet de tes apports (ajouter de l'argent n'est pas un gain). Le % de « Patrimoine » ci-dessus les mélange ; le TWR les sépare.</div>
+        </div>
+      )}
       <div className="g3">
-        <div style={{textAlign:"center"}}><div className="lbl">Drawdown actuel<InfoBtn active={infoKey==="ddCur"} onClick={()=>toggleInfo("ddCur")}/></div><div className="mono" style={{fontSize:15,color:ddCur<-0.1?"#e85d5d":"#8892a8"}}>{fp(ddCur,1)}</div></div>
-        <div style={{textAlign:"center"}}><div className="lbl">Drawdown max<InfoBtn active={infoKey==="ddMax"} onClick={()=>toggleInfo("ddMax")}/></div><div className="mono" style={{fontSize:15,color:"#e85d5d"}}>{fp(ddMax,1)}</div></div>
-        <div style={{textAlign:"center"}}><div className="lbl">Alpha<InfoBtn active={infoKey==="alpha"} onClick={()=>toggleInfo("alpha")}/></div><div className="mono" style={{fontSize:15,color:bestHb?cl(bestHb.alpha):"#3a4560"}}>{bestHb?fp(bestHb.alpha,1):"—"}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Drawdown actuel</div><div className="mono" style={{fontSize:15,color:ddCur<-0.1?"#e85d5d":"#8892a8"}}>{fp(ddCur,1)}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Drawdown max</div><div className="mono" style={{fontSize:15,color:"#e85d5d"}}>{fp(ddMax,1)}</div></div>
+        <div style={{textAlign:"center"}}><div className="lbl">Alpha</div><div className="mono" style={{fontSize:15,color:bestHb?cl(bestHb.alpha):"#3a4560"}}>{bestHb?fp(bestHb.alpha,1):"—"}</div></div>
       </div>
       {twr && (
         <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.05)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontSize:10,color:"#8892a8"}}>Perf. réelle (TWR{twr.hasFlows?", neutre aux apports":""}) sur {twr.days}j<InfoBtn active={infoKey==="twr"} onClick={()=>toggleInfo("twr")}/></span>
+          <span style={{fontSize:10,color:"#8892a8"}}>Perf. réelle (TWR{twr.hasFlows?", neutre aux apports":""}) sur {twr.days}j</span>
           <span className="mono" style={{fontSize:14,fontWeight:800,color:cl(twr.twr)}}>{fp(twr.twr,1)}</span>
         </div>
       )}
-      {infoKey && <div style={{fontSize:10,color:"#dde3f0",background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:7,padding:"8px 10px",marginTop:8,lineHeight:1.45}}>{PERF_INFO[infoKey]}</div>}
       <div className="dim" style={{fontSize:9,marginTop:6,lineHeight:1.4}}>{bestHb?`Toi ${fp(bestHb.portRet,1)} vs S&P ${fp(bestHb.spyRet,1)} sur ${bestHb.label.replace(/^-/,"")}.`:"Historique insuffisant pour comparer au S&P 500."} {twr&&twr.hasFlows?"Le % ci-dessus (Patrimoine) inclut tes apports ; le TWR les neutralise pour juger ta vraie performance.":""} Courbe détaillée et backtest dans l'onglet Moteur.</div>
     </div>
 
