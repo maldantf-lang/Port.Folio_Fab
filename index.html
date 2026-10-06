@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.26-2026-10-06-029";
+const BUILD = "v20.28-2026-10-06-031";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -153,38 +153,6 @@ function netAfterTax(gainEUR, acct, datePEA, horizonDate) {
   return { taxEUR, netEUR: g - taxEUR, tauxPct, regle };
 }
 
-/* ═══ INTÉGRATION AUTO DES SUPPORTS PEA (v20.1) ═══
-   Ajoute une seule fois les 3 ETF PEA au portefeuille de l'appareil (les positions vivent en
-   local, hors du code chiffré). N'écrase jamais une ligne existante ; un drapeau localStorage
-   empêche toute ré-injection (si tu en supprimes un plus tard, il n'est pas re-créé). */
-const PEA_SEED_KEY = "fab-pea-seed-v1";
-const PEA_SEED = [
-  { t:"SPEA", q:5, b:6.482 },
-  { t:"AWAT", q:1, b:30.79 },
-  { t:"SLMA", q:2, b:11.171 },
-];
-// Correction de quantité/PRU pour les supports PEA : au lieu de patcher `port` directement (un
-// drapeau localStorage consommé AVANT que la correction n'ait pu s'appliquer — ex. si l'effet
-// tourne avant que `port` contienne encore ces tickers — la « corrige » sans jamais l'appliquer,
-// silencieusement, de façon non détectable), on SEED LE REGISTRE. L'idempotence se vérifie sur le
-// contenu RÉEL du registre (« ce ticker y est-il déjà ? »), jamais sur un drapeau à part qui peut
-// désynchroniser de la réalité : auto-réparateur à chaque chargement tant que ce n'est pas fait.
-const PEA_LEDGER_SEED = [
-  { t:"SPEA", q:5, b:6.482 },
-  { t:"SLMA", q:2, b:11.171 },
-];
-function seedPeaPositions(port) {
-  const have = new Set((port||[]).map(p=>p.t));
-  const out = (port||[]).slice();
-  let added = 0;
-  for(const s of PEA_SEED){
-    if(have.has(s.t)) continue;
-    const e = REG[s.t] || {};
-    out.push({ t:s.t, n:e.n||s.t, q:s.q, b:s.b, s:e.s||"Autre", sig:e.sig||"hold", v:e.v||20, acct:"PEA" });
-    added++;
-  }
-  return { port:out, added };
-}
 const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
@@ -246,6 +214,7 @@ const REGISTRY = {
   ABUS: { n:"Arbutus Biopharma", y:"ABUS",    ccy:"USD", role:"port", s:"Biotech", v:65, sig:"spec", def:4.70,  bounds:[0.5,40],  acct:"CTO" },
   GAD:  { n:"Global Aero & Def", y:"DFND.MI", ccy:"EUR", role:"port", s:"Défense", v:18, sig:"buy",  def:8.42,  bounds:[2,50],    acct:"CTO", etf:true },
   MSFT: { n:"Microsoft",         y:"MSFT",    ccy:"USD", role:"port", s:"Tech",    v:22, sig:"buy",  def:390.0, bounds:[100,1200], acct:"CTO" },
+  ONON: { n:"On Holding",         y:"ONON",    ccy:"USD", role:"port", s:"Consommation", v:50, sig:"hold", def:32.0, bounds:[8,120], acct:"CTO" },
   // ── PEA (ETF éligibles, cotés EUR) — symbole Yahoo <ISIN>.PA À VALIDER on-device (sinon repli sur def) ──
   SPEA: { n:"iShares S&P 500 Swap PEA",   y:"SPEA.PA",  ccy:"EUR", role:"port", s:"Actions US",        v:15, sig:"hold", def:6.50,  bounds:[3,20],  acct:"PEA", pea:true, etf:true, ter:0.10 },
   AWAT: { n:"Amundi PEA Eau (Water)",     y:"AWAT.PA", ccy:"EUR", role:"port", s:"Thématique Eau",    v:18, sig:"hold", def:32.60, bounds:[15,60], acct:"PEA", pea:true, etf:true, ter:0.60 },
@@ -422,36 +391,19 @@ function ledgerStats(txns){
   let realizedTot = 0; Object.keys(byT).forEach(t=> realizedTot += byT[t].realized);
   return { byT, realizedTot };
 }
-function ledgerRealizedEUR(txns, eurusd){ const s=ledgerStats(txns); let tot=0; Object.keys(s.byT).forEach(t=> tot+=(nativeToEUR(t, s.byT[t].realized, eurusd)||0)); return tot; }
-
-/* RÉPARATION DES RELEVÉS HISTORIQUES PEA — le bug de quantités (v20.0→v20.22, SPEA/SLMA restés
-   bloqués à 1 unité) a laissé des relevés déjà enregistrés avec la MAUVAISE quantité figée dans
-   IndexedDB. Corriger le registre (v20.22) ne les répare pas rétroactivement : un relevé déjà
-   écrit n'est jamais réécrit par le backfill. Cette fonction relit chaque relevé, corrige
-   uniquement la quantité (le cours historique réel, déjà stocké, est conservé tel quel), et
-   RÉÉCRIT le relevé à la même date (upsert par `ts`). Naturellement idempotente : un relevé déjà
-   correct n'est jamais modifié — sûr à rejouer à chaque démarrage, aucun drapeau requis. */
-async function repairPeaSnapshotQty() {
-  const target = { SPEA: 5, SLMA: 2 };
-  let all = [];
-  try { all = await snapshotsRange(0); } catch(e) { return 0; }
-  let fixed = 0;
-  for (const snap of all) {
-    const key = Array.isArray(snap.pos) ? "pos" : (Array.isArray(snap.port) ? "port" : null);
-    if (!key) continue;
-    let changed = false;
-    const newArr = snap[key].map(p => {
-      const want = target[p.t];
-      if (want != null && p.q !== want && p.pxE > 0) { changed = true; return { ...p, q: want, val: +(want*p.pxE).toFixed(2) }; }
-      return p;
-    });
-    if (!changed) continue;
-    const newTot = newArr.reduce((s,p) => s + (p.val||0), 0);
-    const updated = { ...snap, [key]: newArr, tot: +newTot.toFixed(2), pnl: +(newTot - (snap.inv||0)).toFixed(2) };
-    try { await snapshotAdd(updated); fixed++; } catch(e) {}
-  }
-  return fixed;
+// Prix saisi → prix NATIF du support (devise de cotation = unité du registre). Pour un titre coté en
+// dollars dont on connaît le prix payé en euros (ce qu'affiche le courtier), on convertit au taux du
+// jour et on garde le prix en euros d'origine pour mémoire. Aucun montant n'est jamais écrit dans le code.
+function txnPrice(price, inEUR, ticker, eurusd){
+  const px = +price;
+  if(!(px > 0)) return null;
+  const ccy = (REG[ticker] && REG[ticker].ccy) || "USD";
+  if(!inEUR || ccy === "EUR") return { px };
+  if(!(+eurusd > 0)) return null;
+  return { px: +(px * eurusd).toFixed(4), pxEur: px, fx: +(+eurusd).toFixed(5) };
 }
+
+function ledgerRealizedEUR(txns, eurusd){ const s=ledgerStats(txns); let tot=0; Object.keys(s.byT).forEach(t=> tot+=(nativeToEUR(t, s.byT[t].realized, eurusd)||0)); return tot; }
 
 /* Le registre devient la SOURCE DE VÉRITÉ des positions détenues : après chaque ajout/suppression
    de transaction, on rejoue tout le journal (coût moyen pondéré) et on écrase q/b des positions
@@ -635,10 +587,10 @@ function sanitizePort(arr) {
 
 const AN_BASE = {
   FTI:{r:"ALLÉGER (CONCENTRATION)",c:70,p:8,sig:"hold",lu:"2026-10-06",tgt:{l:45,a:76,h:87},
-    th:"Fondamentaux solides : résultats T2 au-dessus des attentes (BPA ajusté 0,91 $ contre 0,80), guidance d'EBITDA 2026 relevée à 2,19 Md$, carnet de commandes d'environ 16,4 Md$. Le cours (environ 69 $) est désormais sous le consensus (environ 76 $, fourchette 45 à 87 $) : l'argument « cours au-dessus du consensus » ne tient plus. Le vrai risque reste la concentration (environ 38 % du portefeuille sur une seule ligne). Prochains résultats vers le 29/10 (date estimée, non confirmée).",
+    th:"Fondamentaux solides : résultats T2 au-dessus des attentes (BPA ajusté 0,91 $ contre 0,80), guidance d'EBITDA 2026 relevée à 2,19 Md$, carnet de commandes d'environ 16,4 Md$. Le cours (environ 69 $) est désormais sous le consensus (environ 76 $, fourchette 45 à 87 $) : l'argument « cours au-dessus du consensus » ne tient plus. Le vrai risque reste la concentration de la ligne dans le portefeuille. Prochains résultats vers le 29/10 (date estimée, non confirmée).",
     cat:["Backlog offshore — carnet d'environ 16,4 Md$ au T2 2026, commandes sous-marines attendues vers 10 Md$ en 2026","Rebond capex pétrolier — projets sous-marins plus grands (greenfield) attendus en 2027","Cycle haut du Brent — un baril élevé soutient les nouveaux projets et les marges"],
-    ris:["Concentration — environ 38 % du portefeuille sur une seule ligne, drawdown asymétrique","Volatilité du Brent — le cours suit le pétrole ; sa volatilité retarde les décisions d'investissement des majors","Cyclicité offshore — activité dépendante du cycle d'investissement, peu récurrente"],
-    act:"Alléger d'environ 10 % de la ligne pour repasser sous 35 %, conserver le reste",edg:"Le titre n'est plus au-dessus du consensus : la raison d'alléger est le poids dans le portefeuille, pas la valorisation."},
+    ris:["Concentration — poids élevé de la ligne dans le portefeuille, drawdown asymétrique","Volatilité du Brent — le cours suit le pétrole ; sa volatilité retarde les décisions d'investissement des majors","Cyclicité offshore — activité dépendante du cycle d'investissement, peu récurrente"],
+    act:"Alléger pour repasser sous le seuil de concentration de 35 %, conserver le reste",edg:"Le titre n'est plus au-dessus du consensus : la raison d'alléger est le poids dans le portefeuille, pas la valorisation."},
   HPE:{r:"CONSERVER",c:65,p:10,sig:"hold",lu:"2026-10-06",tgt:{l:63,a:70,h:79},
     th:"Résultats T3 FY26 (02/09) au-dessus des attentes : revenu 12,2 Md$ (+34 %), BPA ajusté 1,11 $ contre environ 0,93, carnet IA record de 7,9 Md$, guidance 2026 relevée (BPA 3,75 à 3,85 $), objectif 2027 de croissance de 13 à 17 %. Pourtant le titre a reculé d'environ 7 % après la publication (contraintes d'approvisionnement), et le cours (environ 69 $) est au niveau du consensus (environ 70 $, objectifs relevés de 63 à 79 $). Conserver : la dynamique est excellente, la marge de sécurité a disparu.",
     cat:["Serveurs IA et réseau — carnet IA record de 7,9 Md$ contre 3,7 Md$ un an plus tôt","Contrats infrastructure IA — collaboration élargie avec Oracle (réseau Juniper dans ses data centers IA)","Synergies Juniper — intégration du rachat et montée en gamme réseau ; journée investisseurs réseau du 30/09 (contenu à relire)"],
@@ -668,7 +620,7 @@ const AN_BASE = {
     th:"Thèse fragilisée. Le S1 2026 est correct (ventes 38,6 Md€, +2 % en organique, marge opérationnelle stable à 22,5 %, première croissance trimestrielle de la mode-maroquinerie en sept trimestres). Mais depuis fin août, plusieurs analystes avertissent d'un T3 et d'un S2 difficiles : faux départ de la reprise en Chine, un analyste a ramené sa prévision de croissance de la mode-maroquinerie au T3 de +3 % à -2 %. Le titre a touché un plus bas de six ans le 07/09 (environ -38 % depuis janvier). Valorisation basse, mais aucun catalyseur de reprise. Les objectifs 420/590/680 € datent d'avant cette dégradation (Oddo : 590 € fin juillet) : à reconfirmer après le chiffre d'affaires du T3 (mi-octobre, date à confirmer).",
     cat:["Reprise Chine — la demande chinoise reste fragile ; un vrai redémarrage serait le déclencheur principal","Pricing power et très haut de gamme — montres et joaillerie +11 % en organique au S1","Marge opérationnelle — 22,5 % maintenue malgré 686 M€ d'effet de change défavorable"],
     ris:["Conjoncture et géopolitique — conflit au Moyen-Orient (tourisme, trafic aérien), analystes prudents sur le T3 et le S2","Chine — demande fragile ; mode-maroquinerie encore à -1 % en comparable au S1","Effet de change — environ -5 % sur les ventes du S1"],
-    act:"Seuil bas de 420 € déjà franchi : exécuter la sortie ou écrire un nouveau plancher avant le CA du T3 (mi-octobre)",edg:"Cours à des plus bas de six ans : l'asymétrie est favorable si la Chine repart, mais rien ne la déclenche pour l'instant."},
+    act:"Cours sous l'objectif bas de 420 € : décider d'une sortie ou d'un nouveau plancher avant le CA du T3 (mi-octobre)",edg:"Cours à des plus bas de six ans : l'asymétrie est favorable si la Chine repart, mais rien ne la déclenche pour l'instant."},
   NATO:{r:"CONSERVER + DCA",c:70,p:15,sig:"hold",lu:"2026-10-06",tgt:{l:18,a:23,h:28},
     th:"Tendance de fond intacte : engagement OTAN à 5 % du PIB d'ici 2035 (dont 3,5 % de défense cœur), dépenses européennes pouvant atteindre environ 800 Md€ à la fin de la décennie (McKinsey), carnets de commandes record (Rheinmetall : 73 Md€ fin T1 2026, +31 %). Mais le secteur est devenu nerveux : repli après le sommet d'Ankara de juillet, introduction de KNDS suspendue, forte sensibilité aux signaux de paix en Ukraine, retards d'exécution sur les programmes. Conserver et lisser les achats ; le moment d'entrée compte plus qu'avant.",
     cat:["OTAN vers 5 % du PIB — dont 3,5 % de défense cœur, trajectoire d'ici 2035","Réarmement européen — carnets de commandes record (Rheinmetall 73 Md€ fin T1 2026), stocks d'équipements encore sous leur niveau de 2021","Budgets cyber — montée des dépenses en cybersécurité et défense numérique"],
@@ -679,6 +631,11 @@ const AN_BASE = {
     cat:["Budget DoD record — demande 2027 de 1 500 Md$ (+44 %), vote du budget annuel attendu d'ici le 11/12","Aéronautique civile — reprise du trafic aérien soutenant l'aérospatial, mais perturbée par le conflit au Moyen-Orient","Contrats Indo-Pacifique — programmes pluriannuels liés aux tensions régionales"],
     ris:["Shutdown US — évité jusqu'au 11/12/2026 par un financement provisoire ; nouveau rendez-vous budgétaire en décembre, et ce financement ralentit les démarrages de programmes","Cycle pacifique — une accalmie géopolitique freinerait le secteur","Coûts programmes (F-35) — dépassements et retards sur les grands programmes"],
     act:"Conserver, DCA prudent jusqu'au vote du budget",edg:"ETF mondial : il bénéficie même si un pays sous-performe ; le calendrier budgétaire américain est le principal point d'attention."},
+  ONON:{r:"À SUIVRE",c:55,p:20,sig:"hold",lu:"2026-10-06",tgt:{l:24,a:45,h:73},
+    th:"On Holding (chaussures et vêtements de course, Suisse, cotée à New York, comptes en francs suisses). T2 2026 (11/08) : ventes de 850 M CHF (+21,6 % à change constant), sous les attentes ; croissance 2026 annoncée dans la fourchette basse des 20 %, contre « au moins 23 % » auparavant ; marge brute relevée à au moins 65 %, marge d'EBITDA ajusté maintenue à 19,5-20 %. Le titre a chuté d'environ 20 % ce jour-là, vers un plus bas de deux ans. Objectifs d'analystes de 24 à 73 $ (moyenne d'environ 45 $). Valeur de croissance très volatile (bêta d'environ 2,1) : fiche initiale à valider.",
+    cat:["Ventes directes (DTC) — +34 % à change constant au T2, 45,7 % des ventes (record pour un T2) : levier de marge et de fidélité","Innovations produits — le wholesale est volontairement réduit avant le lancement de nouveaux modèles","Marges — marge brute relevée à au moins 65 % ; un éventuel remboursement de droits de douane n'est pas inclus dans les prévisions"],
+    ris:["Ralentissement des Amériques — +13 % à change constant au T2 contre 17 % au T1, marché américain très promotionnel","Prévisions abaissées — croissance 2026 revue de « au moins 23 % » à la fourchette basse des 20 % ; T2 sous les attentes","Droits de douane et change — dépendance d'approvisionnement au Vietnam, comptes en francs suisses, volatilité élevée"],
+    act:"Attendre les résultats du T3 (date à confirmer) avant de renforcer",edg:"Le marché sanctionne la décélération américaine mais valorise peu la hausse de la marge brute et la part croissante des ventes directes : à confirmer au T3."},
   SPEA:{r:"CŒUR LONG TERME",c:80,p:8,sig:"buy",lu:"2026-09-15",tgt:{l:5.8,a:6.8,h:8},
     th:"Cœur d'un PEA long terme : le S&P 500 capture la croissance des plus grandes entreprises mondiales, rendu éligible au PEA via un swap. Frais très bas (0,10 %).",
     edg:"Une exposition US logée dans un PEA — rare et fiscalement avantageuse sur le long terme."},
@@ -6019,7 +5976,7 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
 const DCA_MIGRATED_KEY = "fab-dca-migrated-v1";
 function TxnLedger({ port, eurusd, onPortChange }) {
   const [txns, setTxns] = useState(() => loadTxns());
-  const [f, setF] = useState({ t:"", type:"buy", date:new Date().toISOString().slice(0,10), q:"", px:"" });
+  const [f, setF] = useState({ t:"", type:"buy", date:new Date().toISOString().slice(0,10), q:"", px:"", eur:false });
   const commit = next => {
     const s = (next||[]).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
     setTxns(s); saveTxns(s);
@@ -6042,7 +5999,10 @@ function TxnLedger({ port, eurusd, onPortChange }) {
   }, []);
   const add = () => {
     if(!f.t || !f.q || !f.px){ alert("Ticker, quantité et prix obligatoires"); return; }
-    commit([...txns, { id:"tx"+Date.now()+Math.floor(Math.random()*1000), ts:new Date(f.date+"T12:00:00Z").getTime(), date:f.date, t:f.t.toUpperCase().trim(), type:f.type, q:+f.q, px:+f.px }]);
+    const tk = f.t.toUpperCase().trim();
+    const pr = txnPrice(f.px, f.eur, tk, eurusd);
+    if(!pr){ alert("Prix invalide, ou taux de change indisponible pour convertir le prix en euros."); return; }
+    commit([...txns, { id:"tx"+Date.now()+Math.floor(Math.random()*1000), ts:new Date(f.date+"T12:00:00Z").getTime(), date:f.date, t:tk, type:f.type, q:+f.q, ...pr }]);
     setF({ ...f, q:"", px:"" });
   };
   const del = id => commit(txns.filter(x=>x.id!==id));
@@ -6059,15 +6019,20 @@ function TxnLedger({ port, eurusd, onPortChange }) {
   return (
     <div className="card">
       <div className="cd-ti"><h3>Registre de transactions</h3><span className="dim" style={{fontSize:9}}>{txns.length}</span></div>
-      <div className="dim" style={{fontSize:10,marginBottom:8,lineHeight:1.4}}>Journalise tes achats/ventes datés → historique juste (quantités réelles à chaque date) et <strong>P&L réalisé</strong>. N'affecte pas tes positions courantes.</div>
+      <div className="dim" style={{fontSize:10,marginBottom:8,lineHeight:1.4}}>Chaque achat ou vente met à jour la quantité et le prix de revient (coût moyen) de la position, et alimente le <strong>P&L réalisé</strong>. Ces montants restent dans cet appareil : ils ne sont jamais écrits dans le code public.</div>
       <div className="g2" style={{marginBottom:6}}>
         <input style={inp} placeholder="Ticker (ex. SPEA)" value={f.t} onChange={e=>setF({...f,t:e.target.value})}/>
         <input style={inp} type="date" value={f.date} onChange={e=>setF({...f,date:e.target.value})}/>
       </div>
       <div className="g2" style={{marginBottom:6}}>
         <input style={inp} type="number" placeholder="Quantité" value={f.q} onChange={e=>setF({...f,q:e.target.value})}/>
-        <input style={inp} type="number" placeholder="Prix unitaire" value={f.px} onChange={e=>setF({...f,px:e.target.value})}/>
+        <input style={inp} type="number" placeholder={f.eur?"Prix payé (€)":"Prix unitaire"} value={f.px} onChange={e=>setF({...f,px:e.target.value})}/>
       </div>
+      {(()=>{ const c=(REG[f.t.toUpperCase().trim()]||{}).ccy; return (c && c!=="EUR") ? (
+        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#8892a8",margin:"0 0 6px"}}>
+          <input type="checkbox" checked={!!f.eur} onChange={e=>setF({...f,eur:e.target.checked})}/>
+          Prix saisi en € (converti en {c} au taux du jour{eurusd>0?" : "+(+eurusd).toFixed(4):""})
+        </label>) : null; })()}
       <div style={{display:"flex",gap:6,marginBottom:8}}>
         <button onClick={()=>setF({...f,type:"buy"})} style={{flex:1,padding:"7px",borderRadius:6,cursor:"pointer",border:"1px solid "+(f.type==="buy"?"#2ecc8f":"#3a4560"),background:f.type==="buy"?"rgba(46,204,143,.15)":"transparent",color:f.type==="buy"?"#2ecc8f":"#8892a8",fontSize:11,fontWeight:700}}>Achat</button>
         <button onClick={()=>setF({...f,type:"sell"})} style={{flex:1,padding:"7px",borderRadius:6,cursor:"pointer",border:"1px solid "+(f.type==="sell"?"#e85d5d":"#3a4560"),background:f.type==="sell"?"rgba(232,93,93,.15)":"transparent",color:f.type==="sell"?"#e85d5d":"#8892a8",fontSize:11,fontWeight:700}}>Vente</button>
@@ -6083,7 +6048,7 @@ function TxnLedger({ port, eurusd, onPortChange }) {
             {list.map(x=>(
               <div key={x.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
                 <span style={{fontSize:8,fontWeight:800,padding:"1px 5px",borderRadius:4,background:x.type==="sell"?"rgba(232,93,93,.18)":"rgba(46,204,143,.18)",color:x.type==="sell"?"#e85d5d":"#2ecc8f"}}>{x.type==="sell"?"VENTE":"ACHAT"}</span>
-                <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700}}>{x.t}</div><div className="dim" style={{fontSize:9}}>{x.date} · {x.q} @ {x.px}</div></div>
+                <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700}}>{x.t}</div><div className="dim" style={{fontSize:9}}>{x.date} · {x.q} @ {x.pxEur?`${x.pxEur} € (${x.px})`:x.px}</div></div>
                 <span onClick={()=>del(x.id)} style={{color:"#e85d5d",cursor:"pointer",fontSize:15,padding:"0 4px"}}>×</span>
               </div>
             ))}
@@ -6234,47 +6199,6 @@ function App() {
     setTimeout(() => setToast(null), 2500);
   }, []);
 
-  // v20.1 — intègre automatiquement les 3 supports PEA une seule fois (respecte les positions existantes)
-  const peaSeedDone = useRef(false);
-  useEffect(() => {
-    if(peaSeedDone.current || needDecrypt || !port) return;
-    let already = false;
-    try { already = localStorage.getItem(PEA_SEED_KEY) === "1"; } catch(e){}
-    peaSeedDone.current = true;
-    if(already) return;
-    const r = seedPeaPositions(port);
-    try { localStorage.setItem(PEA_SEED_KEY, "1"); } catch(e){}
-    if(r.added > 0) {
-      setPort(r.port);
-      try { saveStore({ ...(loadStore()||{}), port:r.port }); } catch(e){}
-      showToast(`🇪🇺 ${r.added} support(s) PEA intégré(s)`);
-    }
-  }, [port, needDecrypt]);
-
-  // Corrige de façon CERTAINE les quantités PEA : seed le registre (source de vérité, v20.16) si
-  // ces tickers n'y figurent pas encore, puis applique syncPortFromLedger. Auto-réparateur : tant
-  // que le registre ne contient pas ces tickers, ça réessaie à chaque chargement — aucun drapeau
-  // externe pouvant se faire consommer sans effet.
-  const peaLedgerSeedDone = useRef(false);
-  useEffect(() => {
-    if(peaLedgerSeedDone.current || needDecrypt || !port) return;
-    peaLedgerSeedDone.current = true;
-    const curTxns = loadTxns();
-    const missing = PEA_LEDGER_SEED.filter(s => !curTxns.some(t => t.t === s.t));
-    if(!missing.length) return;
-    const dateStr = getPeaOpenDate();
-    const toAdd = missing.map((s,i) => ({
-      id:"txpeafix"+Date.now()+i, ts:new Date(dateStr+"T12:00:00Z").getTime(), date:dateStr,
-      t:s.t, type:"buy", q:s.q, px:s.b
-    }));
-    const newTxns = [...curTxns, ...toAdd];
-    saveTxns(newTxns);
-    const corrected = syncPortFromLedger(port, newTxns);
-    setPort(corrected);
-    try { saveStore({ ...(loadStore()||{}), port:corrected }); } catch(e){}
-    showToast("🇪🇺 Quantités PEA corrigées via le registre");
-  }, [port, needDecrypt]);
-
   // Auto-init alertes pour positions sans seuils
   useEffect(() => {
     let changed = false;
@@ -6294,15 +6218,6 @@ function App() {
     setSnapshots(s.sort((a,b)=>a.ts-b.ts));
   }, []);
   useEffect(() => { reloadSnapshots(); }, [reloadSnapshots]);
-
-  // Répare les relevés historiques déjà enregistrés avec la mauvaise quantité PEA (voir
-  // repairPeaSnapshotQty). Auto-réparateur, sans drapeau : relance sans risque à chaque démarrage.
-  const peaSnapRepairDone = useRef(false);
-  useEffect(() => {
-    if(peaSnapRepairDone.current || needDecrypt) return;
-    peaSnapRepairDone.current = true;
-    repairPeaSnapshotQty().then(n => { if(n>0) reloadSnapshots(); });
-  }, [needDecrypt, reloadSnapshots]);
 
   // Fetch principal
   const fetchAll = useCallback(async (silent, fast) => {
@@ -6502,7 +6417,7 @@ function App() {
         <PEAHeader port={enrichedPEA}/>
         {enrichedPEA.length
           ? <PEAView port={enrichedPEA} onSelect={setDetail} qHistMap={liveHistMap}/>
-          : <div className="card" style={{margin:12}}><div className="lbl">Onglet PEA</div><div className="dim" style={{fontSize:12,marginTop:6,lineHeight:1.5}}>Aucune position PEA pour l'instant. Tes 3 ETF (SPEA, AWAT, SLMA) sont pré-configurés et éligibles ; ils s'ajoutent automatiquement au 1ᵉʳ lancement, ou via ⚙ Réglages.</div></div>}
+          : <div className="card" style={{margin:12}}><div className="lbl">Onglet PEA</div><div className="dim" style={{fontSize:12,marginTop:6,lineHeight:1.5}}>Aucune position PEA pour l'instant. Les ETF éligibles sont déjà référencés : ajoute un achat via ⚙ Réglages → Registre de transactions. Tes montants restent dans cet appareil.</div></div>}
       </></ErrorBoundary>}
       {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={liveHistMap} macroCtx={macroCtx} snapshots={snapshots}/></ErrorBoundary>}
       {tab === "moteur" && <ErrorBoundary inline label="Moteur"><MemoryView snapshots={snapshots} port={enriched} m={m} eurusd={eurusd} qHistMap={liveHistMap} spyHist={spyHist}/></ErrorBoundary>}
