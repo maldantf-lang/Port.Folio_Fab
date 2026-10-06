@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.28-2026-10-06-031";
+const BUILD = "v20.30-2026-10-06-033";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
@@ -391,19 +391,85 @@ function ledgerStats(txns){
   let realizedTot = 0; Object.keys(byT).forEach(t=> realizedTot += byT[t].realized);
   return { byT, realizedTot };
 }
-// Prix saisi → prix NATIF du support (devise de cotation = unité du registre). Pour un titre coté en
-// dollars dont on connaît le prix payé en euros (ce qu'affiche le courtier), on convertit au taux du
-// jour et on garde le prix en euros d'origine pour mémoire. Aucun montant n'est jamais écrit dans le code.
-function txnPrice(price, inEUR, ticker, eurusd){
-  const px = +price;
-  if(!(px > 0)) return null;
-  const ccy = (REG[ticker] && REG[ticker].ccy) || "USD";
-  if(!inEUR || ccy === "EUR") return { px };
-  if(!(+eurusd > 0)) return null;
-  return { px: +(px * eurusd).toFixed(4), pxEur: px, fx: +(+eurusd).toFixed(5) };
+/* CONVENTION DE DEVISE : tout montant personnel (PRU, prix du registre) est en EUROS, comme le champ
+   « PRU EUR » du formulaire de position et comme sur le courtier. Seuls les cours de marché et les
+   objectifs analystes sont en devise du titre (convertis par nativeToEUR à l'affichage).
+   Réparation : un achat saisi avec l'ancienne case « prix en € » portait un prix converti en devise du
+   titre (px) ET le prix payé (pxEur). Le prix payé fait foi (px) ; l'ancien prix converti devient le prix en devise
+   du titre (pxN). Idempotent : une fois réparé, pxEur disparaît et plus rien n'est modifié. */
+function normalizeTxns(txns){
+  const arr = (txns || []).slice();
+  const bad = arr.filter(x => x && +x.pxEur > 0);
+  if(!bad.length) return { txns: arr, changed: [], oldAvg: {} };
+  const st0 = ledgerStats(arr).byT;
+  const changed = [...new Set(bad.map(x => x.t))];
+  const oldAvg = {};
+  changed.forEach(t => { const s0 = st0[t]; oldAvg[t] = (s0 && s0.q > 1e-9) ? s0.cost / s0.q : null; });
+  const fixed = arr.map(x => {
+    if(!(x && +x.pxEur > 0)) return x;
+    const y = { ...x, px: +x.pxEur, pxN: (+x.pxN > 0) ? +x.pxN : +x.px }; delete y.pxEur; return y;   // px (€) = prix payé ; pxN = prix en devise du titre
+  });
+  return { txns: fixed, changed, oldAvg };
 }
-
-function ledgerRealizedEUR(txns, eurusd){ const s=ledgerStats(txns); let tot=0; Object.keys(s.byT).forEach(t=> tot+=(nativeToEUR(t, s.byT[t].realized, eurusd)||0)); return tot; }
+/* Les seuils d'alerte « automatiques » sont calculés une fois sur le PRU puis mémorisés. Si le PRU est
+   corrigé, ceux qui correspondent EXACTEMENT à l'ancien calcul sont recalculés ; un seuil saisi à la
+   main (différent du calcul automatique) n'est jamais touché. */
+function refreshAutoAlerts(alerts, changed, oldAvg, port){
+  const out = { ...(alerts || {}) }; let touched = false;
+  (changed || []).forEach(t => {
+    const a = out[t], np = (port || []).find(p => p.t === t), ob = oldAvg && oldAvg[t];
+    if(!a || !np || !(ob > 0)) return;
+    const old = smartThresholds({ b: ob, v: np.v }), neu = smartThresholds(np);
+    if(Math.abs(a.lo - old.lo) < 0.011 && Math.abs(a.hi - old.hi) < 0.011){ out[t] = { ...a, lo: neu.lo, hi: neu.hi }; touched = true; }
+  });
+  return touched ? out : alerts;
+}
+/* PRU EN DEVISE DU TITRE (affichage). Le PRU de l'app (p.b) reste en EUROS : c'est le coût réellement payé,
+   base du P&L en euros. Le PRU en devise est la moyenne pondérée (coût moyen) des prix natifs enregistrés
+   avec chaque achat (pxN) ; à défaut, le coût converti au taux de l'achat (fx) ; en dernier recours au taux du
+   jour, signalé par exact:false. Utilisé seulement si le registre décrit TOUTE la position, sinon repli. */
+function pruNative(t, bEUR, qPos, txns, eurusd){
+  const ccy = (REG[t] && REG[t].ccy) || "USD";
+  if(ccy === "EUR") return { v: bEUR, exact: true };
+  let q = 0, cost = 0, exact = true, seen = false;
+  const sorted = (txns || []).filter(x => x && x.t === t).sort((a,b) => (a.ts||0) - (b.ts||0));
+  for(const x of sorted){
+    const xq = +x.q || 0;
+    if(x.type === "sell"){
+      const avg = q > 1e-9 ? cost / q : 0, qs = Math.min(xq, q);
+      cost -= avg * qs; q -= qs; if(q < 1e-9){ q = 0; cost = 0; }
+    } else {
+      seen = true;
+      let nat;
+      if(+x.pxN > 0) nat = +x.pxN;
+      else if(+x.px > 0 && +x.fx > 0) nat = +x.px * +x.fx;
+      else if(+x.px > 0 && eurusd > 0){ nat = +x.px * eurusd; exact = false; }
+      else { nat = 0; exact = false; }
+      cost += nat * xq; q += xq;
+    }
+  }
+  const covers = seen && q > 1e-9 && Math.abs(q - qPos) <= Math.max(1e-6, (qPos||0) * 1e-4);
+  if(covers && cost > 0) return { v: cost / q, exact };
+  return { v: eurusd > 0 ? bEUR * eurusd : null, exact: false };
+}
+// Ce que la fiche détail affiche : cours et PRU en devise du titre ; valeur et P&L restent en euros.
+function cardPrices(p, txns, eurusd){
+  const ccy = (REG[p.t] && REG[p.t].ccy) || "USD";
+  if(ccy === "EUR") return { eur: true };
+  const pr = pruNative(p.t, p.b, p.q, txns, eurusd);
+  return { eur: false, px: p.pxNative, pxE: p.pxE, pru: pr.v, pruExact: pr.exact, pruE: p.b };
+}
+// Achat saisi : le prix tapé peut être en euros (par défaut) ou en devise du titre. On enregistre TOUJOURS le
+// prix en euros (px, base du P&L) et, pour un titre hors zone euro, le prix en devise (pxN) et le taux utilisé (fx).
+function txnRecord(price, cur, ticker, eurusd){
+  const v = +price; if(!(v > 0)) return null;
+  const ccy = (REG[ticker] && REG[ticker].ccy) || "USD";
+  if(ccy === "EUR") return { px: v };
+  if(!(+eurusd > 0)) return null;
+  const fx = +(+eurusd).toFixed(5);
+  return cur === "NAT" ? { px: +(v / eurusd).toFixed(4), pxN: v, fx } : { px: v, pxN: +(v * eurusd).toFixed(4), fx };
+}
+function ledgerRealizedEUR(txns){ return ledgerStats(txns).realizedTot; }
 
 /* Le registre devient la SOURCE DE VÉRITÉ des positions détenues : après chaque ajout/suppression
    de transaction, on rejoue tout le journal (coût moyen pondéré) et on écrase q/b des positions
@@ -430,7 +496,7 @@ function syncPortFromLedger(port, txns){
    couverte par l'historique de valeur (snapshots). Sans cette méthode, un simple apport de
    capital (ex. achat de nouvelles parts) se lit à tort comme de la performance. Chaque
    transaction du registre est un flux externe, pondéré par le temps restant dans la période. */
-function twrModifiedDietz(snapshots, txns, eurusd, curVal){
+function twrModifiedDietz(snapshots, txns, curVal){
   const valid = (snapshots||[]).filter(s=>Number.isFinite(s.tot) && s.tot>0).sort((a,b)=>a.ts-b.ts);
   if(!valid.length || !(curVal>0)) return null;
   const start = valid[0].ts, end = Date.now();
@@ -439,7 +505,7 @@ function twrModifiedDietz(snapshots, txns, eurusd, curVal){
   let CF = 0, weighted = 0;
   (txns||[]).forEach(x=>{
     if(!x || x.ts < start || x.ts > end) return;
-    const amt = nativeToEUR(x.t, (+x.q||0)*(+x.px||0), eurusd) || 0;
+    const amt = (+x.q||0)*(+x.px||0);   // prix du registre = euros
     const flow = x.type === "sell" ? -amt : amt;   // achat = apport (+), vente = retrait (-)
     const w = (end - x.ts) / span;
     CF += flow; weighted += flow * w;
@@ -477,7 +543,7 @@ async function backfillSnapshots(daily, port, eurusdNow) {
       const meta = REG[p.t];
       const pxE = (meta && meta.ccy === "EUR") ? raw : (fx > 0 ? raw/fx : raw);
       const val = qd * pxE;
-      tot += val; inv += qd * ((meta && meta.ccy === "EUR") ? p.b : (fx > 0 ? p.b/fx : p.b));
+      tot += val; inv += qd * p.b;   // PRU en euros
       pos.push({ t:p.t, q:qd, b:p.b, pxE:+pxE.toFixed(4), val:+val.toFixed(2) });
     }
     if(!ok || !(tot > 0)) continue;
@@ -4731,7 +4797,7 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
         fetchCount={fetchCount} notifPerm={notifPerm} onAskNotif={onAskNotif}/>
       <SyncCard port={port} onPortChange={onPortChange}/>
       <CalibrationStatus/>
-      <TxnLedger port={port} eurusd={eurusd} onPortChange={onPortChange}/>
+      <TxnLedger port={port} eurusd={eurusd} prices={prices} onPortChange={onPortChange}/>
       <div className="card">
         <div className="cd-ti"><h3>Empreinte digitale</h3></div>
         <BioSettings pinActive={pinActive}/>
@@ -4958,6 +5024,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 
   const f = forecast(p, MACRO);
   const al = alerts[ticker];
+  const cp = useMemo(() => cardPrices(p, loadTxns(), eurusd), [p.t, p.q, p.b, p.pxNative, p.pxE, eurusd]);
   const dynConv = useMemo(() => calcDynamicConviction(ticker, p, snapshots, qHist), [ticker, p.pxE, qHist, snapshots, reviewBump]);
   const ec = dynConv.value;
 
@@ -5199,8 +5266,10 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 
       <div className="card">
         <div className="g2">
-          <div><div className="lbl">Cours actuel</div><div className="mono" style={{fontSize:16}}>{fe(p.pxE)}</div></div>
-          <div><div className="lbl">PRU</div><div className="mono" style={{fontSize:16}}>{fe(p.b)}</div></div>
+          <div><div className="lbl">Cours actuel</div><div className="mono" style={{fontSize:16}}>{cp.eur ? fe(p.pxE) : (cp.px!=null ? fcur(p.t, cp.px) : "—")}</div>
+            {!cp.eur && p.pxE!=null && <div className="dim" style={{fontSize:9}}>≈ {fe(p.pxE)}</div>}</div>
+          <div><div className="lbl">PRU</div><div className="mono" style={{fontSize:16}}>{cp.eur ? fe(p.b) : (cp.pru!=null ? fcur(p.t, cp.pru) : "—")}</div>
+            {!cp.eur && <div className="dim" style={{fontSize:9}}>{fe(p.b)} payé{cp.pruExact ? "" : " · converti au taux du jour"}</div>}</div>
           <div><div className="lbl">Quantité</div><div className="mono">{p.q.toLocaleString("fr-FR",{maximumFractionDigits:6})}</div></div>
           <div><div className="lbl">Valeur</div><div className="mono" style={{fontSize:16}}>{fe(p.val)}</div></div>
           <div><div className="lbl">P&amp;L</div><div className="mono" style={{fontSize:16,color:cl(p.pnl)}}>{fe(p.pnl)}</div></div>
@@ -5847,8 +5916,8 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
   const hb = spyHist ? calcHistBenchmark(portAll, qHistMap, spyHist, eurusd) : null;
   const bestHb = hb ? hb.find(h=>h.avail) : null;
   const txns = loadTxns();
-  const twr = twrModifiedDietz(snapshots, txns, eurusd, totVal);
-  const realizedEUR = ledgerRealizedEUR(txns, eurusd);
+  const twr = twrModifiedDietz(snapshots, txns, totVal);
+  const realizedEUR = ledgerRealizedEUR(txns);
 
   // C2 — rééquilibrage vs cible CTO/PEA
   const drift = pCTO - tgtCTO;
@@ -5974,9 +6043,9 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
 }
 
 const DCA_MIGRATED_KEY = "fab-dca-migrated-v1";
-function TxnLedger({ port, eurusd, onPortChange }) {
+function TxnLedger({ port, eurusd, prices, onPortChange }) {
   const [txns, setTxns] = useState(() => loadTxns());
-  const [f, setF] = useState({ t:"", type:"buy", date:new Date().toISOString().slice(0,10), q:"", px:"", eur:false });
+  const [f, setF] = useState({ t:"", type:"buy", date:new Date().toISOString().slice(0,10), q:"", px:"", cur:"EUR" });
   const commit = next => {
     const s = (next||[]).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
     setTxns(s); saveTxns(s);
@@ -6000,9 +6069,9 @@ function TxnLedger({ port, eurusd, onPortChange }) {
   const add = () => {
     if(!f.t || !f.q || !f.px){ alert("Ticker, quantité et prix obligatoires"); return; }
     const tk = f.t.toUpperCase().trim();
-    const pr = txnPrice(f.px, f.eur, tk, eurusd);
-    if(!pr){ alert("Prix invalide, ou taux de change indisponible pour convertir le prix en euros."); return; }
-    commit([...txns, { id:"tx"+Date.now()+Math.floor(Math.random()*1000), ts:new Date(f.date+"T12:00:00Z").getTime(), date:f.date, t:tk, type:f.type, q:+f.q, ...pr }]);
+    const rec = txnRecord(f.px, f.cur, tk, eurusd);
+    if(!rec || !(+f.q > 0)){ alert("Quantité et prix doivent être positifs (et le taux de change disponible pour un titre hors zone euro)."); return; }
+    commit([...txns, { id:"tx"+Date.now()+Math.floor(Math.random()*1000), ts:new Date(f.date+"T12:00:00Z").getTime(), date:f.date, t:tk, type:f.type, q:+f.q, ...rec }]);
     setF({ ...f, q:"", px:"" });
   };
   const del = id => commit(txns.filter(x=>x.id!==id));
@@ -6013,26 +6082,33 @@ function TxnLedger({ port, eurusd, onPortChange }) {
     commit([...txns, ...seeded]);
   };
   const stats = ledgerStats(txns);
-  const realizedEUR = Object.keys(stats.byT).reduce((s,t)=>{ const r=stats.byT[t].realized; return s + ((REG[t]&&REG[t].ccy!=="EUR"&&eurusd>0)?r/eurusd:r); },0);
+  const realizedEUR = stats.realizedTot;
   const inp = { width:"100%", background:"#161c2a", border:"1px solid #3a4560", borderRadius:6, color:"#dde3f0", padding:"7px 8px", fontSize:12, boxSizing:"border-box" };
   const list = txns.slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
   return (
     <div className="card">
       <div className="cd-ti"><h3>Registre de transactions</h3><span className="dim" style={{fontSize:9}}>{txns.length}</span></div>
-      <div className="dim" style={{fontSize:10,marginBottom:8,lineHeight:1.4}}>Chaque achat ou vente met à jour la quantité et le prix de revient (coût moyen) de la position, et alimente le <strong>P&L réalisé</strong>. Ces montants restent dans cet appareil : ils ne sont jamais écrits dans le code public.</div>
+      <div className="dim" style={{fontSize:10,marginBottom:8,lineHeight:1.4}}>Chaque achat ou vente met à jour la quantité et le prix de revient (coût moyen) de la position, et alimente le <strong>P&L réalisé</strong>. Prix en euros. Ces montants restent dans cet appareil : ils ne sont jamais écrits dans le code public.</div>
       <div className="g2" style={{marginBottom:6}}>
         <input style={inp} placeholder="Ticker (ex. SPEA)" value={f.t} onChange={e=>setF({...f,t:e.target.value})}/>
         <input style={inp} type="date" value={f.date} onChange={e=>setF({...f,date:e.target.value})}/>
       </div>
       <div className="g2" style={{marginBottom:6}}>
         <input style={inp} type="number" placeholder="Quantité" value={f.q} onChange={e=>setF({...f,q:e.target.value})}/>
-        <input style={inp} type="number" placeholder={f.eur?"Prix payé (€)":"Prix unitaire"} value={f.px} onChange={e=>setF({...f,px:e.target.value})}/>
+        <input style={inp} type="number" placeholder={(((REG[f.t.toUpperCase().trim()]||{}).ccy||"EUR")!=="EUR" && f.cur==="NAT") ? "Prix payé par unité (devise du titre)" : "Prix payé par unité (€)"} value={f.px} onChange={e=>setF({...f,px:e.target.value})}/>
       </div>
-      {(()=>{ const c=(REG[f.t.toUpperCase().trim()]||{}).ccy; return (c && c!=="EUR") ? (
-        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#8892a8",margin:"0 0 6px"}}>
-          <input type="checkbox" checked={!!f.eur} onChange={e=>setF({...f,eur:e.target.checked})}/>
-          Prix saisi en € (converti en {c} au taux du jour{eurusd>0?" : "+(+eurusd).toFixed(4):""})
-        </label>) : null; })()}
+      {(()=>{ const tk=f.t.toUpperCase().trim(); const c=(REG[tk]||{}).ccy; const foreign=!!c && c!=="EUR";
+        const live=tk?priceEUR(tk,prices,eurusd):null; const nat=(tk&&prices&&prices[tk]!=null)?prices[tk]:null; return (
+        <div style={{margin:"0 0 6px"}}>
+          {foreign && <div style={{display:"flex",gap:6,marginBottom:4}}>
+            {[["EUR","Prix en €"],["NAT","Prix en "+(c==="USD"?"$":c)]].map(([k,l])=>(
+              <button key={k} onClick={()=>setF({...f,cur:k})} style={{flex:1,padding:"5px",borderRadius:6,cursor:"pointer",fontSize:10,fontWeight:700,border:"1px solid "+(f.cur===k?"#4f83f5":"#3a4560"),background:f.cur===k?"rgba(79,131,245,.15)":"transparent",color:f.cur===k?"#4f83f5":"#8892a8"}}>{l}</button>))}
+          </div>}
+          <div className="dim" style={{fontSize:9,lineHeight:1.4}}>
+            {foreign ? "L'autre devise est calculée au taux du jour ("+(+eurusd).toFixed(4)+"). Pour un coût exact en euros, saisis ce que tu as payé en €." : "Prix en euros, comme sur ton courtier."}
+            {live>0 ? <> · cours actuel de {tk} : <strong>{foreign&&nat!=null ? fcur(tk,nat)+" ≈ " : ""}{fe(live)}</strong></> : null}
+          </div>
+        </div>); })()}
       <div style={{display:"flex",gap:6,marginBottom:8}}>
         <button onClick={()=>setF({...f,type:"buy"})} style={{flex:1,padding:"7px",borderRadius:6,cursor:"pointer",border:"1px solid "+(f.type==="buy"?"#2ecc8f":"#3a4560"),background:f.type==="buy"?"rgba(46,204,143,.15)":"transparent",color:f.type==="buy"?"#2ecc8f":"#8892a8",fontSize:11,fontWeight:700}}>Achat</button>
         <button onClick={()=>setF({...f,type:"sell"})} style={{flex:1,padding:"7px",borderRadius:6,cursor:"pointer",border:"1px solid "+(f.type==="sell"?"#e85d5d":"#3a4560"),background:f.type==="sell"?"rgba(232,93,93,.15)":"transparent",color:f.type==="sell"?"#e85d5d":"#8892a8",fontSize:11,fontWeight:700}}>Vente</button>
@@ -6048,7 +6124,7 @@ function TxnLedger({ port, eurusd, onPortChange }) {
             {list.map(x=>(
               <div key={x.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
                 <span style={{fontSize:8,fontWeight:800,padding:"1px 5px",borderRadius:4,background:x.type==="sell"?"rgba(232,93,93,.18)":"rgba(46,204,143,.18)",color:x.type==="sell"?"#e85d5d":"#2ecc8f"}}>{x.type==="sell"?"VENTE":"ACHAT"}</span>
-                <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700}}>{x.t}</div><div className="dim" style={{fontSize:9}}>{x.date} · {x.q} @ {x.pxEur?`${x.pxEur} € (${x.px})`:x.px}</div></div>
+                <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700}}>{x.t}</div><div className="dim" style={{fontSize:9}}>{x.date} · {x.q} @ {x.px} €{x.pxN>0?` (${fcur(x.t,x.pxN)})`:""}</div></div>
                 <span onClick={()=>del(x.id)} style={{color:"#e85d5d",cursor:"pointer",fontSize:15,padding:"0 4px"}}>×</span>
               </div>
             ))}
@@ -6211,6 +6287,22 @@ function App() {
     });
     if (changed) { setAlerts(next); saveAlerts(next); }
   }, [port]);
+
+  // Répare (une fois, sans drapeau) les achats saisis avec l'ancienne case « prix en € » : le prix payé en
+  // euros devient le prix du registre, la position est recalculée et les seuils automatiques recalculés.
+  const txnNormDone = useRef(false);
+  useEffect(() => {
+    if(txnNormDone.current || needDecrypt || !port) return;
+    txnNormDone.current = true;
+    const r = normalizeTxns(loadTxns());
+    if(!r.changed.length) return;
+    saveTxns(r.txns);
+    const seedTxns = r.txns.filter(t => r.changed.includes(t.t));
+    const newPort = syncPortFromLedger(port, seedTxns);
+    setPort(cur => syncPortFromLedger(cur, seedTxns));
+    setAlerts(cur => refreshAutoAlerts(cur, r.changed, r.oldAvg, newPort));
+    showToast("Prix d'achat corrigé en euros : " + r.changed.join(", "));
+  }, [port, needDecrypt]);
 
   // Charger snapshots
   const reloadSnapshots = useCallback(async () => {
