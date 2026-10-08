@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.31-2026-10-07-034";
+const BUILD = "v20.33-2026-10-08-036";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    Barème 2026 : prélèvements sociaux 18,6 % (la CSG sur les revenus du capital passe de 17,2 % à 18,6 %,
@@ -5895,33 +5895,8 @@ function dayActions(port, qHistMap){
   return items.sort((a,b)=>b.score-a.score);
 }
 
-/* Rééquilibrage CTO/PEA SANS VENDRE : transférer des titres du CTO vers le PEA est impossible (il faut
-   vendre = impôt, puis racheter dans la limite des versements). Le levier réel = l'orientation des
-   NOUVEAUX versements. Marché supposé constant. tgtCTO en %, monthly en €/mois, peaShare entre 0 et 1.
-   need   = montant à verser à 100 % dans l'enveloppe sous-pondérée pour atteindre la cible ;
-   months = nombre de mois au rythme saisi (null si rythme non renseigné, Infinity si ne converge jamais). */
-function depositPlan(vCTO, vPEA, tgtCTO, monthly, peaShare){
-  const tot = (+vCTO||0) + (+vPEA||0);
-  if(!(tot > 0)) return null;
-  const tPEA = Math.max(0, Math.min(1, (100 - tgtCTO) / 100));
-  const gapPts = ((+vPEA||0)/tot - tPEA) * 100;            // > 0 : PEA sur-pondéré
-  const under = gapPts < 0 ? "PEA" : "CTO";                  // enveloppe à renforcer
-  const tUnder = under === "PEA" ? tPEA : 1 - tPEA;
-  const vUnder = under === "PEA" ? (+vPEA||0) : (+vCTO||0);
-  const gapEUR = tUnder * tot - vUnder;                      // valeur manquante dans l'enveloppe à renforcer
-  const need = (gapEUR > 0 && tUnder < 1) ? gapEUR / (1 - tUnder) : 0;
-  let months = null;
-  if(monthly > 0 && peaShare != null && isFinite(peaShare)){
-    const sUnder = under === "PEA" ? peaShare : 1 - peaShare;  // part des versements qui va à l'enveloppe à renforcer
-    if(gapEUR <= 0) months = 0;
-    else months = sUnder > tUnder ? gapEUR / (monthly * (sUnder - tUnder)) : Infinity;
-  }
-  return { tot, gapPts, under, need, months };
-}
-
 // v2 : la cible mémorisée sur l'appareil (ancien défaut 60) est volontairement ignorée → défaut 50/50 confirmé.
 const REBAL_KEY = "fab-rebal-target-v2";
-const DEP_M_KEY = "fab-dep-monthly", DEP_S_KEY = "fab-dep-pea-share";   // rythme de versement : montants stockés sur l'appareil uniquement
 function InfoBtn({ active, onClick, title }) {
   return (
     <span onClick={onClick} title={title||"En savoir plus"}
@@ -5936,9 +5911,6 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
   const toggleInfo = k => setInfoKey(v => v===k ? null : k);
   const [tgtCTO, setTgtCTO] = useState(() => { try { return +localStorage.getItem(REBAL_KEY) || 50; } catch(e){ return 50; } });
   const setTarget = v => { const n = Math.max(0,Math.min(100,+v||0)); setTgtCTO(n); try{ localStorage.setItem(REBAL_KEY, String(n)); }catch(e){} };
-  const [depM, setDepM] = useState(() => { try { return localStorage.getItem(DEP_M_KEY) || ""; } catch(e){ return ""; } });
-  const [depS, setDepS] = useState(() => { try { return localStorage.getItem(DEP_S_KEY) || ""; } catch(e){ return ""; } });
-  const saveDep = (k, setter) => v => { setter(v); try{ localStorage.setItem(k, v); }catch(e){} };
   const val = a => (a||[]).reduce((s,p)=>s+(p.val||0),0);
   const inv = a => (a||[]).reduce((s,p)=>s+(p.inv||0),0);
   const totVal = val(portAll), totInv = inv(portAll), pnl = totVal-totInv;
@@ -5953,7 +5925,6 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
   const ddTxns = loadTxns();
   const ddRes = drawdownTWR(snapshots, ddTxns, totVal);
   const ddCur = ddRes.ddCur, ddMax = ddRes.ddMax;
-  const ddBreaks = ddRes.breaks || [];
 
   // A3 — alpha vs S&P 500 (meilleur horizon disponible dans calcHistBenchmark)
   const hb = spyHist ? calcHistBenchmark(portAll, qHistMap, spyHist, eurusd) : null;
@@ -5965,7 +5936,7 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
   // C2 — rééquilibrage vs cible CTO/PEA
   const drift = pCTO - tgtCTO;
   const needsRebal = Math.abs(drift) >= 5 && totVal>0;
-  const rbPlan = depositPlan(vCTO, vPEA, tgtCTO, +depM||0, depS==="" ? null : Math.max(0,Math.min(100,+depS||0))/100);
+  const rbUnder = drift > 0 ? "PEA" : "CTO";   // enveloppe à renforcer par les prochains versements
   const dPEA = getPeaOpenDate();
   const taxTot = netAfterTax(val(portCTO)-inv(portCTO),"CTO",dPEA).taxEUR + netAfterTax(val(portPEA)-inv(portPEA),"PEA",dPEA).taxEUR;
   const isETF = t => !!(REG[t] && REG[t].etf);
@@ -6029,9 +6000,6 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
         <div style={{textAlign:"center"}}><div className="lbl">Drawdown max</div><div className="mono" style={{fontSize:15,color:"#e85d5d"}}>{fp(ddMax,1)}</div></div>
         <div style={{textAlign:"center"}}><div className="lbl">Alpha</div><div className="mono" style={{fontSize:15,color:bestHb?cl(bestHb.alpha):"#3a4560"}}>{bestHb?fp(bestHb.alpha,1):"—"}</div></div>
       </div>
-      {ddBreaks.length>0 && (
-        <div style={{marginTop:6,fontSize:9,lineHeight:1.4,color:"#f0a020"}}>⚠ {ddBreaks.length} saut{ddBreaks.length>1?"s":""} de données incohérent{ddBreaks.length>1?"s":""} ignoré{ddBreaks.length>1?"s":""} (le plus gros : {new Date(ddBreaks.slice().sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct))[0].ts).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"})}, {fp(ddBreaks.slice().sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct))[0].pct,0)}) — relevé d'avant correction ou vente non saisie au registre.</div>
-      )}
       {twr && (
         <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.05)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontSize:10,color:"#8892a8"}}>Perf. réelle (TWR{twr.hasFlows?", neutre aux apports":""}) sur {twr.days}j</span>
@@ -6070,21 +6038,9 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
         </div>
         {needsRebal
           ? <div style={{fontSize:10,color:"#f0a020",lineHeight:1.45}}>
-              Dérive de <strong>{Math.abs(drift).toFixed(0)} pts</strong> vs cible : le <strong>{rbPlan.under}</strong> est sous-pondéré.
-              <div style={{marginTop:3}}>Ne vends rien pour rééquilibrer (une vente déclenche l'impôt). Oriente plutôt tes <strong>prochains versements</strong> vers le {rbPlan.under} : environ <strong>{fe(rbPlan.need,0)}</strong> à y verser en totalité.</div>
-              {rbPlan.months!=null && <div style={{marginTop:3}}>{rbPlan.months===0 ? "À ton rythme, la cible est déjà atteinte."
-                : !isFinite(rbPlan.months) ? <>À ton rythme actuel, tu ne te rapproches <strong>pas</strong> de la cible : mets plus de {rbPlan.under} dans chaque versement.</>
-                : rbPlan.months>120 ? "À ton rythme, il faudrait plus de 10 ans."
-                : <>À ton rythme : cible atteinte dans environ <strong>{Math.ceil(rbPlan.months)} mois</strong> (marché supposé stable).</>}</div>}
+              Dérive de <strong>{Math.abs(drift).toFixed(0)} pts</strong> vs cible : le <strong>{rbUnder}</strong> est sous-pondéré.
             </div>
           : <div style={{fontSize:10,color:"#2ecc8f"}}>Allocation proche de la cible (écart &lt; 5 pts).</div>}
-        <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:4,marginTop:6,fontSize:9,color:"#8892a8"}}>
-          <span>Mon rythme (facultatif) :</span>
-          <input type="number" min="0" inputMode="decimal" placeholder="—" value={depM} onChange={e=>saveDep(DEP_M_KEY,setDepM)(e.target.value)} style={{width:54,background:"#161c2a",border:"1px solid #3a4560",borderRadius:4,color:"#dde3f0",padding:"2px 4px",fontSize:10,textAlign:"center"}}/>
-          <span>€/mois dont</span>
-          <input type="number" min="0" max="100" inputMode="decimal" placeholder="—" value={depS} onChange={e=>saveDep(DEP_S_KEY,setDepS)(e.target.value)} style={{width:42,background:"#161c2a",border:"1px solid #3a4560",borderRadius:4,color:"#dde3f0",padding:"2px 4px",fontSize:10,textAlign:"center"}}/>
-          <span>% vers le PEA</span>
-        </div>
       </div>
     </div>
     <div className="card" style={{margin:"9px 12px 12px"}}>
