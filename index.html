@@ -122,12 +122,18 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.30-2026-10-06-033";
+const BUILD = "v20.31-2026-10-07-034";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
-   CTO : PFU 30 % (12,8 IR + 17,2 PS) sur la plus-value.
-   PEA : retrait <5 ans = clôture → PFU 30 % ; ≥5 ans = IR exonéré, 17,2 % PS seuls.
-   La taxe ne porte QUE sur le gain (>0) ; une moins-value ne crée aucun impôt. */
+   Barème 2026 : prélèvements sociaux 18,6 % (la CSG sur les revenus du capital passe de 17,2 % à 18,6 %,
+   PEA compris ; seules certaines assurances-vie restent à 17,2 %) → PFU = 12,8 IR + 18,6 PS = 31,4 %.
+   CTO : PFU 31,4 % sur la plus-value.
+   PEA : retrait <5 ans = clôture → PFU 31,4 % ; ≥5 ans = IR exonéré, 18,6 % PS seuls.
+   La taxe ne porte QUE sur le gain (>0) ; une moins-value ne crée aucun impôt.
+   À REVÉRIFIER chaque début d'année (loi de finances / de financement de la Sécu). */
+const TAX_IR = 12.8, TAX_PS = 18.6;
+const TAX_PFU = +(TAX_IR + TAX_PS).toFixed(1);          // 31,4
+const pct1 = x => String(x).replace(".", ",");          // 31.4 → « 31,4 »
 const PEA_OPEN_KEY = "fab-pea-open";
 const PEA_OPEN_DEFAULT = "2026-09-15";        // date d'ouverture du PEA (règle des 5 ans)
 function getPeaOpenDate() {
@@ -146,9 +152,9 @@ function netAfterTax(gainEUR, acct, datePEA, horizonDate) {
   const isPEA = acct === "PEA";
   const mature = isPEA && peaMature(datePEA, horizonDate);
   let tauxPct, regle;
-  if(!isPEA)      { tauxPct = 30;   regle = "CTO : PFU 30 % à la revente"; }
-  else if(mature) { tauxPct = 17.2; regle = "PEA >5 ans : IR exonéré, PS 17,2 %"; }
-  else            { tauxPct = 30;   regle = "PEA <5 ans : retrait = clôture, PFU 30 %"; }
+  if(!isPEA)      { tauxPct = TAX_PFU; regle = `CTO : PFU ${pct1(TAX_PFU)} % à la revente`; }
+  else if(mature) { tauxPct = TAX_PS;  regle = `PEA >5 ans : IR exonéré, PS ${pct1(TAX_PS)} %`; }
+  else            { tauxPct = TAX_PFU; regle = `PEA <5 ans : retrait = clôture, PFU ${pct1(TAX_PFU)} %`; }
   const taxEUR = g * tauxPct / 100;
   return { taxEUR, netEUR: g - taxEUR, tauxPct, regle };
 }
@@ -492,28 +498,43 @@ function syncPortFromLedger(port, txns){
   return out;
 }
 
-/* TWR (méthode de Dietz modifiée) : rendement neutre aux apports/retraits, sur la période
-   couverte par l'historique de valeur (snapshots). Sans cette méthode, un simple apport de
-   capital (ex. achat de nouvelles parts) se lit à tort comme de la performance. Chaque
-   transaction du registre est un flux externe, pondéré par le temps restant dans la période. */
+/* TWR : rendement neutre aux apports/retraits. Chaîné (indice base 100 de drawdownTWR, relevé par relevé)
+   plutôt qu'un Dietz global : un seul relevé de départ faussé ne peut plus fausser tout le rendement. */
 function twrModifiedDietz(snapshots, txns, curVal){
-  const valid = (snapshots||[]).filter(s=>Number.isFinite(s.tot) && s.tot>0).sort((a,b)=>a.ts-b.ts);
-  if(!valid.length || !(curVal>0)) return null;
-  const start = valid[0].ts, end = Date.now();
-  const BMV = valid[0].tot, EMV = curVal;
-  const span = end - start; if(span <= 0) return null;
-  let CF = 0, weighted = 0;
-  (txns||[]).forEach(x=>{
-    if(!x || x.ts < start || x.ts > end) return;
-    const amt = (+x.q||0)*(+x.px||0);   // prix du registre = euros
-    const flow = x.type === "sell" ? -amt : amt;   // achat = apport (+), vente = retrait (-)
-    const w = (end - x.ts) / span;
-    CF += flow; weighted += flow * w;
-  });
-  const denom = BMV + weighted;
-  if(Math.abs(denom) < 1e-6) return null;
-  const twr = (EMV - BMV - CF) / denom;
-  return { twr: +(twr*100).toFixed(1), days: Math.round(span/86400000), hasFlows: CF !== 0 };
+  if(!(curVal > 0)) return null;
+  const r = drawdownTWR(snapshots, txns, curVal);
+  if(!r || r.n < 2) return null;
+  return { twr: r.twrPct, days: r.days, hasFlows: r.hasFlows, breaks: r.breaks.length };
+}
+
+/* Drawdown « propre » : calculé sur un INDICE (base 100) neutre aux apports/retraits du registre.
+   Comparer des valeurs brutes confond une vente/un retrait (ou un historique faussé) avec une chute de
+   marché. Entre deux relevés, le rendement = (valeur fin − flux − valeur début) / valeur début.
+   Un saut > 35 % non expliqué par un flux est une RUPTURE DE DONNÉES (relevé corrompu, ancienne saisie) :
+   il est ignoré (rendement forcé à 0) et listé, jamais compté comme une perte. */
+function drawdownTWR(snapshots, txns, curVal, nowTs){
+  const now = Number.isFinite(nowTs) ? nowTs : Date.now();
+  const pts = (snapshots||[]).filter(s=>s && Number.isFinite(s.tot) && s.tot>0 && Number.isFinite(s.ts))
+    .map(s=>({ts:s.ts, tot:s.tot})).sort((a,b)=>a.ts-b.ts);
+  if(curVal>0) pts.push({ ts: Math.max(now, pts.length ? pts[pts.length-1].ts : 0), tot: curVal });
+  if(pts.length < 2) return { ddMax:0, ddCur:0, twrPct:0, days:0, hasFlows:false, breaks:[], n:pts.length };
+  const flows = (txns||[]).filter(x=>x && Number.isFinite(x.ts))
+    .map(x=>({ ts:x.ts, f:(x.type==="sell"?-1:1)*(+x.q||0)*(+x.px||0) })).sort((a,b)=>a.ts-b.ts);
+  let idx = 100, peak = 100, ddMax = 0, k = 0; const breaks = [];
+  for(let i=1; i<pts.length; i++){
+    const a = pts[i-1], b = pts[i];
+    while(k < flows.length && flows[k].ts <= a.ts) k++;
+    let F = 0, j = k; while(j < flows.length && flows[j].ts <= b.ts){ F += flows[j].f; j++; }
+    let r = (b.tot - F - a.tot) / a.tot;
+    if(Math.abs(r) > 0.35){ breaks.push({ ts:b.ts, pct:+(r*100).toFixed(1) }); r = 0; }
+    idx *= (1 + r);
+    if(idx > peak) peak = idx;
+    const dd = idx/peak - 1; if(dd < ddMax) ddMax = dd;
+  }
+  const lastTs = pts[pts.length-1].ts, firstTs = pts[0].ts;
+  const flowSum = flows.filter(f=>f.ts > firstTs && f.ts <= lastTs).reduce((s,f)=>s+f.f,0);
+  return { ddMax:+(ddMax*100).toFixed(1), ddCur:+((idx/peak-1)*100).toFixed(1),
+    twrPct:+(idx-100).toFixed(1), days:Math.round((lastTs-firstTs)/86400000), hasFlows: flowSum !== 0, breaks, n:pts.length };
 }
 
 /* Reconstitue les snapshots des jours où l'app n'a pas été ouverte, à partir des cours du jour
@@ -732,48 +753,33 @@ const AN = (() => {
 // Une position a-t-elle une thèse exploitable (objectifs + conviction) ?
 function hasThesis(t) { const a = AN[t]; return !!(a && a.tgt && a.c != null); }
 
-/* Nouvelles opportunités */
+/* Nouvelles opportunités — objectifs = CONSENSUS des analystes (moyenne), relevé daté (lu).
+   Potentiel p = objectif / cours du relevé − 1 (indicatif, figé à la date lu : la carte signale quand
+   le relevé vieillit). Les convictions c sont celles de l'agent Financier, calées sur l'écart au consensus. */
 const OPPS = [
-  {t:"CEG",n:"Constellation Energy",s:"Énergie",p:65,tgt:500,c:90,
-    note:"Trade de la décennie. PPA Microsoft 20 ans Three Mile Island. IA = 24/7 dispatchable → seul nucléaire scalable.",
-    edg:"Biais émotionnel 'nucléaire = catastrophe' EST l'opportunité."},
-  {t:"PLTR",n:"Palantir Technologies",s:"Tech",p:45,tgt:90,c:85,
-    note:"Pure-play IA + défense. Contrats DoD/CIA/OTAN pluriannuels. AIP = killer app entreprise.",
-    edg:"No man's land entre value et growth = alpha."},
-  {t:"FCX",n:"Freeport-McMoRan",s:"Matériaux",p:35,tgt:80,c:80,
-    note:"Le pétrole de la transition. Chaque data center IA = 3-10x plus de cuivre. Offre contrainte (mines = 15-20 ans).",
-    edg:"IA = infra physique = cuivre. Achetez la pioche."},
-  {t:"ASML",n:"ASML Holding",s:"Tech",p:28,tgt:1100,c:88,
-    note:"Monopole absolu EUV lithography. Aucun concurrent avant 2035. Backlog 40 Md€+.",
-    edg:"Société la plus critique de l'économie mondiale, peu suivie particuliers."},
-  {t:"URA",n:"Global X Uranium ETF",s:"Énergie",p:40,tgt:45,c:75,
-    note:"50+ réacteurs en construction. Renaissance US/EU. Offre met 10-15 ans à répondre.",
-    edg:"Réaction négative au mot nucléaire = biais = opportunité."}
+  {t:"CEG",n:"Constellation Energy",s:"Énergie",p:18,tgt:352,c:70,lu:"2026-10-07",src:"consensus analystes (MarketBeat)",
+    note:"Nucléaire pilotable + contrats longue durée (PPA Microsoft, Three Mile Island). Fourchette des analystes 277–441 $ : l'ancien objectif à 500 $ dépassait même le plus optimiste.",
+    edg:"Le marché sous-estime la valeur du nucléaire pilotable pour l'IA."},
+  {t:"PLTR",n:"Palantir Technologies",s:"Tech",p:1,tgt:195,c:40,lu:"2026-10-07",src:"consensus analystes (MarketBeat)",
+    note:"IA + défense (contrats DoD/CIA/OTAN). Mais le cours a déjà rejoint l'objectif moyen des analystes : peu de potentiel restant, valorisation exigeante.",
+    edg:"Très suivi : l'avantage d'information est faible, le risque de valorisation est élevé."},
+  {t:"FCX",n:"Freeport-McMoRan",s:"Matériaux",p:5,tgt:75,c:55,lu:"2026-10-07",src:"consensus analystes (MarketBeat)",
+    note:"Cuivre = électrification + data centers IA ; offre contrainte (une mine = 15-20 ans). Cyclique : très sensible au cours du cuivre.",
+    edg:"IA = infrastructure physique = cuivre. Potentiel analystes modeste à ce niveau de cours."},
+  {t:"ASML",n:"ASML Holding",s:"Tech",p:9,tgt:1970,c:70,lu:"2026-10-07",src:"consensus analystes (MarketBeat)",
+    note:"Monopole EUV en lithographie, aucun concurrent à court terme. Forte hausse déjà intégrée : valorisation exigeante.",
+    edg:"Société critique, peu suivie des particuliers — mais plus aucune décote visible."},
+  {t:"URA",n:"Global X Uranium ETF",s:"Énergie",p:8,tgt:45,c:55,lu:"2026-10-07",src:"objectif interne (ETF : pas de consensus analystes)",
+    note:"Renaissance du nucléaire US/EU, offre lente à réagir. Mais l'ETF a nettement reculé sur 12 mois : la thèse n'est pas encore confirmée par le marché.",
+    edg:"Réaction négative au mot « nucléaire » = biais possible, à confirmer par les cours."}
 ];
 
+/* Régime macro : SEUL « regime » est lu (forecast : ajustement stagflation). Les anciens textes libres
+   (fed, geo, ia, wrong) n'étaient affichés nulle part, étaient périmés et contredisaient la thèse LVMH :
+   retirés. Le classement sectoriel et le régime MESURÉS sont plus bas (sectorMomentum). */
 const MACRO = {
-  regime:"Transition inflationniste vers stagflation partielle",
-  fed:"Fed contrainte : inflation services >3%. 1-2 baisses max 2026. Taux longs >4.5% jusqu'en 2027.",
-  geo:"Fragmentation géopolitique permanente : vents porteurs défense, énergie, matières premières pour une décennie.",
-  ia:"CapEx IA pas une bulle : ROI mesurables. Inférence dépasse training en volumes dès 2027. Demande GPU > offre.",
-  wrong:[
-    "« IA est pricée » : FAUX — valorisation de l'inférence pas dans les modèles",
-    "« Défense est toppy après +38% » : FAUX — début d'un réarmement pluridécennal",
-    "« LVMH est cassé » : FAUX — pause cyclique Chine, pas destruction structurelle",
-    "« Nucléaire est risqué » : BIAIS émotionnel qui crée l'opportunité CEG/URA"
-  ]
+  regime:"Transition inflationniste vers stagflation partielle"
 };
-
-const SECS = [
-  {n:"IA Infrastructure",   r:55, m:"↑↑", col:"#4f83f5", tag:"Surpondérer", c:95},
-  {n:"Nucléaire & Énergie", r:60, m:"↑↑", col:"#f0a020", tag:"Accumuler",   c:88},
-  {n:"Défense & Sécurité",  r:35, m:"↑↑", col:"#2ecc8f", tag:"Surpondérer", c:90},
-  {n:"Cloud & SaaS IA",     r:35, m:"↑",  col:"#4f83f5", tag:"Renforcer",   c:85},
-  {n:"Matières premières",  r:40, m:"↑",  col:"#d4a843", tag:"Accumuler",   c:78},
-  {n:"Luxe",                r:25, m:"→",  col:"#8b7cf5", tag:"Conserver",   c:60},
-  {n:"Énergie offshore",    r:8,  m:"↓",  col:"#f0a020", tag:"Alléger",     c:85},
-  {n:"Immo Tech",           r:-70,m:"↓↓", col:"#e85d5d", tag:"Vendre",      c:99}
-];
 
 /* ===== SECTEURS & MACRO MESURÉS (plus écrits à la main) =====
    Le classement sectoriel et le régime de marché sont désormais DÉDUITS des cours
@@ -1292,6 +1298,9 @@ function priceEUR(t, prices, eurusd) {
 // Signal EFFECTIF : combine la vue analyste (structurelle) avec l'action de prix LIVE.
 // Rend le verdict réactif au marché (position vs objectifs analystes + RSI) sans inventer
 // de nouveaux fondamentaux. Le prix natif est comparé aux objectifs (même devise).
+// RÈGLE : un cours SOUS l'objectif bas n'est JAMAIS un achat automatique — c'est une thèse « à l'épreuve »
+// (décote OU thèse cassée ; cohérent avec l'alerte « protéger / nouveau plancher »). Il plafonne le verdict à
+// « conserver » : seule une thèse de fond « acheter » (et pas un simple rebond de prix) peut rester achat.
 function effectiveSignal(t, prices, qHist) {
   const an = AN[t];
   const baseSig = (an && an.sig) || "hold";
@@ -1299,17 +1308,19 @@ function effectiveSignal(t, prices, qHist) {
   const pxN = (prices && prices[t] != null) ? prices[t] : null;
   let score = baseSig==="buy" ? 2 : baseSig==="sell" ? -2 : 0;
   const notes = [];
+  let underFloor = false;
   if(an && an.tgt && pxN!=null){
     if(pxN >= an.tgt.h){ score -= 2; notes.push("au-dessus de l'objectif haut"); }
-    else if(pxN <= an.tgt.l){ score += 2; notes.push("sous l'objectif bas"); }
+    else if(pxN <= an.tgt.l){ underFloor = true; notes.push("sous l'objectif bas — thèse à l'épreuve (pas d'achat automatique)"); }
   }
   const rsi = (qHist && qHist.length>=16) ? calcRSI(qHist.map(d=>d.px),14) : null;
   if(rsi!=null){
     if(rsi>=70){ score -= 1; notes.push("RSI surachat "+rsi); }
     else if(rsi<=30){ score += 1; notes.push("RSI survente "+rsi); }
   }
+  if(underFloor) score = Math.min(score, 1);   // plafonné à « conserver » (une vente éventuelle reste possible)
   const sig = score>=2 ? "buy" : score<=-2 ? "sell" : "hold";
-  return { sig, base:baseSig, drift: sig!==baseSig, rsi, reason: notes.length ? notes.join(" · ") : "aligné avec l'analyste" };
+  return { sig, base:baseSig, drift: sig!==baseSig, underFloor, rsi, reason: notes.length ? notes.join(" · ") : "aligné avec l'analyste" };
 }
 
 function enrich(port, prices, eurusd, priceTsMap, convMap, qHistMap) {
@@ -3028,7 +3039,7 @@ function HistoryView({ snapshots, port, eurusd, qHistMap, spyHist }) {
   const allVals  = data.map(d=>d.val).concat([cur]);
   const peak     = allVals.length ? Math.max(...allVals) : cur;
   const trough   = allVals.length ? Math.min(...allVals) : cur;
-  const drawdown = peak > 0 ? ((trough-peak)/peak)*100 : 0;
+  const drawdown = drawdownTWR(snapshots.filter(s=>s.ts>=cutoff), loadTxns(), cur).ddMax;
   const firstDate = data.length > 0 ? new Date(data[0].ts).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit"}) : "—";
 
   const contribs = port.filter(p=>p.val!=null&&p.pnl!=null)
@@ -3395,9 +3406,14 @@ function WatchlistView({ port, m }) {
                 <div style={{fontSize:11,color:"#8892a8",marginBottom:4,lineHeight:1.4}}>{o.note}</div>
                 <div style={{fontSize:10,color:"#4f83f5",fontStyle:"italic",marginBottom:4}}><strong>Edge :</strong> {o.edg}</div>
                 <div style={{display:"flex",gap:12,fontSize:10}}>
-                  <span>Cible 12M : <strong style={{color:"#2ecc8f"}}>{fp(o.p,0)}</strong></span>
+                  <span>Potentiel au relevé : <strong style={{color:"#2ecc8f"}}>{fp(o.p,0)}</strong></span>
                   <span>Objectif : <strong>${o.tgt}</strong></span>
                 </div>
+                {(()=>{ const age = o.lu ? Math.round((Date.now()-new Date(o.lu).getTime())/86400000) : null;
+                  return <div className="dim" style={{fontSize:9,marginTop:3,lineHeight:1.4}}>
+                    {o.src||"source non précisée"} · relevé du {o.lu ? new Date(o.lu).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit"}) : "date inconnue"}
+                    {(age==null || age>45) && <span style={{color:"#f0a020"}}> · ⚠ à réviser (relevé ancien)</span>}
+                  </div>; })()}
               </div>
             );
           })}
@@ -3595,7 +3611,7 @@ function ScenariosView({ port, m, qHistMap, snapshots }) {
   const fNet10 = projNet(tot10,"p10"), fNet50 = projNet(tot50,"p50"), fNet90 = projNet(tot90,"p90");
   const hasPEA = items.some(x=>x.acct==="PEA");
   const peaGainNow = items.reduce((s,x)=> s + ((x.acct==="PEA" && (x.val-(x.inv||0))>0) ? (x.val-(x.inv||0)) : 0), 0);
-  const peaSaving = peaGainNow * (0.30 - 0.172);
+  const peaSaving = peaGainNow * (TAX_PFU - TAX_PS) / 100;
 
   // Éventail portefeuille : P10/P50/P90 à plusieurs échéances (0→12M) pour le graphe en éventail.
   const fcs = port.filter(p=>p.val!=null).map(p => ({ t:p.t, val:p.val, f: forecast(p, MACRO) }));
@@ -3780,7 +3796,7 @@ function ScenariosView({ port, m, qHistMap, snapshots }) {
         </div>
       </div>
       <div className="card">
-        <div className="cd-ti"><h3>Après impôt à {horizon}M</h3><span className="dim" style={{fontSize:9}}>à la revente · CTO 30 % · PEA règle 5 ans</span></div>
+        <div className="cd-ti"><h3>Après impôt à {horizon}M</h3><span className="dim" style={{fontSize:9}}>à la revente · CTO {pct1(TAX_PFU)} % · PEA règle 5 ans</span></div>
         <div className="g3">
           <div style={{textAlign:"center"}}><div style={{fontSize:9,color:"#3a4560"}}>Net P10</div><div className="mono" style={{fontSize:14,color:"#e85d5d"}}>{fe(fNet10.net)}</div></div>
           <div style={{textAlign:"center"}}><div style={{fontSize:9,color:"#3a4560"}}>Net P50</div><div className="mono" style={{fontSize:14,color:"#4f83f5",fontWeight:800}}>{fe(fNet50.net)}</div></div>
@@ -3788,7 +3804,7 @@ function ScenariosView({ port, m, qHistMap, snapshots }) {
         </div>
         <div className="dim" style={{fontSize:9,marginTop:6,lineHeight:1.5}}>Impôt estimé au scénario médian : <strong style={{color:"#e85d5d"}}>{fe(fNet50.tax)}</strong>. Estimation à la revente — pas un montant garanti.</div>
         {hasPEA && <div className="dim" style={{fontSize:9,marginTop:5,lineHeight:1.5,paddingTop:5,borderTop:"1px solid rgba(255,255,255,.05)"}}>
-          🇪🇺 PEA ouvert le 15/09/2026 : sur cet horizon (moins de 5 ans) un retrait est taxé <strong>comme un CTO (30 %)</strong>. À maturité fiscale (<strong>15/09/2031</strong>) le taux tombe à <strong>17,2 %</strong>{peaGainNow>0 ? <> — sur ta plus-value PEA latente de {fe(peaGainNow)}, économie d'environ <strong style={{color:"#2ecc8f"}}>{fe(peaSaving)}</strong> vs une revente aujourd'hui</> : null}.
+          🇪🇺 PEA ouvert le 15/09/2026 : sur cet horizon (moins de 5 ans) un retrait est taxé <strong>comme un CTO ({pct1(TAX_PFU)} %)</strong>. À maturité fiscale (<strong>15/09/2031</strong>) le taux tombe à <strong>{pct1(TAX_PS)} %</strong>{peaGainNow>0 ? <> — sur ta plus-value PEA latente de {fe(peaGainNow)}, économie d'environ <strong style={{color:"#2ecc8f"}}>{fe(peaSaving)}</strong> vs une revente aujourd'hui</> : null}.
         </div>}
       </div>
       <div className="card">
@@ -4833,7 +4849,7 @@ function CfgView({ port, alerts, onPortChange, onAlertsChange, onClearCache, onA
       </div>
       {/* COMPTES PEA / CTO */}
       <div className="card">
-        <div className="cd-ti"><h3>Fiscalité des positions</h3><span className="dim" style={{fontSize:9}}>CTO=PFU 30% · PEA=17.2% PS</span></div>
+        <div className="cd-ti"><h3>Fiscalité des positions</h3><span className="dim" style={{fontSize:9}}>CTO=PFU {pct1(TAX_PFU)}% · PEA≥5 ans={pct1(TAX_PS)}% PS</span></div>
         <div className="dim" style={{fontSize:10,marginBottom:8}}>Modifie le type de compte pour calculer l'impact fiscal net (visible dans le détail de chaque position).</div>
         {port.map(p => (
           <div key={p.t} className="row" style={{padding:"5px 0"}}>
@@ -5072,7 +5088,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     return { sigLabel, riskLabel, convLabel, phrase };
   }, [p.sig, p.effSig, p.pxE, p.pct, risk.total, ec, dynConv]);
 
-  // Fiscal (PEA exonéré imposition revenu, CTO = PFU 30%)
+  // Fiscal (PEA ≥5 ans exonéré d'impôt sur le revenu ; CTO = PFU, cf. TAX_PFU)
   const fiscal = useMemo(() => {
     if(!p.pnl||p.pnl<=0) return null;
     const acct = p.acct || "CTO";
@@ -5505,7 +5521,7 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
             const lo=a.tgt.l, med=a.tgt.a, hi=a.tgt.h, px=p.pxNative, span=(hi-lo)||1;
             const pos=Math.max(0,Math.min(1,(px-lo)/span));
             const upMed=(med/px-1)*100;
-            const zone = px>=hi?"au-dessus de l'objectif haut — cher":px<=lo?"sous l'objectif bas — décoté":px>=med?"au-dessus du médian":"sous le médian — potentiel restant";
+            const zone = px>=hi?"au-dessus de l'objectif haut — cher":px<=lo?"sous l'objectif bas — décoté ou thèse cassée : à vérifier":px>=med?"au-dessus du médian":"sous le médian — potentiel restant";
             return (
               <div style={{marginTop:12}}>
                 <div className="lbl" style={{marginBottom:8}}>Distance à l'action</div>
@@ -5835,8 +5851,8 @@ function PEAHeader({ port }) {
       <div className="cd-ti"><h3>PEA · socle long terme</h3><span className="dim" style={{fontSize:9}}>{fe(totVal)}</span></div>
       <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:6}}>
         {!okDate ? "Date d'ouverture du PEA invalide — corrige-la ci-dessous."
-          : mature ? <>✅ Maturité fiscale atteinte — plus-values <strong>exonérées d'impôt sur le revenu</strong> (restent 17,2 % de prélèvements sociaux).</>
-          : <>Avantage fiscal PEA dans <strong style={{color:"#4f83f5"}}>{yearsLeft} an(s)</strong>, le <strong>{fmtD(matur)}</strong> : l'impôt passera de <strong>30 %</strong> à <strong>17,2 %</strong>.</>}
+          : mature ? <>✅ Maturité fiscale atteinte — plus-values <strong>exonérées d'impôt sur le revenu</strong> (restent {pct1(TAX_PS)} % de prélèvements sociaux).</>
+          : <>Avantage fiscal PEA dans <strong style={{color:"#4f83f5"}}>{yearsLeft} an(s)</strong>, le <strong>{fmtD(matur)}</strong> : l'impôt passera de <strong>{pct1(TAX_PFU)} %</strong> à <strong>{pct1(TAX_PS)} %</strong>.</>}
       </div>
       <div style={{height:6,background:"#161c2a",borderRadius:3,overflow:"hidden"}}>
         <div style={{width:(prog*100).toFixed(1)+"%",height:"100%",background:mature?"#2ecc8f":"#4f83f5",transition:"width .3s"}}/>
@@ -5879,7 +5895,33 @@ function dayActions(port, qHistMap){
   return items.sort((a,b)=>b.score-a.score);
 }
 
-const REBAL_KEY = "fab-rebal-target";
+/* Rééquilibrage CTO/PEA SANS VENDRE : transférer des titres du CTO vers le PEA est impossible (il faut
+   vendre = impôt, puis racheter dans la limite des versements). Le levier réel = l'orientation des
+   NOUVEAUX versements. Marché supposé constant. tgtCTO en %, monthly en €/mois, peaShare entre 0 et 1.
+   need   = montant à verser à 100 % dans l'enveloppe sous-pondérée pour atteindre la cible ;
+   months = nombre de mois au rythme saisi (null si rythme non renseigné, Infinity si ne converge jamais). */
+function depositPlan(vCTO, vPEA, tgtCTO, monthly, peaShare){
+  const tot = (+vCTO||0) + (+vPEA||0);
+  if(!(tot > 0)) return null;
+  const tPEA = Math.max(0, Math.min(1, (100 - tgtCTO) / 100));
+  const gapPts = ((+vPEA||0)/tot - tPEA) * 100;            // > 0 : PEA sur-pondéré
+  const under = gapPts < 0 ? "PEA" : "CTO";                  // enveloppe à renforcer
+  const tUnder = under === "PEA" ? tPEA : 1 - tPEA;
+  const vUnder = under === "PEA" ? (+vPEA||0) : (+vCTO||0);
+  const gapEUR = tUnder * tot - vUnder;                      // valeur manquante dans l'enveloppe à renforcer
+  const need = (gapEUR > 0 && tUnder < 1) ? gapEUR / (1 - tUnder) : 0;
+  let months = null;
+  if(monthly > 0 && peaShare != null && isFinite(peaShare)){
+    const sUnder = under === "PEA" ? peaShare : 1 - peaShare;  // part des versements qui va à l'enveloppe à renforcer
+    if(gapEUR <= 0) months = 0;
+    else months = sUnder > tUnder ? gapEUR / (monthly * (sUnder - tUnder)) : Infinity;
+  }
+  return { tot, gapPts, under, need, months };
+}
+
+// v2 : la cible mémorisée sur l'appareil (ancien défaut 60) est volontairement ignorée → défaut 50/50 confirmé.
+const REBAL_KEY = "fab-rebal-target-v2";
+const DEP_M_KEY = "fab-dep-monthly", DEP_S_KEY = "fab-dep-pea-share";   // rythme de versement : montants stockés sur l'appareil uniquement
 function InfoBtn({ active, onClick, title }) {
   return (
     <span onClick={onClick} title={title||"En savoir plus"}
@@ -5894,6 +5936,9 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
   const toggleInfo = k => setInfoKey(v => v===k ? null : k);
   const [tgtCTO, setTgtCTO] = useState(() => { try { return +localStorage.getItem(REBAL_KEY) || 50; } catch(e){ return 50; } });
   const setTarget = v => { const n = Math.max(0,Math.min(100,+v||0)); setTgtCTO(n); try{ localStorage.setItem(REBAL_KEY, String(n)); }catch(e){} };
+  const [depM, setDepM] = useState(() => { try { return localStorage.getItem(DEP_M_KEY) || ""; } catch(e){ return ""; } });
+  const [depS, setDepS] = useState(() => { try { return localStorage.getItem(DEP_S_KEY) || ""; } catch(e){ return ""; } });
+  const saveDep = (k, setter) => v => { setter(v); try{ localStorage.setItem(k, v); }catch(e){} };
   const val = a => (a||[]).reduce((s,p)=>s+(p.val||0),0);
   const inv = a => (a||[]).reduce((s,p)=>s+(p.inv||0),0);
   const totVal = val(portAll), totInv = inv(portAll), pnl = totVal-totInv;
@@ -5905,12 +5950,10 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
   const pCTO = totVal>0 ? vCTO/totVal*100 : 0, pPEA = totVal>0 ? vPEA/totVal*100 : 0;
 
   // A2 — drawdown courant (depuis le plus-haut historique) et max sur la période connue
-  const validSnaps = (snapshots||[]).filter(s=>Number.isFinite(s.tot) && s.tot>0);
-  const allVals = validSnaps.map(s=>s.tot).concat(totVal>0?[totVal]:[]);
-  const peak = allVals.length ? Math.max(...allVals) : totVal;
-  const ddCur = peak>0 ? (totVal-peak)/peak*100 : 0;
-  let ddMax = 0, run = -Infinity;
-  validSnaps.slice().sort((a,b)=>a.ts-b.ts).concat([{tot:totVal}]).forEach(s=>{ run=Math.max(run,s.tot); const d=run>0?(s.tot-run)/run*100:0; if(d<ddMax) ddMax=d; });
+  const ddTxns = loadTxns();
+  const ddRes = drawdownTWR(snapshots, ddTxns, totVal);
+  const ddCur = ddRes.ddCur, ddMax = ddRes.ddMax;
+  const ddBreaks = ddRes.breaks || [];
 
   // A3 — alpha vs S&P 500 (meilleur horizon disponible dans calcHistBenchmark)
   const hb = spyHist ? calcHistBenchmark(portAll, qHistMap, spyHist, eurusd) : null;
@@ -5922,7 +5965,7 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
   // C2 — rééquilibrage vs cible CTO/PEA
   const drift = pCTO - tgtCTO;
   const needsRebal = Math.abs(drift) >= 5 && totVal>0;
-  const moveEUR = needsRebal ? Math.abs(drift)/100*totVal : 0;
+  const rbPlan = depositPlan(vCTO, vPEA, tgtCTO, +depM||0, depS==="" ? null : Math.max(0,Math.min(100,+depS||0))/100);
   const dPEA = getPeaOpenDate();
   const taxTot = netAfterTax(val(portCTO)-inv(portCTO),"CTO",dPEA).taxEUR + netAfterTax(val(portPEA)-inv(portPEA),"PEA",dPEA).taxEUR;
   const isETF = t => !!(REG[t] && REG[t].etf);
@@ -5975,8 +6018,8 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
       </div>
       {infoKey==="perf" && (
         <div style={{background:"rgba(79,131,245,.06)",border:"1px solid rgba(79,131,245,.15)",borderRadius:8,padding:"10px 12px",marginBottom:10,fontSize:10,lineHeight:1.5,color:"#8892a8"}}>
-          <div style={{marginBottom:6}}><strong style={{color:"#dde3f0"}}>Drawdown actuel</strong> — distance entre ta valeur d'aujourd'hui et ton plus-haut historique. 0% = tu es à ton record.</div>
-          <div style={{marginBottom:6}}><strong style={{color:"#dde3f0"}}>Drawdown max</strong> — la pire chute jamais connue, du sommet au creux, sur tout l'historique. Le risque réellement vécu, pas théorique.</div>
+          <div style={{marginBottom:6}}><strong style={{color:"#dde3f0"}}>Drawdown actuel</strong> — distance entre ta performance d'aujourd'hui et son plus-haut. 0% = tu es à ton record. Calculé hors apports et retraits : vendre ou verser de l'argent ne crée ni chute ni gain.</div>
+          <div style={{marginBottom:6}}><strong style={{color:"#dde3f0"}}>Drawdown max</strong> — la pire chute de performance, du sommet au creux, sur l'historique. Les sauts incohérents (relevé faussé) sont ignorés.</div>
           <div style={{marginBottom:6}}><strong style={{color:"#dde3f0"}}>Alpha</strong> — ta performance moins celle du S&P 500 sur la même période. Positif = tu fais mieux que le marché large.</div>
           <div><strong style={{color:"#dde3f0"}}>TWR</strong> — ta perf réelle, en excluant l'effet de tes apports (ajouter de l'argent n'est pas un gain). Le % de « Patrimoine » ci-dessus les mélange ; le TWR les sépare.</div>
         </div>
@@ -5986,6 +6029,9 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
         <div style={{textAlign:"center"}}><div className="lbl">Drawdown max</div><div className="mono" style={{fontSize:15,color:"#e85d5d"}}>{fp(ddMax,1)}</div></div>
         <div style={{textAlign:"center"}}><div className="lbl">Alpha</div><div className="mono" style={{fontSize:15,color:bestHb?cl(bestHb.alpha):"#3a4560"}}>{bestHb?fp(bestHb.alpha,1):"—"}</div></div>
       </div>
+      {ddBreaks.length>0 && (
+        <div style={{marginTop:6,fontSize:9,lineHeight:1.4,color:"#f0a020"}}>⚠ {ddBreaks.length} saut{ddBreaks.length>1?"s":""} de données incohérent{ddBreaks.length>1?"s":""} ignoré{ddBreaks.length>1?"s":""} (le plus gros : {new Date(ddBreaks.slice().sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct))[0].ts).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"})}, {fp(ddBreaks.slice().sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct))[0].pct,0)}) — relevé d'avant correction ou vente non saisie au registre.</div>
+      )}
       {twr && (
         <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.05)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontSize:10,color:"#8892a8"}}>Perf. réelle (TWR{twr.hasFlows?", neutre aux apports":""}) sur {twr.days}j</span>
@@ -6023,8 +6069,22 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
           </span>
         </div>
         {needsRebal
-          ? <div style={{fontSize:10,color:"#f0a020",lineHeight:1.4}}>Dérive de <strong>{Math.abs(drift).toFixed(0)} pts</strong> vs cible — transférer environ <strong>{fe(moveEUR)}</strong> {drift>0?"du CTO vers le PEA":"du PEA vers le CTO"} pour revenir à la cible.</div>
+          ? <div style={{fontSize:10,color:"#f0a020",lineHeight:1.45}}>
+              Dérive de <strong>{Math.abs(drift).toFixed(0)} pts</strong> vs cible : le <strong>{rbPlan.under}</strong> est sous-pondéré.
+              <div style={{marginTop:3}}>Ne vends rien pour rééquilibrer (une vente déclenche l'impôt). Oriente plutôt tes <strong>prochains versements</strong> vers le {rbPlan.under} : environ <strong>{fe(rbPlan.need,0)}</strong> à y verser en totalité.</div>
+              {rbPlan.months!=null && <div style={{marginTop:3}}>{rbPlan.months===0 ? "À ton rythme, la cible est déjà atteinte."
+                : !isFinite(rbPlan.months) ? <>À ton rythme actuel, tu ne te rapproches <strong>pas</strong> de la cible : mets plus de {rbPlan.under} dans chaque versement.</>
+                : rbPlan.months>120 ? "À ton rythme, il faudrait plus de 10 ans."
+                : <>À ton rythme : cible atteinte dans environ <strong>{Math.ceil(rbPlan.months)} mois</strong> (marché supposé stable).</>}</div>}
+            </div>
           : <div style={{fontSize:10,color:"#2ecc8f"}}>Allocation proche de la cible (écart &lt; 5 pts).</div>}
+        <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:4,marginTop:6,fontSize:9,color:"#8892a8"}}>
+          <span>Mon rythme (facultatif) :</span>
+          <input type="number" min="0" inputMode="decimal" placeholder="—" value={depM} onChange={e=>saveDep(DEP_M_KEY,setDepM)(e.target.value)} style={{width:54,background:"#161c2a",border:"1px solid #3a4560",borderRadius:4,color:"#dde3f0",padding:"2px 4px",fontSize:10,textAlign:"center"}}/>
+          <span>€/mois dont</span>
+          <input type="number" min="0" max="100" inputMode="decimal" placeholder="—" value={depS} onChange={e=>saveDep(DEP_S_KEY,setDepS)(e.target.value)} style={{width:42,background:"#161c2a",border:"1px solid #3a4560",borderRadius:4,color:"#dde3f0",padding:"2px 4px",fontSize:10,textAlign:"center"}}/>
+          <span>% vers le PEA</span>
+        </div>
       </div>
     </div>
     <div className="card" style={{margin:"9px 12px 12px"}}>
