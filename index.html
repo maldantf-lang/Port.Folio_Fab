@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.34-2026-10-13-037";
+const BUILD = "v20.35-2026-10-13-038";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    Barème 2026 : prélèvements sociaux 18,6 % (la CSG sur les revenus du capital passe de 17,2 % à 18,6 %,
@@ -431,32 +431,37 @@ function refreshAutoAlerts(alerts, changed, oldAvg, port){
   });
   return touched ? out : alerts;
 }
-/* PRU EN DEVISE DU TITRE (affichage). Le PRU de l'app (p.b) reste en EUROS : c'est le coût réellement payé,
-   base du P&L en euros. Le PRU en devise est la moyenne pondérée (coût moyen) des prix natifs enregistrés
-   avec chaque achat (pxN) ; à défaut, le coût converti au taux de l'achat (fx) ; en dernier recours au taux du
-   jour, signalé par exact:false. Utilisé seulement si le registre décrit TOUTE la position, sinon repli. */
+/* PRU EN DEVISE DU TITRE (affichage). Le PRU de l'app (p.b) reste en EUROS : c'est le coût réellement payé
+   (frais de change du courtier compris), base du P&L en euros. Le PRU en devise est la moyenne pondérée des prix
+   natifs enregistrés avec chaque achat (pxN). Un achat est « exact » (bk) quand tu as saisi À LA FOIS le coût en
+   euros ET le prix d'ouverture en devise lus sur le courtier : le taux d'achat effectif (fx = pxN / px) en découle
+   sans estimation. Sinon l'autre montant est estimé au taux BCE du jour d'achat. fxm = taux BCE du jour d'achat
+   (historique) : il sert à séparer, dans le P&L, l'effet du titre, l'effet du taux EUR/USD depuis l'achat et les
+   frais/écart de change à l'achat. */
 function pruNative(t, bEUR, qPos, txns, eurusd){
   const ccy = (REG[t] && REG[t].ccy) || "USD";
   if(ccy === "EUR") return { v: bEUR, exact: true };
-  let q = 0, cost = 0, exact = true, seen = false;
+  let q = 0, cost = 0, fair = 0, paid = 0, exact = true, fairOk = true, seen = false;
   const sorted = (txns || []).filter(x => x && x.t === t).sort((a,b) => (a.ts||0) - (b.ts||0));
   for(const x of sorted){
     const xq = +x.q || 0;
     if(x.type === "sell"){
-      const avg = q > 1e-9 ? cost / q : 0, qs = Math.min(xq, q);
-      cost -= avg * qs; q -= qs; if(q < 1e-9){ q = 0; cost = 0; }
+      const qs = Math.min(xq, q), f = q > 1e-9 ? qs / q : 0;
+      cost -= cost * f; fair -= fair * f; paid -= paid * f; q -= qs;
+      if(q < 1e-9){ q = 0; cost = 0; fair = 0; paid = 0; }
     } else {
       seen = true;
-      let nat;
+      let nat = 0;
       if(+x.pxN > 0) nat = +x.pxN;
       else if(+x.px > 0 && +x.fx > 0) nat = +x.px * +x.fx;
-      else if(+x.px > 0 && eurusd > 0){ nat = +x.px * eurusd; exact = false; }
-      else { nat = 0; exact = false; }
-      cost += nat * xq; q += xq;
+      else if(+x.px > 0 && eurusd > 0) nat = +x.px * eurusd;
+      if(!x.bk) exact = false;
+      if(+x.fxm > 0 && nat > 0) fair += nat * xq / +x.fxm; else fairOk = false;
+      cost += nat * xq; q += xq; paid += (+x.px || 0) * xq;
     }
   }
   const covers = seen && q > 1e-9 && Math.abs(q - qPos) <= Math.max(1e-6, (qPos||0) * 1e-4);
-  if(covers && cost > 0) return { v: cost / q, exact };
+  if(covers && cost > 0) return { v: cost / q, exact, fxEff: paid > 0 ? cost / paid : null, fair: (fairOk && fair > 0) ? fair / q : null };
   return { v: eurusd > 0 ? bEUR * eurusd : null, exact: false };
 }
 // Ce que la fiche détail affiche : cours et PRU en devise du titre ; valeur et P&L restent en euros.
@@ -464,17 +469,27 @@ function cardPrices(p, txns, eurusd){
   const ccy = (REG[p.t] && REG[p.t].ccy) || "USD";
   if(ccy === "EUR") return { eur: true };
   const pr = pruNative(p.t, p.b, p.q, txns, eurusd);
-  return { eur: false, px: p.pxNative, pxE: p.pxE, pru: pr.v, pruExact: pr.exact, pruE: p.b };
+  return { eur: false, px: p.pxNative, pxE: p.pxE, pru: pr.v, pruExact: pr.exact, pruE: p.b, fxEff: pr.fxEff, fair: pr.fair };
 }
-// Achat saisi : le prix tapé peut être en euros (par défaut) ou en devise du titre. On enregistre TOUJOURS le
-// prix en euros (px, base du P&L) et, pour un titre hors zone euro, le prix en devise (pxN) et le taux utilisé (fx).
-function txnRecord(price, cur, ticker, eurusd){
+// Titre coté hors zone euro ?
+function isForeignTk(t){ const c = (REG[t] && REG[t].ccy); return !!c && c !== "EUR"; }
+// Achat saisi. Trois modes : "BOTH" (exact : coût payé en € + prix d'ouverture en devise, tous deux lus sur le courtier ;
+// le taux d'achat effectif en est déduit), "EUR" (€ seul) ou "NAT" (devise seule) : l'autre montant est alors estimé au taux
+// BCE du jour d'achat (fxm), à défaut au taux courant. On enregistre TOUJOURS le coût en euros (px, base du P&L).
+function txnRecord(price, cur, ticker, eurusd, priceN, fxm){
   const v = +price; if(!(v > 0)) return null;
   const ccy = (REG[ticker] && REG[ticker].ccy) || "USD";
   if(ccy === "EUR") return { px: v };
-  if(!(+eurusd > 0)) return null;
-  const fx = +(+eurusd).toFixed(5);
-  return cur === "NAT" ? { px: +(v / eurusd).toFixed(4), pxN: v, fx } : { px: v, pxN: +(v * eurusd).toFixed(4), fx };
+  const m = (+fxm > 0) ? +fxm : null;
+  if(cur === "BOTH"){
+    const n = +priceN; if(!(n > 0)) return null;
+    return { px: v, pxN: n, fx: +(n / v).toFixed(5), bk: 1, ...(m ? { fxm: m } : {}) };
+  }
+  const rate = m || +eurusd;
+  if(!(rate > 0)) return null;
+  const fx = +rate.toFixed(5);
+  const base = cur === "NAT" ? { px: +(v / rate).toFixed(4), pxN: v, fx } : { px: v, pxN: +(v * rate).toFixed(4), fx };
+  return m ? { ...base, fxm: m } : base;
 }
 function ledgerRealizedEUR(txns){ return ledgerStats(txns).realizedTot; }
 
@@ -1225,6 +1240,39 @@ async function fetchEurUsd() {
     if (!isFinite(v) || v <= 0.5 || v >= 2) throw new Error("taux hors bornes");
     return 1 / v;                            // on renvoie EUR/USD comme Yahoo (inversé ensuite)
   } catch(e) { clearTimeout(to); throw e; }
+}
+
+/* Taux EUR/USD de la BCE à une date PASSÉE (Frankfurter : dernier jour ouvré ≤ date). Sert à estimer le taux du jour
+   d'achat (et non celui du moment de la saisie). Les jours passés sont mis en cache sur l'appareil. */
+const FXH_KEY = "fab-fxhist-v1";
+function loadFxHist(){ try { const v = JSON.parse(localStorage.getItem(FXH_KEY)); return v && typeof v === "object" ? v : {}; } catch(e){ return {}; } }
+async function fetchEurUsdOn(date){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return null;
+  const h = loadFxHist(); if(h[date] > 0) return h[date];
+  const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const r = await fetch("https://api.frankfurter.dev/v1/" + date + "?base=EUR&symbols=USD", { signal: ctrl.signal });
+    clearTimeout(to); if(!r.ok) return null;
+    const j = await r.json(); const v = j && j.rates && j.rates.USD;
+    if(!isFinite(v) || v <= 0.5 || v >= 2) return null;
+    if(date < new Date().toISOString().slice(0,10)){ h[date] = v; try { localStorage.setItem(FXH_KEY, JSON.stringify(h)); } catch(e){} }
+    return v;
+  } catch(e){ clearTimeout(to); return null; }
+}
+/* Ajoute le taux BCE du jour d'achat (fxm) aux achats hors zone euro qui n'en ont pas. NE TOUCHE NI à la quantité, ni au
+   coût en euros, ni au prix en devise : seule l'information de comparaison est ajoutée. Renvoie true si quelque chose a changé. */
+async function backfillTxnRates(){
+  const need = loadTxns().filter(x => x && x.type !== "sell" && isForeignTk(x.t) && !(+x.fxm > 0) && /^\d{4}-\d{2}-\d{2}$/.test(x.date || ""));
+  if(!need.length) return false;
+  const rates = {};
+  for(const d of [...new Set(need.map(x => x.date))].slice(0, 12)){ const r = await fetchEurUsdOn(d); if(r) rates[d] = r; }
+  let ch = false;
+  const next = loadTxns().map(x => {
+    if(!x || x.type === "sell" || !isForeignTk(x.t) || +x.fxm > 0 || !rates[x.date]) return x;
+    ch = true; return { ...x, fxm: rates[x.date] };
+  });
+  if(ch) saveTxns(next);
+  return ch;
 }
 
 /* Le fichier prices.json (GitHub Actions) a été retiré : le relais Cloudflare le remplace. */
@@ -5295,12 +5343,19 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
           <div><div className="lbl">Cours actuel</div><div className="mono" style={{fontSize:16}}>{cp.eur ? fe(p.pxE) : (cp.px!=null ? fcur(p.t, cp.px) : "—")}</div>
             {!cp.eur && p.pxE!=null && <div className="dim" style={{fontSize:9}}>≈ {fe(p.pxE)}</div>}</div>
           <div><div className="lbl">PRU</div><div className="mono" style={{fontSize:16}}>{cp.eur ? fe(p.b) : (cp.pru!=null ? fcur(p.t, cp.pru) : "—")}</div>
-            {!cp.eur && <div className="dim" style={{fontSize:9}}>{fe(p.b)} payé{cp.pruExact ? "" : " · converti au taux du jour"}</div>}</div>
+            {!cp.eur && <div className="dim" style={{fontSize:9}}>{fe(p.b)} payé{cp.pruExact ? (cp.fxEff>0 ? " · taux d'achat "+cp.fxEff.toFixed(4) : "") : " · prix en devise estimé (✎ Réglages → Registre)"}</div>}</div>
           <div><div className="lbl">Quantité</div><div className="mono">{p.q.toLocaleString("fr-FR",{maximumFractionDigits:6})}</div></div>
           <div><div className="lbl">Valeur</div><div className="mono" style={{fontSize:16}}>{fe(p.val)}</div></div>
           <div><div className="lbl">P&amp;L</div><div className="mono" style={{fontSize:16,color:cl(p.pnl)}}>{fe(p.pnl)}</div></div>
           <div><div className="lbl">Performance</div><div className="mono" style={{fontSize:16,color:cl(p.pct)}}>{fp(p.pct)}</div></div>
         </div>
+        {!cp.eur && cp.pruExact && cp.fair>0 && cp.pru>0 && cp.px>0 && eurusd>0 && p.b>0 && (()=>{
+          const rU=(cp.px/cp.pru-1)*100, fee=(cp.fair/p.b-1)*100, mk=((cp.pru/eurusd)/cp.fair-1)*100;
+          return <div className="dim" style={{fontSize:10,marginTop:10,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.06)",lineHeight:1.6}}>
+            <div style={{fontWeight:700,marginBottom:2}}>D'où vient le P&amp;L en € ({fp(p.pct,2)})</div>
+            <div>Titre en devise : <strong style={{color:cl(rU)}}>{fp(rU,2)}</strong> · EUR/USD depuis l'achat : <strong style={{color:cl(mk)}}>{fp(mk,2)}</strong> · Frais et écart de change à l'achat : <strong style={{color:cl(fee)}}>{fp(fee,2)}</strong></div>
+            <div>Taux d'achat effectif {cp.fxEff.toFixed(4)} (BCE ce jour-là {(cp.pru/cp.fair).toFixed(4)}) · taux actuel {(+eurusd).toFixed(4)}</div>
+          </div>; })()}
         {al && al.on && (
           <div className="g2" style={{marginTop:10,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.06)"}}>
             <div><div className="lbl">Seuil d'alerte bas</div><div className="mono" style={{color:p.pxE&&p.pxE<=al.lo*1.05?"#e85d5d":"#dde3f0"}}>{fe(al.lo)}{al.auto && <span className="dim" style={{fontSize:9}}> · auto</span>}</div></div>
@@ -6071,7 +6126,7 @@ function GlobalDashboard({ portAll, portCTO, portPEA, onSelect, onGoTab, qHistMa
 const DCA_MIGRATED_KEY = "fab-dca-migrated-v1";
 function TxnLedger({ port, eurusd, prices, onPortChange }) {
   const [txns, setTxns] = useState(() => loadTxns());
-  const [f, setF] = useState({ t:"", type:"buy", date:new Date().toISOString().slice(0,10), q:"", px:"", cur:"EUR" });
+  const [f, setF] = useState({ t:"", type:"buy", date:new Date().toISOString().slice(0,10), q:"", px:"", pxn:"", cur:"BOTH" });
   const commit = next => {
     const s = (next||[]).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
     setTxns(s); saveTxns(s);
@@ -6092,15 +6147,33 @@ function TxnLedger({ port, eurusd, prices, onPortChange }) {
     if(imported.length) commit([...loadTxns(), ...imported]);
     // eslint-disable-next-line
   }, []);
-  const add = () => {
+  const busy = useRef(false);
+  const add = async () => {
+    if(busy.current) return;
     if(!f.t || !f.q || !f.px){ alert("Ticker, quantité et prix obligatoires"); return; }
     const tk = f.t.toUpperCase().trim();
-    const rec = txnRecord(f.px, f.cur, tk, eurusd);
-    if(!rec || !(+f.q > 0)){ alert("Quantité et prix doivent être positifs (et le taux de change disponible pour un titre hors zone euro)."); return; }
-    commit([...txns, { id:"tx"+Date.now()+Math.floor(Math.random()*1000), ts:new Date(f.date+"T12:00:00Z").getTime(), date:f.date, t:tk, type:f.type, q:+f.q, ...rec }]);
-    setF({ ...f, q:"", px:"" });
+    const foreign = isForeignTk(tk);
+    if(foreign && f.cur==="BOTH" && !(+f.pxn > 0)){ alert("Mode exact : renseigne aussi le prix d'ouverture en devise (relevé du courtier), ou choisis « € seul »."); return; }
+    busy.current = true;
+    try {
+      const fxm = foreign ? await fetchEurUsdOn(f.date) : null;   // taux BCE du jour d'achat
+      const rec = txnRecord(f.px, f.cur, tk, eurusd, f.pxn, fxm);
+      if(!rec || !(+f.q > 0)){ alert("Quantité et prix doivent être positifs (et le taux de change disponible pour un titre hors zone euro)."); return; }
+      commit([...loadTxns(), { id:"tx"+Date.now()+Math.floor(Math.random()*1000), ts:new Date(f.date+"T12:00:00Z").getTime(), date:f.date, t:tk, type:f.type, q:+f.q, ...rec }]);
+      setF({ ...f, q:"", px:"", pxn:"" });
+    } finally { busy.current = false; }
   };
-  const del = id => commit(txns.filter(x=>x.id!==id));
+  const del = id => commit(loadTxns().filter(x=>x.id!==id));
+  // Corrige le prix d'ouverture en devise (relevé du courtier) d'un achat déjà saisi : le taux d'achat effectif en est déduit.
+  const fixN = async x => {
+    const c = (REG[x.t]||{}).ccy, sym = c==="USD" ? "$" : c;
+    const ans = prompt("Prix d'ouverture de "+x.t+" en "+sym+" (relevé du courtier), par unité :", x.pxN>0 ? String(x.pxN) : "");
+    if(ans==null) return;
+    const n = parseFloat(String(ans).replace(",", "."));
+    if(!(n > 0)){ alert("Prix invalide."); return; }
+    const fxm = (+x.fxm > 0) ? +x.fxm : await fetchEurUsdOn(x.date);
+    commit(loadTxns().map(y => y.id===x.id ? { ...y, pxN:n, fx:+(n / y.px).toFixed(5), bk:1, ...(fxm ? { fxm } : {}) } : y));
+  };
   const seed = () => {
     if(txns.length && !confirm("Ajouter un achat initial (aujourd'hui, au PRU actuel) pour chaque position ?")) return;
     const today = new Date().toISOString().slice(0,10), now = new Date(today+"T12:00:00Z").getTime();
@@ -6121,17 +6194,19 @@ function TxnLedger({ port, eurusd, prices, onPortChange }) {
       </div>
       <div className="g2" style={{marginBottom:6}}>
         <input style={inp} type="number" placeholder="Quantité" value={f.q} onChange={e=>setF({...f,q:e.target.value})}/>
-        <input style={inp} type="number" placeholder={(((REG[f.t.toUpperCase().trim()]||{}).ccy||"EUR")!=="EUR" && f.cur==="NAT") ? "Prix payé par unité (devise du titre)" : "Prix payé par unité (€)"} value={f.px} onChange={e=>setF({...f,px:e.target.value})}/>
+        <input style={inp} type="number" placeholder={isForeignTk(f.t.toUpperCase().trim()) ? (f.cur==="NAT" ? "Prix payé par unité (devise du titre)" : f.cur==="BOTH" ? "Coût payé par unité (€)" : "Prix payé par unité (€)") : "Prix payé par unité (€)"} value={f.px} onChange={e=>setF({...f,px:e.target.value})}/>
       </div>
+      {(()=>{ const c=(REG[f.t.toUpperCase().trim()]||{}).ccy; return (c && c!=="EUR" && f.cur==="BOTH")
+        ? <input style={{...inp,marginBottom:6}} type="number" placeholder={"Prix d'ouverture par unité ("+(c==="USD"?"$":c)+") — relevé du courtier"} value={f.pxn} onChange={e=>setF({...f,pxn:e.target.value})}/> : null; })()}
       {(()=>{ const tk=f.t.toUpperCase().trim(); const c=(REG[tk]||{}).ccy; const foreign=!!c && c!=="EUR";
         const live=tk?priceEUR(tk,prices,eurusd):null; const nat=(tk&&prices&&prices[tk]!=null)?prices[tk]:null; return (
         <div style={{margin:"0 0 6px"}}>
           {foreign && <div style={{display:"flex",gap:6,marginBottom:4}}>
-            {[["EUR","Prix en €"],["NAT","Prix en "+(c==="USD"?"$":c)]].map(([k,l])=>(
+            {[["BOTH","€ + "+(c==="USD"?"$":c)+" (exact)"],["EUR","€ seul"],["NAT",(c==="USD"?"$":c)+" seul"]].map(([k,l])=>(
               <button key={k} onClick={()=>setF({...f,cur:k})} style={{flex:1,padding:"5px",borderRadius:6,cursor:"pointer",fontSize:10,fontWeight:700,border:"1px solid "+(f.cur===k?"#4f83f5":"#3a4560"),background:f.cur===k?"rgba(79,131,245,.15)":"transparent",color:f.cur===k?"#4f83f5":"#8892a8"}}>{l}</button>))}
           </div>}
           <div className="dim" style={{fontSize:9,lineHeight:1.4}}>
-            {foreign ? "L'autre devise est calculée au taux du jour ("+(+eurusd).toFixed(4)+"). Pour un coût exact en euros, saisis ce que tu as payé en €." : "Prix en euros, comme sur ton courtier."}
+            {foreign ? (f.cur==="BOTH" ? "Mode exact : coût payé en € (valeur de marché − gain net, ÷ quantité) ET prix d'ouverture en devise, lus sur ton courtier. Le taux d'achat réel en est déduit." : f.cur==="NAT" ? "Le coût en € est estimé au taux BCE du jour d'achat : il peut différer de ce que le courtier a débité. Préfère le mode exact." : "Le prix en devise est estimé au taux BCE du jour d'achat (frais de change du courtier non inclus). Préfère le mode exact.") : "Prix en euros, comme sur ton courtier."}
             {live>0 ? <> · cours actuel de {tk} : <strong>{foreign&&nat!=null ? fcur(tk,nat)+" ≈ " : ""}{fe(live)}</strong></> : null}
           </div>
         </div>); })()}
@@ -6150,7 +6225,8 @@ function TxnLedger({ port, eurusd, prices, onPortChange }) {
             {list.map(x=>(
               <div key={x.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderTop:"1px solid rgba(255,255,255,.04)"}}>
                 <span style={{fontSize:8,fontWeight:800,padding:"1px 5px",borderRadius:4,background:x.type==="sell"?"rgba(232,93,93,.18)":"rgba(46,204,143,.18)",color:x.type==="sell"?"#e85d5d":"#2ecc8f"}}>{x.type==="sell"?"VENTE":"ACHAT"}</span>
-                <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700}}>{x.t}</div><div className="dim" style={{fontSize:9}}>{x.date} · {x.q} @ {x.px} €{x.pxN>0?` (${fcur(x.t,x.pxN)})`:""}</div></div>
+                <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700}}>{x.t}</div><div className="dim" style={{fontSize:9}}>{x.date} · {x.q} @ {x.px} €{x.pxN>0?` (${fcur(x.t,x.pxN)}${x.fx>0?` · taux ${(+x.fx).toFixed(4)}`:""}${x.bk?" · exact":" · estimé"})`:""}</div></div>
+                {x.type!=="sell" && isForeignTk(x.t) && <span onClick={()=>fixN(x)} title="Corriger le prix en devise (relevé du courtier)" style={{color:"#4f83f5",cursor:"pointer",fontSize:13,padding:"0 4px"}}>✎</span>}
                 <span onClick={()=>del(x.id)} style={{color:"#e85d5d",cursor:"pointer",fontSize:15,padding:"0 4px"}}>×</span>
               </div>
             ))}
@@ -6329,6 +6405,14 @@ function App() {
     setAlerts(cur => refreshAutoAlerts(cur, r.changed, r.oldAvg, newPort));
     showToast("Prix d'achat corrigé en euros : " + r.changed.join(", "));
   }, [port, needDecrypt]);
+
+  // Ajoute (une fois, sans toucher aux montants) le taux BCE du jour d'achat aux achats hors zone euro déjà saisis.
+  const fxBackfillDone = useRef(false);
+  useEffect(() => {
+    if(fxBackfillDone.current || needDecrypt) return;
+    fxBackfillDone.current = true;
+    backfillTxnRates().catch(() => {});
+  }, [needDecrypt]);
 
   // Charger snapshots
   const reloadSnapshots = useCallback(async () => {
