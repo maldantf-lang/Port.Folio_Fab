@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.33-2026-10-08-036";
+const BUILD = "v20.34-2026-10-13-037";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    Barème 2026 : prélèvements sociaux 18,6 % (la CSG sur les revenus du capital passe de 17,2 % à 18,6 %,
@@ -221,6 +221,7 @@ const REGISTRY = {
   GAD:  { n:"Global Aero & Def", y:"DFND.MI", ccy:"EUR", role:"port", s:"Défense", v:18, sig:"buy",  def:8.42,  bounds:[2,50],    acct:"CTO", etf:true },
   MSFT: { n:"Microsoft",         y:"MSFT",    ccy:"USD", role:"port", s:"Tech",    v:22, sig:"buy",  def:390.0, bounds:[100,1200], acct:"CTO" },
   ONON: { n:"On Holding",         y:"ONON",    ccy:"USD", role:"port", s:"Consommation", v:50, sig:"hold", def:32.0, bounds:[8,120], acct:"CTO" },
+  TTWO: { n:"Take-Two Interactive", y:"TTWO", ccy:"USD", role:"port", s:"Divertissement", v:35, sig:"hold", def:200.0, bounds:[60,500], acct:"CTO" },
   // ── PEA (ETF éligibles, cotés EUR) — symbole Yahoo <ISIN>.PA À VALIDER on-device (sinon repli sur def) ──
   SPEA: { n:"iShares S&P 500 Swap PEA",   y:"SPEA.PA",  ccy:"EUR", role:"port", s:"Actions US",        v:15, sig:"hold", def:6.50,  bounds:[3,20],  acct:"PEA", pea:true, etf:true, ter:0.10 },
   AWAT: { n:"Amundi PEA Eau (Water)",     y:"AWAT.PA", ccy:"EUR", role:"port", s:"Thématique Eau",    v:18, sig:"hold", def:32.60, bounds:[15,60], acct:"PEA", pea:true, etf:true, ter:0.60 },
@@ -518,8 +519,12 @@ function drawdownTWR(snapshots, txns, curVal, nowTs){
     .map(s=>({ts:s.ts, tot:s.tot})).sort((a,b)=>a.ts-b.ts);
   if(curVal>0) pts.push({ ts: Math.max(now, pts.length ? pts[pts.length-1].ts : 0), tot: curVal });
   if(pts.length < 2) return { ddMax:0, ddCur:0, twrPct:0, days:0, hasFlows:false, breaks:[], n:pts.length };
+  // Un achat n'entre dans la valeur du portefeuille qu'au moment où il est SAISI (l'identifiant « tx<horodatage> »
+  // le date) : le flux est donc placé à max(date d'achat, date de saisie). Sans cela, un achat du jour saisi après un
+  // relevé se lirait comme un gain (la date d'achat, à 12 h UTC, précède le relevé).
+  const entryTs = x => { const m = /^tx(\d{13})/.exec(String(x.id||"")); return m ? +m[1] : 0; };
   const flows = (txns||[]).filter(x=>x && Number.isFinite(x.ts))
-    .map(x=>({ ts:x.ts, f:(x.type==="sell"?-1:1)*(+x.q||0)*(+x.px||0) })).sort((a,b)=>a.ts-b.ts);
+    .map(x=>({ ts:Math.max(x.ts, entryTs(x)), f:(x.type==="sell"?-1:1)*(+x.q||0)*(+x.px||0) })).sort((a,b)=>a.ts-b.ts);
   let idx = 100, peak = 100, ddMax = 0, k = 0; const breaks = [];
   for(let i=1; i<pts.length; i++){
     const a = pts[i-1], b = pts[i];
@@ -723,6 +728,11 @@ const AN_BASE = {
     cat:["Ventes directes (DTC) — +34 % à change constant au T2, 45,7 % des ventes (record pour un T2) : levier de marge et de fidélité","Innovations produits — le wholesale est volontairement réduit avant le lancement de nouveaux modèles","Marges — marge brute relevée à au moins 65 % ; un éventuel remboursement de droits de douane n'est pas inclus dans les prévisions"],
     ris:["Ralentissement des Amériques — +13 % à change constant au T2 contre 17 % au T1, marché américain très promotionnel","Prévisions abaissées — croissance 2026 revue de « au moins 23 % » à la fourchette basse des 20 % ; T2 sous les attentes","Droits de douane et change — dépendance d'approvisionnement au Vietnam, comptes en francs suisses, volatilité élevée"],
     act:"Attendre les résultats du T3 (date à confirmer) avant de renforcer",edg:"Le marché sanctionne la décélération américaine mais valorise peu la hausse de la marge brute et la part croissante des ventes directes : à confirmer au T3."},
+  TTWO:{r:"À SUIVRE",c:55,p:20,sig:"hold",lu:"2026-10-13",tgt:{l:270,a:299,h:368},
+    th:"Take-Two Interactive (jeux vidéo : Rockstar Games, 2K, Zynga), cotée à New York, en dollars. Exercice 2027 (clos fin mars 2027) : réservations nettes annoncées de 8,0 à 8,2 Md$ (environ +20 %), portées par la sortie de GTA VI le 19 novembre 2026. T1 (07/08) : réservations nettes de 1,39 Md$ (−3 %), perte par action de 0,18 $ (meilleure que prévu) ; T2 guidé en retrait (perte par action de 0,75 à 0,84 $ contre 0,63 $ attendu) à cause des coûts de lancement. Consensus de 21 analystes : environ 299 $ (de 270 à 368 $), « achat modéré ». Le cours, d'environ 200 $, est sous la fourchette basse après un recul d'environ 4 % le 13/10 (cause non confirmée). Pari à événement binaire : fiche initiale à valider.",
+    cat:["Sortie de GTA VI — prévue le 19 novembre 2026 (déjà repoussée deux fois) ; la série GTA devrait représenter environ 36 % des réservations nettes de l'exercice 2027 selon la direction","Résultats du T2 — début novembre (date à confirmer), dernière publication avant le lancement : confirmation du calendrier et des prévisions de 8,0 à 8,2 Md$","Flux de trésorerie — plus d'1 Md$ de flux d'exploitation attendus sur l'exercice 2027 (624 M$ en 2026), soutenus par le lancement"],
+    ris:["Nouveau report de GTA VI — la date a déjà bougé deux fois ; un troisième report décalerait les réservations de l'exercice et pèserait fortement sur le titre","Dépendance à un seul lancement — au T1 les réservations nettes reculent de 3 % ; la part des dépenses récurrentes des joueurs doit tomber de 78 % à 65 % des réservations, GTA VI doit compenser","Attentes déjà élevées — la date du 19 novembre est connue de tous : le titre peut reculer même si le lancement réussit (« acheter la rumeur, vendre la nouvelle »)"],
+    act:"Conserver ; attendre les résultats du T2 (début novembre, date à confirmer) avant de renforcer",edg:"Le cours est environ un tiers sous la cible moyenne des analystes ; l'écart peut se refermer au lancement, mais comme la date est connue de tous, le vrai risque est un report ou une prise de bénéfices après la sortie."},
   SPEA:{r:"CŒUR LONG TERME",c:80,p:8,sig:"buy",lu:"2026-09-15",tgt:{l:5.8,a:6.8,h:8},
     th:"Cœur d'un PEA long terme : le S&P 500 capture la croissance des plus grandes entreprises mondiales, rendu éligible au PEA via un swap. Frais très bas (0,10 %).",
     edg:"Une exposition US logée dans un PEA — rare et fiscalement avantageuse sur le long terme."},
