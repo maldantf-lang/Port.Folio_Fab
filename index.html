@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.35-2026-10-13-038";
+const BUILD = "v20.36-2026-10-14-039";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    Barème 2026 : prélèvements sociaux 18,6 % (la CSG sur les revenus du capital passe de 17,2 % à 18,6 %,
@@ -667,6 +667,19 @@ async function applySyncPayload(data) {
   return { added, port: Array.isArray(data.port) ? data.port : null };
 }
 
+/* COPIE EN LIGNE IMMÉDIATE (hors appareil). Sert après une saisie importante : le stockage du
+   navigateur peut être effacé (nettoyage, mode privé, changement d'appareil), la copie chiffrée du
+   relais, elle, survit. Renvoie { ok } , { conflict } ou { skipped } si la synchro n'est pas configurée. */
+async function backupNow(){
+  let id = ""; try { id = localStorage.getItem(SYNC_ID_KEY) || ""; } catch(e){}
+  const cfg = loadSyncCfg();
+  if(!id || !cfg.pass) return { skipped:true };
+  const st = loadStore();
+  const port = (st && Array.isArray(st.port)) ? st.port : [];
+  const r = await syncPush(id, cfg.pass, port);
+  return r && r.conflict ? { conflict:true } : { ok:true };
+}
+
 // Filet : si toutes les positions sont vidées manuellement, on guide vers l'import
 const isUnconfigured = arr => !arr || !arr.length || arr.every(p => !(p.q > 0));
 
@@ -759,12 +772,14 @@ const AN_BASE = {
     edg:"Contrepoids européen à une exposition américaine dominante."}
 };
 
+// Clé des saisies personnelles (thèses, objectifs, suivi). Déclarée ICI, avant AN, qui la lit au démarrage.
+const AN_OVERRIDE_KEY = "fab-an-overrides";
 /* Données analystes EFFECTIVES = celles du code + celles que tu saisis dans l'app
    (fiche d'une position → « Données analystes »). Tes saisies priment, ce qui permet
    à un support AJOUTÉ depuis l'app d'avoir une vraie thèse — et donc une vraie
    prévision — au lieu de rester une position de seconde zone. */
 const AN = (() => {
-  const ov = loadANOverrides();
+  const ov = loadANOverrides();   // AN_OVERRIDE_KEY est déclaré plus haut : sans cela, zone morte temporelle
   const out = {};
   Object.keys(AN_BASE).forEach(t => { out[t] = { ...AN_BASE[t] }; });
   Object.entries(ov).forEach(([t, o]) => {
@@ -1599,9 +1614,37 @@ function calcHealth(port, m) {
 // Conviction décroissante : les thèses vieillissent
 /* ============== RÉVISION MANUELLE DES THÈSES ============== */
 // Permet de "marquer comme révisé" une thèse sans toucher au code source AN[]
-const AN_OVERRIDE_KEY = "fab-an-overrides";
+/* AN_OVERRIDE_KEY est déclaré avant AN (plus haut) : la construction de AN le lit au démarrage. */
 function loadANOverrides() { try{const s=localStorage.getItem(AN_OVERRIDE_KEY);return s?JSON.parse(s):{};}catch(e){return{};} }
-function saveANOverrides(d){ try{localStorage.setItem(AN_OVERRIDE_KEY,JSON.stringify(d));}catch(e){} }
+function saveANOverrides(d){
+  try{ localStorage.setItem(AN_OVERRIDE_KEY,JSON.stringify(d)); }
+  catch(e){ console.warn("[Overrides] écriture impossible", e); return false; }
+  // Signale la modification : l'app programme alors une copie chiffrée en ligne (si la synchro est active).
+  try{ window.dispatchEvent(new Event("fab-ov-changed")); }catch(e){}
+  return true;
+}
+/* Applique SANS RECHARGER la page une saisie personnelle dans les données analystes effectives.
+   AN est construit une fois au démarrage ; on remet à jour la seule ligne modifiée. */
+const AN_OV_KEYS = ["r","c","p","sig","lu","tgt","th","cat","ris","act","edg"];
+function applyOverrideLive(t){
+  const ov = loadANOverrides()[t] || {};
+  const out = { ...(AN_BASE[t] || AN[t] || {}) };
+  AN_OV_KEYS.forEach(k => { if(ov[k] != null) out[k] = ov[k]; });
+  AN[t] = out;
+  return out;
+}
+/* Efface tes saisies de prix pour revenir aux valeurs livrées avec l'app (le suivi des
+   catalyseurs et des risques, lui, est conservé). */
+function resetANTargets(t){
+  const ov = loadANOverrides(); const cur = ov[t];
+  if(!cur) return true;
+  const keep = {};
+  ["items","pxRev","flagged","flaggedAt"].forEach(k => { if(cur[k] != null) keep[k] = cur[k]; });
+  if(Object.keys(keep).length) ov[t] = keep; else delete ov[t];
+  const ok = saveANOverrides(ov);
+  if(ok) applyOverrideLive(t);
+  return ok;
+}
 function getANLu(ticker) {
   const ov = loadANOverrides();
   if(ov[ticker]&&ov[ticker].lu) return ov[ticker].lu;
@@ -5061,22 +5104,63 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
   const [edit, setEdit] = useState(false);   // éditeur des données analystes
   const [anF, setAnF] = useState(()=>({ l:(a.tgt&&a.tgt.l)||"", av:(a.tgt&&a.tgt.a)||"", h:(a.tgt&&a.tgt.h)||"", c:a.c!=null?a.c:"", pr:a.p!=null?a.p:"", th:a.th||"",
     cat:(a.cat||[]).join("\n"), ris:(a.ris||[]).join("\n") }));
-  const saveAN = () => {
+  const [anMsg, setAnMsg] = useState(null);      // retour visible après enregistrement
+  const [anBusy, setAnBusy] = useState(false);
+  // Lecture d'un champ : accepte la virgule décimale ; "" = non renseigné.
+  const anNum = v => { if(v===""||v==null) return null; const n = +String(v).replace(",","."); return isFinite(n) ? n : NaN; };
+  // Contrôles de cohérence, champ par champ. Tant qu'il reste une erreur, l'enregistrement est bloqué.
+  const anErr = useMemo(() => {
+    const e = {}, L=anNum(anF.l), A=anNum(anF.av), H=anNum(anF.h), C=anNum(anF.c), P=anNum(anF.pr);
+    [["l",L],["av",A],["h",H]].forEach(([k,v]) => {
+      if(v===null) e[k] = "Prix obligatoire";
+      else if(!(v>0)) e[k] = "Prix invalide";
+    });
+    if(!e.l && !e.av && L>=A) e.av = "Le médian doit être au-dessus du bas";
+    if(!e.av && !e.h && A>=H) e.h = "Le haut doit être au-dessus du médian";
+    if(C!==null && (isNaN(C) || C<0 || C>100)) e.c = "Entre 0 et 100";
+    if(P!==null && (isNaN(P) || P<-90 || P>300)) e.pr = "Entre -90 et 300";
+    return e;
+  }, [anF]);
+  const saveAN = async () => {
+    if(Object.keys(anErr).length || anBusy) return;
     const ov = loadANOverrides();
-    const cur = ov[ticker] || {};
-    const num = v => (v===""||v==null) ? null : +v;
-    const l=num(anF.l), av=num(anF.av), h=num(anF.h);
-    if(l!=null && av!=null && h!=null) cur.tgt = { l, a:av, h };
-    if(num(anF.c)!=null) cur.c = num(anF.c);
-    if(num(anF.pr)!=null) cur.p = num(anF.pr);
+    const cur = { ...(ov[ticker] || {}) };
+    cur.tgt = { l:anNum(anF.l), a:anNum(anF.av), h:anNum(anF.h) };
+    if(anNum(anF.c)!==null) cur.c = anNum(anF.c);
+    if(anNum(anF.pr)!==null) cur.p = anNum(anF.pr);
     if(anF.th.trim()) cur.th = anF.th.trim();
     const lines = v => v.split("\n").map(x=>x.trim()).filter(Boolean);
     if(anF.cat.trim()) cur.cat = lines(anF.cat);
     if(anF.ris.trim()) cur.ris = lines(anF.ris);
     cur.lu = new Date().toISOString().slice(0,10);
-    ov[ticker] = cur; saveANOverrides(ov);
-    alert("Données enregistrées. Recharge la page pour les appliquer partout.");
-    setEdit(false);
+    cur.savedAt = Date.now();
+    ov[ticker] = cur;
+    if(!saveANOverrides(ov)){
+      setAnMsg({ t:"err", m:"Enregistrement impossible sur cet appareil (stockage plein ou navigation privée). Rien n'a été modifié." });
+      return;
+    }
+    applyOverrideLive(ticker);                 // effet immédiat, sans recharger la page
+    setReviewBump(b => b+1);
+    setAnMsg({ t:"ok", m:"Enregistré sur cet appareil et appliqué tout de suite." });
+    setAnBusy(true);
+    try {
+      const r = await backupNow();
+      if(r.ok) setAnMsg({ t:"ok", m:"Enregistré, appliqué, et copie chiffrée envoyée en ligne." });
+      else if(r.conflict) setAnMsg({ t:"warn", m:"Enregistré sur cet appareil. Copie en ligne refusée : un autre appareil a modifié la sauvegarde. Va dans Réglages → Synchronisation, fais « Récupérer » puis « Envoyer »." });
+      else setAnMsg({ t:"warn", m:"Enregistré sur cet appareil seulement. Pour que ces données survivent à un effacement du navigateur, active la synchronisation chiffrée (Réglages) ou exporte ta sauvegarde." });
+    } catch(e) {
+      setAnMsg({ t:"warn", m:"Enregistré sur cet appareil. Copie en ligne impossible pour l'instant : " + (e.message||e) });
+    } finally { setAnBusy(false); }
+  };
+  const resetAN = () => {
+    if(!confirm("Revenir aux objectifs livrés avec l'app pour " + ticker + " ? Tes marquages de catalyseurs et de risques sont conservés.")) return;
+    if(!resetANTargets(ticker)){ setAnMsg({ t:"err", m:"Réinitialisation impossible (stockage)." }); return; }
+    const b = AN[ticker] || {};
+    setAnF({ l:(b.tgt&&b.tgt.l)||"", av:(b.tgt&&b.tgt.a)||"", h:(b.tgt&&b.tgt.h)||"", c:b.c!=null?b.c:"", pr:b.p!=null?b.p:"",
+      th:b.th||"", cat:(b.cat||[]).join("\n"), ris:(b.ris||[]).join("\n") });
+    setReviewBump(x => x+1);
+    setAnMsg({ t:"ok", m:"Valeurs d'origine rétablies." });
+    backupNow().catch(()=>{});
   };
   const [cInfo, setCInfo] = useState(false);
 
@@ -5557,26 +5641,69 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
           <div className="cd-ti"><h3>Objectifs analystes</h3>
             <span onClick={()=>setEdit(v=>!v)} style={{cursor:"pointer",fontSize:9,fontWeight:800,color:edit?"#4f83f5":"#8892a8",border:"1px solid",borderColor:edit?"#4f83f5":"#3a4560",borderRadius:5,padding:"2px 7px"}}>{edit?"FERMER":"MODIFIER"}</span>
           </div>
-          {edit && (
+          {edit && (()=>{
+            const ccy = (REG[ticker]&&REG[ticker].ccy) || "USD";
+            const sym = ccy==="EUR" ? "€" : ccy==="USD" ? "$" : ccy;
+            const ta = { width:"100%",background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"6px 8px",fontFamily:"inherit" };
+            // Un champ = un intitulé visible (il ne disparaît pas quand tu tapes), une explication, une erreur éventuelle.
+            // Fonction (et non composant) : l'élément est créé à l'identique à chaque frappe,
+            // sinon React remonterait le champ et le clavier perdrait le focus à chaque caractère.
+            const fld = (k, label, help, suffix) => (
+              <div key={k} style={{marginBottom:10}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#dde3f0",marginBottom:2}}>{label}</div>
+                <div className="dim" style={{fontSize:9,lineHeight:1.35,marginBottom:4}}>{help}</div>
+                <div style={{position:"relative"}}>
+                  <input type="number" inputMode="decimal" value={anF[k]} onChange={e=>setAnF({...anF,[k]:e.target.value})}
+                    style={{paddingRight:34,borderColor:anErr[k]?"#e85d5d":undefined}}/>
+                  <span className="dim" style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",fontSize:11,pointerEvents:"none"}}>{suffix}</span>
+                </div>
+                {anErr[k] && <div style={{fontSize:9,color:"#e85d5d",marginTop:3}}>{anErr[k]}</div>}
+              </div>
+            );
+            const L=anNum(anF.l), A=anNum(anF.av), H=anNum(anF.h), px=p.pxNative;
+            const bad = Object.keys(anErr).length>0;
+            const ovRec = loadANOverrides()[ticker] || {};
+            const srcTxt = ovRec.tgt ? ("Valeurs saisies par toi" + (ovRec.lu ? (", le " + ovRec.lu.split("-").reverse().join("/")) : "")) : "Valeurs livrées avec l'app, jamais modifiées sur cet appareil";
+            return (
             <div style={{marginBottom:12}}>
-              <div className="g3" style={{marginBottom:6}}>
-                <input placeholder="Bas" type="number" value={anF.l} onChange={e=>setAnF({...anF,l:e.target.value})}/>
-                <input placeholder="Médian" type="number" value={anF.av} onChange={e=>setAnF({...anF,av:e.target.value})}/>
-                <input placeholder="Haut" type="number" value={anF.h} onChange={e=>setAnF({...anF,h:e.target.value})}/>
+              <div className="dim" style={{fontSize:10,lineHeight:1.45,marginBottom:10,paddingBottom:8,borderBottom:"1px solid rgba(255,255,255,.06)"}}>
+                Trois prix en <strong>{sym}</strong>, dans la devise de cotation du titre (jamais en euros).
+                {px!=null && <> Cours actuel : <strong style={{color:"#dde3f0"}}>{fcur(ticker,px)}</strong>.</>} {srcTxt}.
               </div>
-              <div className="g2" style={{marginBottom:6}}>
-                <input placeholder="Conviction /100" type="number" value={anF.c} onChange={e=>setAnF({...anF,c:e.target.value})}/>
-                <input placeholder="Projection 12M %" type="number" value={anF.pr} onChange={e=>setAnF({...anF,pr:e.target.value})}/>
+              {fld("l","Objectif BAS — ton plancher","Sous ce prix, l'app affiche l'alerte « PLANCHER » dans Actions du jour et n'autorise plus d'achat automatique : la thèse est considérée à l'épreuve. Mets ici le prix en dessous duquel tu veux être prévenu.",sym)}
+              {fld("av","Objectif MÉDIAN — ta cible","Le prix que tu juges normal à l'horizon de ta thèse. Il sert de référence au potentiel affiché et à la prévision.",sym)}
+              {fld("h","Objectif HAUT — prise de bénéfice","Au-dessus de ce prix, l'app propose de sécuriser le gain et considère le titre comme cher.",sym)}
+              <div className="g2">
+                {fld("c","Conviction","Ta confiance dans la thèse. Elle se décote toute seule avec le temps.","/100")}
+                {fld("pr","Projection 12 mois","Ton rendement attendu sur un an, en pourcentage.","%")}
               </div>
-              <input placeholder="Thèse (pourquoi tu détiens cette ligne)" value={anF.th} onChange={e=>setAnF({...anF,th:e.target.value})} style={{width:"100%",marginBottom:6}}/>
-              <textarea placeholder={"Catalyseurs — une par ligne, format : Nom — détail"} value={anF.cat} onChange={e=>setAnF({...anF,cat:e.target.value})}
-                rows={3} style={{width:"100%",marginBottom:6,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"6px 8px",fontFamily:"inherit"}}/>
-              <textarea placeholder={"Risques — un par ligne, format : Nom — détail"} value={anF.ris} onChange={e=>setAnF({...anF,ris:e.target.value})}
-                rows={3} style={{width:"100%",marginBottom:6,background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:11,padding:"6px 8px",fontFamily:"inherit"}}/>
-              <button className="bn bn-b" style={{width:"100%"}} onClick={saveAN}>Enregistrer mes données</button>
-              <div className="dim" style={{fontSize:9,marginTop:5,lineHeight:1.4}}>Ces valeurs alimentent la prévision, le signal et la revue de thèse — c'est ce qui donne à un support ajouté la même qualité d'analyse qu'aux autres.</div>
-            </div>
-          )}
+              {!bad && px!=null && (
+                <div style={{fontSize:10,lineHeight:1.5,margin:"2px 0 10px",padding:"8px 10px",borderRadius:6,background:"rgba(79,131,245,.08)",border:"1px solid rgba(79,131,245,.25)"}}>
+                  <div style={{fontWeight:700,color:"#dde3f0",marginBottom:2}}>Ce que ça donnera tout de suite</div>
+                  {px<=L ? <span style={{color:"#e85d5d"}}>Cours sous ton plancher → alerte « PLANCHER », pas d'achat automatique.</span>
+                   : px>=H ? <span style={{color:"#2ecc8f"}}>Cours au-dessus de ton objectif haut → proposition de sécuriser le gain.</span>
+                   : <span>Cours entre le plancher et l'objectif haut → aucune alerte de seuil. Potentiel jusqu'au médian : <strong style={{color:cl(A/px-1)}}>{fp((A/px-1)*100,1)}</strong>.</span>}
+                </div>
+              )}
+              <div style={{fontSize:11,fontWeight:700,color:"#dde3f0",marginBottom:2}}>Thèse</div>
+              <div className="dim" style={{fontSize:9,marginBottom:4}}>Pourquoi tu détiens cette ligne, en une phrase.</div>
+              <input value={anF.th} onChange={e=>setAnF({...anF,th:e.target.value})} style={{width:"100%",marginBottom:10}}/>
+              <div style={{fontSize:11,fontWeight:700,color:"#dde3f0",marginBottom:2}}>Catalyseurs</div>
+              <div className="dim" style={{fontSize:9,marginBottom:4}}>Un par ligne, au format « Nom — détail ». Tu pourras ensuite les marquer réalisés ou caducs.</div>
+              <textarea value={anF.cat} onChange={e=>setAnF({...anF,cat:e.target.value})} rows={3} style={{...ta,marginBottom:10}}/>
+              <div style={{fontSize:11,fontWeight:700,color:"#dde3f0",marginBottom:2}}>Risques</div>
+              <div className="dim" style={{fontSize:9,marginBottom:4}}>Un par ligne, même format.</div>
+              <textarea value={anF.ris} onChange={e=>setAnF({...anF,ris:e.target.value})} rows={3} style={{...ta,marginBottom:10}}/>
+              <button className="bn bn-b" style={{width:"100%",opacity:(bad||anBusy)?.45:1,cursor:(bad||anBusy)?"not-allowed":"pointer"}}
+                onClick={saveAN} disabled={bad||anBusy}>{anBusy ? "Enregistrement…" : "Enregistrer et sauvegarder"}</button>
+              {bad && <div className="dim" style={{fontSize:9,marginTop:4,color:"#e85d5d"}}>Corrige les champs signalés en rouge pour enregistrer.</div>}
+              {anMsg && <div style={{fontSize:10,marginTop:6,lineHeight:1.45,color:anMsg.t==="ok"?"#2ecc8f":anMsg.t==="err"?"#e85d5d":"#f0a020"}}>{anMsg.m}</div>}
+              {ovRec.tgt && <button className="bn" style={{width:"100%",marginTop:6,fontSize:10}} onClick={resetAN}>Revenir aux valeurs d'origine</button>}
+              <div className="dim" style={{fontSize:9,marginTop:8,lineHeight:1.45}}>
+                Tes saisies sont conservées sur cet appareil <strong>et</strong> dans la sauvegarde chiffrée en ligne si la synchronisation est active (Réglages → Synchronisation). Elles figurent aussi dans l'export de sauvegarde. Elles ne sont jamais écrites dans le code public.
+              </div>
+            </div>);
+          })()}
           <div className="g3">
             <div><div className="lbl">Bas</div><div className="mono">{fcur(ticker,a.tgt.l)}</div></div>
             <div><div className="lbl">Médian</div><div className="mono"><strong>{fcur(ticker,a.tgt.a)}</strong></div></div>
@@ -6311,6 +6438,13 @@ function App() {
     return () => { annule = true; };
   }, []);
 
+  // Toute saisie de thèse ou d'objectifs compte comme une modification à sauvegarder en ligne.
+  const [ovBump, setOvBump] = useState(0);
+  useEffect(() => {
+    const h = () => setOvBump(b => b+1);
+    window.addEventListener("fab-ov-changed", h);
+    return () => window.removeEventListener("fab-ov-changed", h);
+  }, []);
   useEffect(() => {
     const cfg = loadSyncCfg();
     let id = ""; try { id = localStorage.getItem(SYNC_ID_KEY) || ""; } catch(e){}
@@ -6324,7 +6458,7 @@ function App() {
       } catch(e) { setSyncNote({ t:"err", m:"Envoi auto impossible : "+(e.message||e) }); }
     }, 20000);                                              // anti-rafale : une seule écriture
     return () => clearTimeout(timer);
-  }, [port]);
+  }, [port, ovBump]);
   const [cfgOpen, setCfgOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [toast, setToast] = useState(null);
