@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.37-2026-11-03-040";
+const BUILD = "v21.3-2026-11-03-044";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    Barème 2026 : prélèvements sociaux 18,6 % (la CSG sur les revenus du capital passe de 17,2 % à 18,6 %,
@@ -234,7 +234,7 @@ const REGISTRY = {
   PLTR: { n:"Palantir",             y:"PLTR", ccy:"USD", role:"watch" },
   FCX:  { n:"Freeport-McMoRan",     y:"FCX",  ccy:"USD", role:"watch" },
   ASML: { n:"ASML Holding",         y:"ASML", ccy:"USD", role:"watch" },
-  URA:  { n:"Global X Uranium",     y:"URA",  ccy:"USD", role:"watch" },
+  URA:  { n:"Global X Uranium",     y:"URA",  ccy:"USD", role:"watch", etf:true },
   // ── ETF de mesure sectorielle ──
   SMH:  { n:"Semiconducteurs", y:"SMH",  ccy:"USD", role:"sector", sector:"IA Infrastructure" },
   NLR:  { n:"Nucléaire",       y:"NLR",  ccy:"USD", role:"sector", sector:"Nucléaire & Énergie" },
@@ -815,6 +815,128 @@ const OPPS = [
     edg:"Réaction négative au mot « nucléaire » = biais possible, à confirmer par les cours."}
 ];
 
+/* ═══ v21.2 — PHASE 3 : DÉTECTEUR D'OPPORTUNITÉS PAR HORIZON ═══
+   Univers balayé = cette liste (noms et symboles seulement : aucun chiffre écrit à la main)
+   + supports du registre (watchlist, ETF sectoriels, portefeuille) + watchlist de l'app.
+   Toutes les mesures viennent des cours hebdomadaires 3 ans (Yahoo Finance via le relais), datées.
+   Le consensus analystes n'intervient QUE là où il existe, daté et sourcé (OPPS / thèses). */
+const SCAN_UNIVERSE = [
+  // Pays en croissance (ETF cotés en USD)
+  {t:"INDA", n:"Inde (iShares MSCI India)", ccy:"USD", kind:"ETF", zone:"Inde"},
+  {t:"EWZ",  n:"Brésil (iShares MSCI Brazil)", ccy:"USD", kind:"ETF", zone:"Brésil"},
+  {t:"EWW",  n:"Mexique (iShares MSCI Mexico)", ccy:"USD", kind:"ETF", zone:"Mexique"},
+  {t:"VNM",  n:"Vietnam (VanEck Vietnam)", ccy:"USD", kind:"ETF", zone:"Vietnam"},
+  {t:"EPOL", n:"Pologne (iShares MSCI Poland)", ccy:"USD", kind:"ETF", zone:"Pologne"},
+  {t:"EWT",  n:"Taïwan (iShares MSCI Taiwan)", ccy:"USD", kind:"ETF", zone:"Taïwan"},
+  {t:"EWY",  n:"Corée du Sud (iShares MSCI South Korea)", ccy:"USD", kind:"ETF", zone:"Corée"},
+  {t:"EIDO", n:"Indonésie (iShares MSCI Indonesia)", ccy:"USD", kind:"ETF", zone:"Indonésie"},
+  // Grandes valeurs de croissance régulière (« compounders »)
+  {t:"COST", n:"Costco", ccy:"USD", kind:"Action", zone:"États-Unis"},
+  {t:"V",    n:"Visa", ccy:"USD", kind:"Action", zone:"États-Unis"},
+  {t:"MA",   n:"Mastercard", ccy:"USD", kind:"Action", zone:"États-Unis"},
+  {t:"AVGO", n:"Broadcom", ccy:"USD", kind:"Action", zone:"États-Unis"},
+  {t:"LLY",  n:"Eli Lilly", ccy:"USD", kind:"Action", zone:"États-Unis"},
+  {t:"TSM",  n:"TSMC", ccy:"USD", kind:"Action", zone:"Taïwan"},
+  {t:"MELI", n:"MercadoLibre", ccy:"USD", kind:"Action", zone:"Amérique latine"},
+  {t:"NU",   n:"Nu Holdings", ccy:"USD", kind:"Action", zone:"Brésil"},
+  {t:"FTAI", n:"FTAI Aviation", ccy:"USD", kind:"Action", zone:"États-Unis"},
+  {t:"SPOT", n:"Spotify", ccy:"USD", kind:"Action", zone:"Europe (cotée US)"},
+  // Europe (cotées en euros)
+  {t:"RMS.PA", n:"Hermès", ccy:"EUR", kind:"Action", zone:"France"},
+  {t:"AI.PA",  n:"Air Liquide", ccy:"EUR", kind:"Action", zone:"France"},
+  {t:"SU.PA",  n:"Schneider Electric", ccy:"EUR", kind:"Action", zone:"France"},
+  {t:"SAF.PA", n:"Safran", ccy:"EUR", kind:"Action", zone:"France"},
+  {t:"RHM.DE", n:"Rheinmetall", ccy:"EUR", kind:"Action", zone:"Allemagne"},
+  {t:"SAP.DE", n:"SAP", ccy:"EUR", kind:"Action", zone:"Allemagne"},
+  {t:"ASML.AS",n:"ASML (Amsterdam)", ccy:"EUR", kind:"Action", zone:"Pays-Bas"},
+  {t:"RACE.MI",n:"Ferrari", ccy:"EUR", kind:"Action", zone:"Italie"}
+];
+const EU_LISTING_RE = /\.(PA|DE|AS|MI|MC|BR|HE|LS|VI|IR)$/;
+const OPP_HZ = {
+  ct: { label:"Court terme", sub:"0 à 3 mois", months:3,  minPts:20 },
+  mt: { label:"Moyen terme", sub:"3 à 12 mois", months:12, minPts:60 },
+  lt: { label:"Long terme",  sub:"1 à 5 ans",  months:12, minPts:140 }
+};
+// Mesures sur les cours hebdomadaires (du plus ancien au plus récent). Rien d'autre.
+function oppMetrics(px) {
+  const P = (px || []).filter(v => v > 0), n = P.length;
+  if(n < 20) return null;
+  const last = P[n-1], back = k => n > k ? P[n-1-k] : null;
+  const ret = k => { const b = back(k); return b ? last / b - 1 : null; };
+  const mean = a => a.reduce((s,x)=>s+x,0) / a.length;
+  const lr = []; for(let i=1;i<n;i++) lr.push(Math.log(P[i]/P[i-1]));
+  const sd = Math.sqrt(lr.reduce((s,x)=>s+(x-mean(lr))**2,0) / Math.max(1, lr.length-1));
+  let peak = P[0], mdd = 0; P.forEach(v => { peak = Math.max(peak, v); mdd = Math.min(mdd, v/peak - 1); });
+  let pos = 0, win = 0; for(let i=26;i<n;i++){ win++; if(P[i] > P[i-26]) pos++; }
+  const hi52 = Math.max(...P.slice(-52));
+  return {
+    n, last,
+    r4: ret(4), r13: ret(13), r26: ret(26), r52: ret(52),
+    r12_1: (n > 53) ? P[n-5] / P[n-53] - 1 : null,           // momentum 12 mois hors dernier mois
+    aboveMa10: last > mean(P.slice(-10)),
+    aboveMa40: n >= 40 ? last > mean(P.slice(-40)) : null,
+    rsi: n >= 16 ? calcRSI(P, 14) : null,
+    vol: sd * Math.sqrt(52),
+    maxDD: mdd,
+    off52: last / hi52 - 1,
+    cagr: n >= 104 ? Math.pow(last / P[0], 52 / (n - 1)) - 1 : null,
+    consist: win >= 26 ? pos / win : null                       // part des fenêtres de 6 mois en hausse
+  };
+}
+// Rang centile (0 = le plus faible, 1 = le plus fort) d'une valeur dans une liste.
+function rankIn(vals, v) {
+  const a = vals.filter(x => x != null && isFinite(x));
+  if(v == null || !isFinite(v) || a.length < 2) return 0.5;
+  return a.filter(x => x < v).length / (a.length - 1);
+}
+/* Score 0–100 par horizon, à partir de critères affichés tels quels à l'utilisateur :
+   - Court terme : tendance 3 mois (classement), cours au-dessus de sa moyenne 10 semaines, RSI ni surchauffé ni effondré.
+   - Moyen terme : tendance 12 mois hors dernier mois (effet momentum documenté), tendance de fond (moyenne 40 sem.),
+                   potentiel vers l'objectif des analystes SI disponible et daté (sinon neutre).
+   - Long terme  : croissance annuelle par unité de risque, régularité (fenêtres de 6 mois en hausse), pire baisse subie. */
+function scoreOpps(rows, hz) {
+  const H = OPP_HZ[hz], ok = rows.filter(r => r.m && r.m.n >= H.minPts);
+  const col = k => ok.map(r => r.m[k]);
+  const out = ok.map(r => {
+    const m = r.m, why = [];
+    let s;
+    if(hz === "ct") {
+      const a = rankIn(col("r13"), m.r13);
+      const b = m.aboveMa10 ? 1 : 0;
+      const c = m.rsi == null ? 0.5 : (m.rsi > 75 ? 0 : m.rsi < 30 ? 0.3 : (m.rsi >= 40 && m.rsi <= 68) ? 1 : 0.6);
+      s = 0.5*a + 0.3*b + 0.2*c;
+      why.push(["Tendance 3 mois", fp(m.r13*100,0), a], ["Au-dessus de sa moyenne 10 sem.", m.aboveMa10 ? "oui" : "non", b],
+               ["RSI (surchauffe > 70)", m.rsi == null ? "—" : String(Math.round(m.rsi)), c]);
+    } else if(hz === "mt") {
+      const a = rankIn(col("r12_1"), m.r12_1);
+      const b = m.aboveMa40 ? 1 : 0;
+      const up = r.analyst ? r.analyst.upside : null;
+      const c = up == null ? 0.5 : rankIn(rows.map(x => x.analyst ? x.analyst.upside : null), up);
+      s = 0.55*a + 0.25*b + 0.20*c;
+      why.push(["Tendance 12 mois (hors dernier mois)", fp(m.r12_1*100,0), a], ["Tendance de fond (moy. 40 sem.)", m.aboveMa40 ? "haussière" : "baissière", b],
+               ["Potentiel vers l'objectif analystes", up == null ? "pas de consensus" : fp(up*100,0), c]);
+    } else {
+      const rr = (m.cagr != null && m.vol > 0) ? m.cagr / m.vol : null;
+      const a = rankIn(ok.map(x => (x.m.cagr != null && x.m.vol > 0) ? x.m.cagr / x.m.vol : null), rr);
+      const b = rankIn(col("consist"), m.consist);
+      const c = rankIn(col("maxDD"), m.maxDD);                     // maxDD négatif : moins pire = rang haut
+      s = 0.4*a + 0.3*b + 0.3*c;
+      why.push(["Croissance annuelle (3 ans)", fp((m.cagr||0)*100,0) + "/an", a], ["Régularité (6 mois en hausse)", m.consist == null ? "—" : Math.round(m.consist*100) + " % du temps", b],
+               ["Pire baisse sur 3 ans", fp(m.maxDD*100,0), c]);
+    }
+    return { ...r, score: Math.round(s * 100), why };
+  });
+  return out.sort((a,b) => b.score - a.score);
+}
+// Enveloppe conseillée : le PEA (gestion lente) pour le long terme quand le support y est éligible ; le CTO sinon.
+function oppEnvelope(r, hz) {
+  const peaOk = !!(r.meta && r.meta.pea);
+  const peaMaybe = !peaOk && EU_LISTING_RE.test(r.y || "") && r.kind !== "ETF";
+  if(hz === "lt" && peaOk) return { acct:"PEA", note:"éligible PEA" };
+  if(hz === "lt" && peaMaybe) return { acct:"PEA ?", note:"société européenne : éligibilité PEA à vérifier sur XTB" };
+  return { acct:"CTO", note: peaOk ? "éligible PEA, mais poche dynamique = CTO" : (r.ccy && r.ccy !== "EUR" ? "hors zone euro : frais de change 0,5 %" : "") };
+}
+
 /* Régime macro : SEUL « regime » est lu (forecast : ajustement stagflation). Les anciens textes libres
    (fed, geo, ia, wrong) n'étaient affichés nulle part, étaient périmés et contredisaient la thèse LVMH :
    retirés. Le classement sectoriel et le régime MESURÉS sont plus bas (sectorMomentum). */
@@ -1033,11 +1155,11 @@ function sanitizeHistMap(map) {
 function loadHist3y() { try { const s=localStorage.getItem(HIST3Y_KEY); return s?sanitizeHistMap(JSON.parse(s)):{}; } catch(e){ return {}; } }
 function saveHist3y(d) { try { localStorage.setItem(HIST3Y_KEY, JSON.stringify(d)); } catch(e){} }
 
-async function fetchQuarterlyHistory(yfsym) {
+async function fetchQuarterlyHistory(yfsym, viaUrl) {   // v21.2 : relais au choix (secondaire pour le détecteur)
   const cache = loadHist3y();
   if(cache[yfsym] && Date.now()-cache[yfsym].ts < HIST3Y_TTL) return cache[yfsym].data;
   const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yfsym)}?interval=1wk&range=3y`;
-  const wurl = getWorkerUrl();
+  const wurl = viaUrl || getWorkerUrl();
   const proxUrls = wurl ? [`${wurl}${wurl.includes("?")?"&":"?"}q=${encodeURIComponent(yUrl)}`] : [];
   for(const proxy of proxUrls) {
     try {
@@ -1447,7 +1569,8 @@ function enrich(port, prices, eurusd, priceTsMap, convMap, qHistMap) {
     const eff = effectiveSignal(p.t, prices, qh);
     const rvol = realizedVol(qh);   // volatilité observée 3 ans
     const wret = weeklyLogRets(qh); // rendements hebdo réels (cône bootstrap)
-    return { ...p, inv, pxE, val, pnl, pct, priceAge, dynConv, pxNative, rvol, wret,
+    const coneRel = coneReliability(p.t, qHistMap && qHistMap[p.t]); // v21.0 — back-test 3 ans (mis en cache)
+    return { ...p, inv, pxE, val, pnl, pct, priceAge, dynConv, pxNative, rvol, wret, coneRel,
       effSig:eff.sig, effBase:eff.base, effDrift:eff.drift, effReason:eff.reason, rsiLive:eff.rsi };
   });
   const tot = items.reduce((s,p) => s + (p.val || 0), 0);
@@ -1514,6 +1637,69 @@ function simulateBuy(port, ticker, eurAmount) {
 }
 
 // 4. Rééquilibrage chiffré : € à investir répartis vers les meilleures convictions sous-pondérées
+/* ═══ v21.1 — PHASE 2 : SIMULATEUR DE VENTE ═══
+   Frais XTB (source : centre d'aide XTB « Frais et commissions », recoupé le 03/11/2026) :
+   courtage 0 % jusqu'à 100 000 € d'ordres dans le mois puis 0,2 % (min. 10 €) ; conversion de devise
+   0,5 % à chaque opération sur un titre coté hors euro. À revérifier si XTB change sa grille. */
+const XTB_FX_FEE_PCT = 0.5, XTB_FREE_MONTHLY = 100000, XTB_COMM_PCT = 0.2, XTB_COMM_MIN = 10;
+const XTB_FEES_CHECKED = "2026-11-03";
+// Loi normale (approximation d'Abramowitz-Stegun 7.1.26, erreur < 1,5e-7).
+function normCdf(z) {
+  const t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
+  const y = 1 - (((((1.061405429*t - 1.453152027)*t) + 1.421413741)*t - 0.284496736)*t + 0.254829592)*t * Math.exp(-z*z/2);
+  return z >= 0 ? (1 + y) / 2 : (1 - y) / 2;
+}
+// Probabilité que le rendement dépasse r, lue dans le cône (P10/P50/P90) : deux demi-courbes en cloche
+// raccordées à la médiane, l'une calée sur P10, l'autre sur P90 — respecte l'asymétrie du cône.
+function probAbove(cone, r) {
+  const sLo = Math.max(1e-6, (cone.p50 - cone.p10) / 1.2816), sHi = Math.max(1e-6, (cone.p90 - cone.p50) / 1.2816);
+  return 1 - normCdf((r - cone.p50) / (r <= cone.p50 ? sLo : sHi));
+}
+// Montant net en € d'une vente : prix brut − frais (change + courtage éventuel) − impôt sur la plus-value.
+// costEUR = prix de revient en € des titres vendus (PRU × quantité). PEA : l'impôt suit la règle des 5 ans
+// à la date de vente (approximation ligne par ligne, comme le reste de l'app ; le fisc calcule sur tout le PEA).
+function sellNet(grossEUR, costEUR, foreign, acct, peaOpen, dateISO) {
+  const fx = foreign ? grossEUR * XTB_FX_FEE_PCT / 100 : 0;
+  const comm = grossEUR > XTB_FREE_MONTHLY ? Math.max(XTB_COMM_MIN, grossEUR * XTB_COMM_PCT / 100) : 0;
+  const gain = grossEUR - fx - comm - costEUR;
+  const tx = netAfterTax(gain, acct, peaOpen, dateISO);
+  return { gross: grossEUR, fees: fx + comm, fx, comm, gain, tax: tx.taxEUR, taux: tx.tauxPct, regle: tx.regle, net: grossEUR - fx - comm - tx.taxEUR };
+}
+/* Vendre maintenant ou à une date ? pos = position enrichie (q, b = PRU €, pxE = cours €, acct), f = forecast(pos).
+   Renvoie le net maintenant, le net à la date pour P10/P50/P90 du cône (règle coneAt), le rendement
+   « point mort » au-delà duquel attendre rapporte plus, et la probabilité de le dépasser. */
+function simulateSell(pos, qty, dateISO, f, opt) {
+  opt = opt || {};
+  const now = opt.now || Date.now();
+  const q = Math.min(+qty || 0, +pos.q || 0);
+  if(!(q > 0) || !(pos.pxE > 0) || !f) return null;
+  const at = new Date(dateISO + "T12:00:00").getTime();
+  if(!isFinite(at) || at <= now) return null;
+  const months = (at - now) / 86400000 / 30.4375;
+  const foreign = opt.foreign != null ? opt.foreign : isForeignTk(pos.t);
+  const acct = pos.acct || "CTO", peaOpen = opt.peaOpen || getPeaOpenDate();
+  const cost = q * (+pos.b || 0), todayISO = new Date(now).toISOString().slice(0,10);
+  const nowR = sellNet(q * pos.pxE, cost, foreign, acct, peaOpen, todayISO);
+  const cone = coneAt(f, months);
+  const later = r => sellNet(q * pos.pxE * (1 + r), cost, foreign, acct, peaOpen, dateISO);
+  const scen = { p10: later(cone.p10), p50: later(cone.p50), p90: later(cone.p90) };
+  // Coût d'opportunité : si tu vends maintenant, l'argent peut rapporter `altPct` %/an ailleurs (avant impôt).
+  const alt = Math.max(0, +opt.altPct || 0);
+  const target = nowR.net * (1 + alt / 100 * months / 12);
+  // Point mort : rendement r* tel que net(date, r*) = target. Le net croît avec le cours → dichotomie.
+  let lo = -0.99, hi = 5;
+  for(let i=0;i<80;i++){ const mid = (lo+hi)/2; if(later(mid).net < target) lo = mid; else hi = mid; }
+  const breakeven = (lo + hi) / 2;
+  const pWait = probAbove(cone, breakeven);
+  const peaNowMature = acct === "PEA" && peaMature(peaOpen, todayISO);
+  const peaFlip = acct === "PEA" && !peaNowMature && peaMature(peaOpen, dateISO);
+  const open = new Date(peaOpen).getTime();
+  const peaMatureDate = acct === "PEA" && isFinite(open) ? new Date(open + 5*365.25*86400000).toISOString().slice(0,10) : null;
+  return { t: pos.t, q, months: +months.toFixed(2), foreign, acct, now: nowR, scen, cone, breakeven, pWait,
+    medianDelta: scen.p50.net - target, target, alt, peaFlip, peaNowMature, peaMatureDate,
+    extrapolated: months > 12 };
+}
+
 function rebalancePlan(port, cashEur) {
   if(!(cashEur>0)) return null;
   const cands = port.filter(p => p.val!=null && (p.effSig||p.sig)==="buy")
@@ -1585,8 +1771,8 @@ function realizedSharpe(snapshots, rf) {
 function portfolioDownside(port, qHistMap, h) {
   const items = (port||[]).map(p => {
     if(p.val == null) return null;
-    const f = forecast(p, MACRO);
-    return { t:p.t, val:p.val, lo: p.val*(f.p50 - f.p10)*h, mid: p.val*(1+f.p50*h) };
+    const c = coneAt(forecast(p, MACRO), h*12);     // v21.0 — largeur ×√h (avant : ×h, perte sous-estimée)
+    return { t:p.t, val:p.val, lo: p.val*(c.p50 - c.p10), mid: p.val*(1+c.p50) };
   }).filter(Boolean);
   if(!items.length) return null;
   const cur = items.reduce((s,x)=>s+x.val,0);
@@ -2009,8 +2195,11 @@ function calcMotorPrecision(snapshots) {
       const posL=(later.port||[]).find(p=>p.t===t);
       if(!pos0||!posL||!pos0.pxE||!posL.pxE) return;
       const actual=(posL.pxE-pos0.pxE)/pos0.pxE;
-      const inBand=actual>=fc.p10&&actual<=fc.p90;
-      tracked.push({t,actual:+(actual*100).toFixed(1),p50:+(fc.p50*100).toFixed(1),inBand});
+      // v21.0 — fourchette ramenée à la durée RÉELLEMENT écoulée (avant : fourchette 12 mois pour ~30 jours,
+      // ce qui gonflait artificiellement la précision affichée).
+      const cn=coneAt(fc,(later.ts-snap.ts)/86400000/30.4375);
+      const inBand=actual>=cn.p10&&actual<=cn.p90;
+      tracked.push({t,actual:+(actual*100).toFixed(1),p50:+(cn.p50*100).toFixed(1),inBand});
     });
   }
   if(tracked.length===0) return null;
@@ -2197,6 +2386,86 @@ function bootstrapShape(logRets, weeks, N) {
   return { lo:p10-p50, hi:p90-p50, med:p50 };
 }
 
+/* ═══ v21.0 — PHASE 1 : cônes cohérents et vérifiés ═══
+   coneAt : UNE seule règle pour ramener le cône 12 mois à un horizon de `months` mois — le centre avance
+   avec le temps (×h), l'incertitude avec la RACINE du temps (×√h). Avant la v21, l'affichage réduisait la
+   largeur ×h (cône 2× trop étroit à 3 mois) alors que la calibration mesurait ×√h : on ne testait pas
+   ce qu'on montrait. Tous les écrans et la calibration passent désormais par cette fonction. */
+function coneAt(f, months) {
+  const h = Math.max(0, months || 0) / 12, k = Math.sqrt(h);
+  const c = (f.p50 || 0) * h;
+  return { p10: c + ((f.p10 || 0) - (f.p50 || 0)) * k, p50: c, p90: c + ((f.p90 || 0) - (f.p50 || 0)) * k };
+}
+// Régime de volatilité : les semaines agitées s'enchaînent. Si les 13 dernières semaines sont plus
+// volatiles que la moyenne des 3 ans, le cône s'élargit (et se resserre si plus calmes). Amorti (racine), borné 0,85–1,5.
+function volRegime(logRets) {
+  if(!logRets || logRets.length < 26) return 1;
+  const sd = a => { const m = a.reduce((s,x)=>s+x,0)/a.length; return Math.sqrt(a.reduce((s,x)=>s+(x-m)*(x-m),0)/Math.max(1,a.length-1)); };
+  const all = sd(logRets), rec = sd(logRets.slice(-13));
+  if(!(all > 0)) return 1;
+  return Math.max(0.85, Math.min(1.5, Math.sqrt(rec / all)));
+}
+// Back-test SANS TRICHE de la largeur : à chaque date passée t, le cône est construit avec les SEULES
+// semaines antérieures à t (même bootstrap + régime que le cône affiché), puis comparé au cours
+// réellement atteint `weeks` semaines plus tard. Ne teste que la partie statistique : la thèse et les
+// objectifs analystes d'alors ne peuvent pas être reconstitués sans connaître la suite.
+// Renvoie les échantillons (pour tester un facteur de largeur) et la couverture brute.
+function backtestCone(px, weeks, opt) {
+  opt = opt || {};
+  const minHist = opt.minHist || 52, step = opt.step || 2, N = opt.N || 400;
+  const P = (px || []).filter(v => v > 0);
+  if(P.length < minHist + weeks + 8) return null;
+  const lr = []; for(let i=1;i<P.length;i++) lr.push(Math.log(P[i]/P[i-1]));
+  const samples = [];
+  for(let t=minHist; t+weeks < P.length; t+=step){
+    const past = lr.slice(0, t);                       // lr[t-1] = P[t]/P[t-1] : rien après la date t
+    const sh = bootstrapShape(past, 52, N); if(!sh) continue;
+    const reg = volRegime(past), k = Math.sqrt(weeks/52);
+    samples.push({ c: sh.med*weeks/52, lo: sh.lo*reg*k, hi: sh.hi*reg*k, real: P[t+weeks]/P[t] - 1 });
+  }
+  if(samples.length < 8) return null;
+  return { n: samples.length, cov: coverageAt(samples, 1), samples };
+}
+function coverageAt(samples, m) {
+  let hit = 0;
+  samples.forEach(s => { if(s.real >= s.c + s.lo*m && s.real <= s.c + s.hi*m) hit++; });
+  return samples.length ? hit / samples.length : null;
+}
+// Fiabilité par support : back-test à 3, 6 et 12 mois, puis facteur de largeur (0,8–1,6) qui ramène la
+// couverture à 3 et 6 mois au plus près de 80 %. Mis en cache : recalculé seulement si l'historique change.
+const SUBJ_CAP = 0.10;   // plafond des primes subjectives du centre du cône (±10 %/an)
+const CONE_REL_CACHE = {};
+function coneReliability(t, qh) {
+  // Sans historique fourni (ex. relevé quotidien) : on réutilise le dernier résultat connu.
+  if(!qh || !qh.length) return CONE_REL_CACHE[t] ? CONE_REL_CACHE[t].val : { ok:false, mult:1, badge:"na" };
+  // Le dernier point peut être le cours EN DIRECT (il bouge chaque minute) : on l'écarte, sinon le
+  // back-test serait recalculé à chaque rafraîchissement. Une semaine de moins sur 3 ans : sans effet.
+  const px = qh.map(d => d && d.px).filter(v => v > 0).slice(0, -1);
+  const key = px.length + "|" + (px[px.length-1] || 0);
+  if(CONE_REL_CACHE[t] && CONE_REL_CACHE[t].key === key) return CONE_REL_CACHE[t].val;
+  const b3 = backtestCone(px, 13), b6 = backtestCone(px, 26), b12 = backtestCone(px, 52, { step: 4 });
+  let val;
+  if(!b3) val = { ok:false, mult:1, badge:"na" };
+  else {
+    const fit = [...b3.samples, ...((b6 && b6.samples) || [])];
+    let mult = 1, best = Infinity;
+    for(let m=0.8; m<=1.6001; m+=0.05){ const d = Math.abs(coverageAt(fit, m) - 0.80); if(d < best - 1e-9){ best = d; mult = +m.toFixed(2); } }
+    const row = b => b ? { n:b.n, raw:+b.cov.toFixed(2), adj:+coverageAt(b.samples, mult).toFixed(2) } : null;
+    const r3 = row(b3), r6 = row(b6), r12 = row(b12);
+    const ref = r6 ? (r3.adj + r6.adj) / 2 : r3.adj;
+    const badge = ref < 0.70 ? "narrow" : ref > 0.90 ? "wide" : "ok";
+    val = { ok:true, mult, m3:r3, m6:r6, m12:r12, cov:+ref.toFixed(2), badge };
+  }
+  CONE_REL_CACHE[t] = { key, val };
+  return val;
+}
+const CONE_BADGE = {
+  ok:     { label:"Fiable",                  col:"#2ecc8f" },
+  narrow: { label:"Trop étroit",             col:"#e85d5d" },
+  wide:   { label:"Trop large",              col:"#f0a020" },
+  na:     { label:"Historique insuffisant",  col:"#8892a8" }
+};
+
 // Écart-type d'une somme pondérée avec CORRÉLATIONS : sqrt(ΣΣ v_i v_j ρ_ij).
 // ρ manquant → 0,5 (corrélation actions typique). Sert au cône portefeuille : additionner les
 // queues (ρ=1) surestime le risque ; ceci reflète la vraie diversification (tech corrélée reste
@@ -2231,13 +2500,13 @@ function forecastVsReality(snapshots, ticker, minDays) {
   snaps.forEach(s => {
     const pr = (s.port||[]).find(p=>p.t===ticker);
     if(!pr || !(pr.pxE>0)) return;
-    const d = (s.ts - s0.ts)/86400000, kt = d/365, k = Math.sqrt(kt);
-    const mu = (fc.p50||0)*kt, sig = ((fc.p90-fc.p10)/2/1.28)*k;
+    const d = (s.ts - s0.ts)/86400000;
+    const cn = coneAt(fc, d/30.4375);               // v21.0 — même règle que le cône affiché
     out.push({ d:Math.round(d), date:s.date,
       reel:+(((pr.pxE/px0)-1)*100).toFixed(2),
-      p50:+(mu*100).toFixed(2),
-      p10:+((mu-1.28*sig)*100).toFixed(2),
-      p90:+((mu+1.28*sig)*100).toFixed(2) });
+      p50:+(cn.p50*100).toFixed(2),
+      p10:+(cn.p10*100).toFixed(2),
+      p90:+(cn.p90*100).toFixed(2) });
   });
   if(out.length < 2) return null;
   const last = out[out.length-1];
@@ -2261,12 +2530,12 @@ function calibrationByTicker(snapshots) {
       Object.entries(s0.forecasts).forEach(([t,fc])=>{
         const p0=(s0.port||[]).find(p=>p.t===t), pL=(sL.port||[]).find(p=>p.t===t);
         if(!p0||!pL||!(p0.pxE>0)||!(pL.pxE>0)) return;
-        const actual=(pL.pxE-p0.pxE)/p0.pxE, kt=dt/365, k=Math.sqrt(kt);
-        const mu=(fc.p50||0)*kt, sig=((fc.p90-fc.p10)/2/1.28)*k;
-        if(!(sig>0)) return;
+        const actual=(pL.pxE-p0.pxE)/p0.pxE;
+        const cn = coneAt(fc, dt/30.4375);         // v21.0 — cône asymétrique réellement affiché
+        if(!(cn.p90 > cn.p10)) return;
         const b = by[t] || (by[t] = { t, n:0, hit:0, err:0 });
-        b.n++; if(actual>=mu-1.28*sig && actual<=mu+1.28*sig) b.hit++;
-        b.err += (actual-mu);
+        b.n++; if(actual>=cn.p10 && actual<=cn.p90) b.hit++;
+        b.err += (actual-cn.p50);
       });
       break;
     }
@@ -2293,12 +2562,11 @@ function calcCalibration(snapshots) {
         const p0=(s0.port||[]).find(p=>p.t===t), pL=(sL.port||[]).find(p=>p.t===t);
         if(!p0||!pL||!(p0.pxE>0)||!(pL.pxE>0)) return;
         const actual=(pL.pxE-p0.pxE)/p0.pxE;
-        const kt=dt/365, k=Math.sqrt(kt);
-        const mu=(fc.p50||0)*kt;
-        const sig=((fc.p90-fc.p10)/2/1.28)*k;       // demi-largeur ramenée à l'horizon
-        if(!(sig>0)) return;
-        pairs.push({ inBand: actual>=mu-1.28*sig && actual<=mu+1.28*sig,
-          signed:(actual-mu), kt });
+        const kt=dt/365;
+        const cn = coneAt(fc, dt/30.4375);          // v21.0 — cône asymétrique réellement affiché
+        if(!(cn.p90 > cn.p10)) return;
+        pairs.push({ inBand: actual>=cn.p10 && actual<=cn.p90,
+          signed:(actual-cn.p50), kt });
       });
       break;                                          // un seul point de contrôle par prévision
     }
@@ -2356,7 +2624,14 @@ function forecast(pos, mac) {
             : (pos.pxE != null && pos.pxE > 0) ? pos.pxE : pos.b;
   const f10 = (an.tgt && ref > 0) ? (an.tgt.a / ref - 1) * 0.3 : 0;
   const fresh = analystFreshness(an.lu);   // décote l'influence analyste selon l'âge de la revue (lu)
-  let mu12 = f3*0.5*fresh + (f1-0.5)*0.10 + f2*0.06 + f4*0.04 + f6*0.08 + f7 + f8 + f9 + f10*0.4*fresh;
+  // v21.0 — Le centre sépare ce qui est SOURCÉ (projection et objectifs analystes, datés et décotés par la
+  // fraîcheur) des PRIMES SUBJECTIVES (conviction, signaux, P&L perso, bonus sectoriel fixe, macro) :
+  // ces dernières sont plafonnées à ±10 %/an au total. Avant, le seul bonus sectoriel valait +15 %/an.
+  const sourced = f3*0.5*fresh + f10*0.4*fresh;
+  const subj = (f1-0.5)*0.10 + f2*0.06 + f4*0.04 + f6*0.08 + f7 + f8 + f9;
+  const subjCapped = Math.max(-SUBJ_CAP, Math.min(SUBJ_CAP, subj));
+  const capAdj = subjCapped - subj;                  // effet du plafond (≤ 0 si les primes étaient trop optimistes)
+  let mu12 = sourced + subjCapped;
   // v20.1 — projection INITIALE (avant décote de fraîcheur analyste, avant ta thèse, avant calibration)
   const mu12Raw = f3*0.5 + (f1-0.5)*0.10 + f2*0.06 + f4*0.04 + f6*0.08 + f7 + f8 + f9 + f10*0.4;
   const freshnessAdj = (fresh-1)*(f3*0.5 + f10*0.4);   // effet de la décote de fraîcheur sur la projection
@@ -2366,10 +2641,14 @@ function forecast(pos, mac) {
   const tadj = thesisAdjustment(pos.t, pos.pxNative);   // ton suivi des catalyseurs/risques
   mu12 += tadj.adj;
   mu12 += (CALIB.muBias || 0);
-  const sigma12 = Math.max(0.10, baseVol * (CALIB.sigMult || 1));
+  // v21.0 — Largeur = calibration en direct × facteur du back-test 3 ans de CE support × régime de
+  // volatilité récent ; produit borné 0,75–1,8 pour ne jamais sur-réagir.
+  const rel = pos.coneRel || null;
+  const reg = volRegime(pos.wret);
+  const sm = Math.max(0.75, Math.min(1.8, (CALIB.sigMult || 1) * ((rel && rel.ok) ? rel.mult : 1) * reg));
+  const sigma12 = Math.max(0.10, baseVol * sm);
   // Cône : bootstrap des rendements hebdo RÉELS (queues épaisses + asymétrie) si historique
-  // suffisant, sinon repli gaussien. La calibration (sigMult) module toujours la largeur.
-  const sm = CALIB.sigMult || 1;
+  // suffisant, sinon repli gaussien. Le facteur `sm` module toujours la largeur.
   const shape = bootstrapShape(pos.wret, 52, 1200);
   let p10, p90;
   if(shape){ p10 = mu12 + shape.lo * sm; p90 = mu12 + shape.hi * sm; }
@@ -2390,6 +2669,9 @@ function forecast(pos, mac) {
     mu12Raw: +(mu12Raw*100).toFixed(1),            // projection initiale, %/an
     freshnessAdj: +(freshnessAdj*100).toFixed(1),  // effet fraîcheur analyste (pts)
     calibAdj: +((CALIB.muBias||0)*100).toFixed(1), // effet calibration moteur (pts)
+    capAdj: +(capAdj*100).toFixed(1),              // v21.0 — effet du plafond des primes subjectives (pts)
+    widthMult: +sm.toFixed(2), regime: +reg.toFixed(2),
+    rel,                                           // v21.0 — back-test 3 ans (badge, couvertures 3/6/12M)
     factors: { f1,f2,f3,f4,f5,f6,f7,f8,f9,f10 }
   };
 }
@@ -3707,17 +3989,17 @@ function ScenariosView({ port, m, qHistMap, snapshots }) {
 
   const items = port.map(p => {
     if (p.val == null) return null;
-    const f = forecast(p, MACRO);
+    const c = coneAt(forecast(p, MACRO), horizon);   // v21.0 — centre ×h, largeur ×√h
     return {
       t: p.t,
       val: p.val,
       inv: p.inv,
       acct: p.acct || "CTO",
-      p10: p.val * (1 + f.p10 * h),
-      p50: p.val * (1 + f.p50 * h),
-      p90: p.val * (1 + f.p90 * h),
-      lo: p.val * (f.p50 - f.p10) * h,   // distance € du centre vers P10
-      hi: p.val * (f.p90 - f.p50) * h    // distance € du centre vers P90
+      p10: p.val * (1 + c.p10),
+      p50: p.val * (1 + c.p50),
+      p90: p.val * (1 + c.p90),
+      lo: p.val * (c.p50 - c.p10),   // distance € du centre vers P10
+      hi: p.val * (c.p90 - c.p50)    // distance € du centre vers P90
     };
   }).filter(Boolean);
   const tot50 = items.reduce((s,x)=>s+x.p50,0);
@@ -3753,10 +4035,11 @@ function ScenariosView({ port, m, qHistMap, snapshots }) {
   // d'un axe fixe à 12M : à 3M, le graphique montre 0→3M en détail, pas 0→12M avec 3M écrasé à gauche.
   const fanMonths = Array.from({length:7}, (_,i) => +(horizon*i/6).toFixed(2));
   const fan = fanMonths.map(mo => {
-    const hh = mo/12;
-    const c50 = fcs.reduce((s,x)=>s + x.val*(1+x.f.p50*hh), 0);
-    const sl = pfMat ? corrAggregate(fcs.map(x=>x.val*(x.f.p50-x.f.p10)*hh), fanTks, pfMat) : fcs.reduce((s,x)=>s+x.val*(x.f.p50-x.f.p10)*hh,0);
-    const sh2 = pfMat ? corrAggregate(fcs.map(x=>x.val*(x.f.p90-x.f.p50)*hh), fanTks, pfMat) : fcs.reduce((s,x)=>s+x.val*(x.f.p90-x.f.p50)*hh,0);
+    const cs = fcs.map(x => coneAt(x.f, mo));      // v21.0 — centre ×h, largeur ×√h
+    const c50 = fcs.reduce((s,x,i)=>s + x.val*(1+cs[i].p50), 0);
+    const loA = fcs.map((x,i)=>x.val*(cs[i].p50-cs[i].p10)), hiA = fcs.map((x,i)=>x.val*(cs[i].p90-cs[i].p50));
+    const sl = pfMat ? corrAggregate(loA, fanTks, pfMat) : loA.reduce((s,v)=>s+v,0);
+    const sh2 = pfMat ? corrAggregate(hiA, fanTks, pfMat) : hiA.reduce((s,v)=>s+v,0);
     const p10v = c50 - sl, p90v = c50 + sh2;
     const moLbl = Number.isInteger(mo) ? mo+"M" : mo.toFixed(1)+"M";
     return { mo: moLbl, p10:+p10v.toFixed(0), p50:+c50.toFixed(0), p90:+p90v.toFixed(0), base:+p10v.toFixed(0), span:+(p90v-p10v).toFixed(0) };
@@ -4043,19 +4326,244 @@ function TodayView(props) {
 
 // DEMAIN — la projection : contexte macro, stress-tests, thèses, watchlist
 // Calendrier earnings AGRÉGÉ au niveau portefeuille — anticipe la volatilité autour des publications
-function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx, snapshots }) {
-  const [sub, setSub] = useState("scen");
+/* v21.2 — Détecteur d'opportunités : classement mesuré par horizon (court / moyen / long terme). */
+function buildOppUniverse(port) {
+  const seen = new Set(), out = [];
+  const held = new Set((port||[]).filter(p => p.q > 0).map(p => p.t));
+  const add = (key, e) => {
+    const y = e.y || key; if(!y || seen.has(y)) return; seen.add(y);
+    out.push({ t:key, y, n:e.n || key, ccy:e.ccy || (EU_LISTING_RE.test(y) ? "EUR" : "USD"),
+      kind:e.kind || (e.etf || e.role === "sector" ? "ETF" : "Action"), zone:e.zone || "", meta:e, held: held.has(key) });
+  };
+  Object.entries(REG).filter(([,e]) => e.role === "watch" || e.role === "sector" || e.role === "port").forEach(([k,e]) => add(k, e));
+  SCAN_UNIVERSE.forEach(e => add(e.t, e));
+  (loadWatch() || []).forEach(t => add(String(t).toUpperCase(), {}));
+  return out;
+}
+// Potentiel vers l'objectif des analystes, UNIQUEMENT s'il est saisi, daté et sourcé (OPPS ou thèse d'une position).
+function oppAnalyst(r, last) {
+  const o = OPPS.find(x => x.t === r.t);
+  if(o && o.tgt && last > 0) return { tgt:o.tgt, upside:o.tgt/last - 1, lu:o.lu, src:o.src };
+  const a = AN[r.t];
+  if(a && a.tgt && a.tgt.a && last > 0) return { tgt:a.tgt.a, upside:a.tgt.a/last - 1, lu:getANLu(r.t), src:"ta fiche d'analyse" };
+  return null;
+}
+function OpportunityScanner({ port, onSelect }) {
+  const [hz, setHz] = useState("mt");
+  const [hist, setHist] = useState({});
+  const [prog, setProg] = useState(null);
+  const [open, setOpen] = useState(null);
+  const universe = useMemo(() => buildOppUniverse(port), [port]);
+  const run = async () => {
+    const w1 = getWorkerUrl(), w2 = getWorker2Url();
+    const todo = universe.slice(); let done = 0; const acc = {};
+    setProg({ done:0, tot:todo.length });
+    for(let i=0;i<todo.length;i+=6){
+      await Promise.all(todo.slice(i,i+6).map(async (r, j) => {
+        try { const d = await fetchQuarterlyHistory(r.y, (w2 && (i/6 + j) % 2) ? w2 : w1); if(d && d.length) acc[r.y] = d; } catch(e){}
+        done++;
+      }));
+      setProg({ done, tot:todo.length }); setHist(h => ({ ...h, ...acc }));
+    }
+    setProg(p => ({ ...p, fin:Date.now() }));
+  };
+  useEffect(() => { run(); }, [universe.length]);
+  const rows = useMemo(() => universe.map(r => {
+    const d = hist[r.y]; if(!d) return { ...r, m:null };
+    const m = oppMetrics(d.map(x => x.px));
+    return { ...r, m, asOf: d[d.length-1].ts, d, analyst: m ? oppAnalyst(r, m.last) : null };
+  }), [universe, hist]);
+  const ranked = useMemo(() => scoreOpps(rows, hz), [rows, hz]);
+  const H = OPP_HZ[hz];
+  const coneFor = r => {
+    const pseudo = { t:r.t, s:(r.meta && r.meta.s) || "", v:(r.meta && r.meta.v) || 25, sig:"hold",
+      pxNative:r.m.last, pxE:r.m.last, wret:weeklyLogRets(r.d), rvol:realizedVol(r.d), coneRel:coneReliability("opp:" + r.y, r.d) };
+    const f = forecast(pseudo, MACRO);
+    return { c: coneAt(f, H.months), rel: f.rel || { badge:"na" }, basis: f.basis };
+  };
+  const dFr = ts => new Date(ts).toLocaleDateString("fr-FR");
+  const ageDays = iso => (Date.now() - new Date(iso).getTime()) / 86400000;
+  const missing = rows.filter(r => !r.m || r.m.n < H.minPts).length;
+  const tab = on => ({flex:1,textAlign:"center",padding:"7px 4px",borderRadius:8,cursor:"pointer",border:"1px solid "+(on?"#4f83f5":"rgba(255,255,255,.08)"),background:on?"rgba(79,131,245,.14)":"transparent"});
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Opportunités par horizon</h3>
+        <button className="bn bn-b ic-only" onClick={run} disabled={prog && !prog.fin}>{prog && !prog.fin ? prog.done + "/" + prog.tot : "↻"}</button>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:8}}>
+        {Object.entries(OPP_HZ).map(([k,v]) => (
+          <div key={k} style={tab(hz===k)} onClick={()=>{ setHz(k); setOpen(null); }}>
+            <div style={{fontSize:11,fontWeight:800,color:hz===k?"#4f83f5":"#dde3f0"}}>{v.label}</div>
+            <div style={{fontSize:9,color:"#8892a8"}}>{v.sub}</div>
+          </div>))}
+      </div>
+      <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:8}}>
+        {hz==="ct" && "Ce qui monte déjà depuis 3 mois sans être en surchauffe. Les tendances courtes se prolongent souvent quelques semaines, mais s'inversent vite."}
+        {hz==="mt" && "Les tendances sur 12 mois (en ignorant le dernier mois) ont historiquement tendance à se prolonger — c'est l'effet « momentum ». L'objectif des analystes est ajouté quand on l'a."}
+        {hz==="lt" && "Croissance régulière sur 3 ans, avec peu de grosses chutes : le profil « compounder » à accumuler. Le passé ne garantit pas l'avenir."}
+        {" "}Classement mesuré sur {rows.filter(r=>r.m).length} supports, pas un conseil.
+      </div>
+      {!ranked.length && <div className="dim" style={{fontSize:11}}>{prog && !prog.fin ? "Lecture des cours…" : "Aucun support avec assez d'historique pour cet horizon."}</div>}
+      {ranked.slice(0, 8).map((r, i) => {
+        const env = oppEnvelope(r, hz), isOpen = open === r.y;
+        const sc = r.score >= 70 ? "#2ecc8f" : r.score >= 45 ? "#f0a020" : "#e85d5d";
+        const cf = isOpen ? coneFor(r) : null, bd = cf ? (CONE_BADGE[cf.rel.badge] || CONE_BADGE.na) : null;
+        const pxs = v => (r.ccy === "EUR" ? "€" : "$") + v.toLocaleString("fr-FR", {maximumFractionDigits: v < 10 ? 2 : 0});
+        return (
+          <div key={r.y} style={{padding:"8px 0",borderTop:"1px solid rgba(255,255,255,.05)"}}>
+            <div onClick={()=>setOpen(isOpen ? null : r.y)} style={{cursor:"pointer"}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                <span className="mono" style={{fontSize:10,color:"#3a4560",width:14}}>{i+1}</span>
+                <strong className="tk" style={{fontSize:12}}>{r.t}</strong>
+                <span style={{fontSize:10,color:"#8892a8",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.n}</span>
+                {r.held && <span style={{fontSize:8,fontWeight:800,color:"#4f83f5",background:"rgba(79,131,245,.15)",borderRadius:4,padding:"1px 5px"}}>DÉTENU</span>}
+                <span style={{fontSize:8,fontWeight:800,color:env.acct==="CTO"?"#8892a8":"#2ecc8f",border:"1px solid rgba(255,255,255,.12)",borderRadius:4,padding:"1px 5px"}}>{env.acct}</span>
+                <span className="mono" style={{fontSize:13,fontWeight:800,color:sc,width:30,textAlign:"right"}}>{r.score}</span>
+              </div>
+              <div className="bar" style={{marginTop:4,marginLeft:20}}><span style={{width:r.score+"%",background:sc}}/></div>
+            </div>
+            {isOpen && (
+              <div style={{marginLeft:20,marginTop:7,fontSize:10,color:"#8892a8",lineHeight:1.5}}>
+                {r.why.map(([k,v,s]) => (
+                  <div key={k} className="row" style={{padding:"2px 0"}}><span>{k}</span>
+                    <span className="mono" style={{color:s>=0.66?"#2ecc8f":s>=0.33?"#f0a020":"#e85d5d"}}>{v}</span></div>))}
+                <div style={{background:"#161c2a",borderRadius:7,padding:"6px 8px",marginTop:6}}>
+                  <div style={{fontSize:9,fontWeight:800,color:"#3a4560",textTransform:"uppercase",letterSpacing:".08em"}}>Cône à {H.months} mois · cours {pxs(r.m.last)}</div>
+                  <div className="mono" style={{display:"flex",justifyContent:"space-between",marginTop:3}}>
+                    <span style={{color:"#e85d5d"}}>P10 {fp(cf.c.p10*100,0)}</span><span style={{color:"#4f83f5"}}>P50 {fp(cf.c.p50*100,0)}</span><span style={{color:"#2ecc8f"}}>P90 {fp(cf.c.p90*100,0)}</span>
+                  </div>
+                  <div style={{marginTop:3}}><span style={{color:bd.col,fontWeight:700}}>{bd.label}</span>{cf.basis === "statistique" ? " · centre purement statistique (pas de thèse)" : " · centre appuyé sur une thèse"}</div>
+                </div>
+                {r.analyst && <div style={{marginTop:5}}>Objectif analystes {pxs(r.analyst.tgt)} ({fp(r.analyst.upside*100,0)}) — {r.analyst.src}, relevé le {dFr(r.analyst.lu)}{ageDays(r.analyst.lu) > 45 && <span style={{color:"#f0a020"}}> · plus de 45 jours, à rafraîchir</span>}</div>}
+                <div style={{marginTop:5}}>{r.kind} · {r.zone || (r.meta && r.meta.s) || "—"}{env.note ? " · " + env.note : ""}</div>
+                <div style={{marginTop:3,color:"#3a4560"}}>Cours Yahoo Finance (hebdomadaire, {r.m.n} semaines) au {dFr(r.asOf)}.</div>
+                {r.held && onSelect && <div style={{marginTop:5}}><span style={{color:"#4f83f5",cursor:"pointer"}} onClick={()=>onSelect(r.t)}>Ouvrir la fiche →</span></div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.4}}>
+        {missing > 0 && missing + " support" + (missing>1?"s":"") + " écarté" + (missing>1?"s":"") + " faute d'historique suffisant pour cet horizon. "}
+        Score relatif : 100 = le mieux placé de la liste sur ces critères, pas une note absolue (si tout baisse, le premier peut quand même baisser). Touche une ligne pour voir le détail. Ajoute un symbole Yahoo à la watchlist ci-dessous pour l'inclure au balayage. Enveloppe : PEA pour le long terme quand c'est possible, CTO pour la poche dynamique.
+      </div>
+    </div>
+  );
+}
+
+/* v21.1 — Simulateur de vente : vendre maintenant ou à une date, net d'impôt et de frais, à partir du cône. */
+function SellSimulatorCard({ port, initialTicker }) {
+  const held = (port||[]).filter(p => p.q > 0 && p.pxE > 0);
+  const isoIn = mo => { const d = new Date(); d.setMonth(d.getMonth() + mo); return d.toISOString().slice(0,10); };
+  const [tk, setTk] = useState(initialTicker && held.some(p => p.t === initialTicker) ? initialTicker : (held[0] ? held[0].t : ""));
+  const [qty, setQty] = useState("");
+  const [date, setDate] = useState(isoIn(3));
+  const [alt, setAlt] = useState("0");
+  const pos = held.find(p => p.t === tk) || held[0];
+  if(!pos) return <div className="card"><div className="dim" style={{fontSize:11}}>Aucune position détenue à simuler.</div></div>;
+  const q = qty === "" ? pos.q : Math.max(0, +String(qty).replace(",", ".") || 0);
+  const f = forecast(pos, MACRO);
+  const res = simulateSell(pos, q, date, f, { altPct: +String(alt).replace(",", ".") || 0 });
+  const dFr = iso => new Date(iso + "T12:00:00").toLocaleDateString("fr-FR");
+  const inp = {background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:6,color:"#dde3f0",fontSize:12,padding:"7px 8px",outline:"none",width:"100%",boxSizing:"border-box"};
+  const lbl = {fontSize:10,color:"#8892a8",marginBottom:3};
+  const chip = on => ({fontSize:10,padding:"4px 9px",borderRadius:12,cursor:"pointer",border:"1px solid "+(on?"#4f83f5":"rgba(255,255,255,.1)"),color:on?"#4f83f5":"#8892a8",background:on?"rgba(79,131,245,.12)":"transparent"});
+  const row = (k, v, col, strong) => (
+    <div className="row" style={{padding:"4px 0"}}><span style={{fontSize:11,color:"#8892a8"}}>{k}</span>
+      <span className="mono" style={{fontSize:strong?13:11,fontWeight:strong?800:500,color:col||"#dde3f0"}}>{v}</span></div>);
+  const pxAt = r => fcur(pos.t, (pos.pxNative || pos.pxE) * (1 + r));
+  const rel = f.rel || { badge:"na" }, bd = CONE_BADGE[rel.badge] || CONE_BADGE.na;
+  const peaSoon = pos.acct === "PEA" && res && !res.peaNowMature && res.peaMatureDate;
+  const pc = res ? Math.round(res.pWait * 100) : null;
+  const pcol = pc == null ? "#8892a8" : pc >= 60 ? "#2ecc8f" : pc >= 40 ? "#f0a020" : "#e85d5d";
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Vendre maintenant ou plus tard ?</h3><span className="dim" style={{fontSize:9}}>net d'impôt et de frais</span></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <div><div style={lbl}>Support</div>
+          <select value={pos.t} onChange={e=>{ setTk(e.target.value); setQty(""); }} style={inp}>
+            {held.map(p => <option key={p.t} value={p.t}>{p.t} · {p.acct || "CTO"}</option>)}
+          </select></div>
+        <div><div style={lbl}>Quantité à vendre (détenue : {+pos.q.toFixed(6)})</div>
+          <input inputMode="decimal" value={qty === "" ? String(+pos.q.toFixed(6)) : qty} onChange={e=>setQty(e.target.value)} style={inp}/></div>
+      </div>
+      <div style={{display:"flex",gap:5,marginTop:6,flexWrap:"wrap"}}>
+        {[["25 %",0.25],["50 %",0.5],["Tout",1]].map(([l,k]) => <span key={l} style={chip(Math.abs(q - pos.q*k) < 1e-9)} onClick={()=>setQty(String(+(pos.q*k).toFixed(6)))}>{l}</span>)}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:9}}>
+        <div><div style={lbl}>Date de vente envisagée</div>
+          <input type="date" value={date} min={isoIn(0)} max={isoIn(24)} onChange={e=>setDate(e.target.value)} style={inp}/></div>
+        <div><div style={lbl}>Si je vends, mon argent rapporte (%/an)</div>
+          <input inputMode="decimal" value={alt} onChange={e=>setAlt(e.target.value)} style={inp}/></div>
+      </div>
+      <div style={{display:"flex",gap:5,marginTop:6,flexWrap:"wrap"}}>
+        {[["1 mois",1],["3 mois",3],["6 mois",6],["12 mois",12]].map(([l,mo]) => <span key={l} style={chip(date === isoIn(mo))} onClick={()=>setDate(isoIn(mo))}>{l}</span>)}
+        {peaSoon && res.peaMatureDate <= isoIn(24) && <span style={chip(date === res.peaMatureDate)} onClick={()=>setDate(res.peaMatureDate)}>5 ans du PEA ({dFr(res.peaMatureDate)})</span>}
+      </div>
+
+      {!res ? <div style={{fontSize:11,color:"#f0a020",marginTop:10}}>Choisis une quantité positive et une date future.</div> : (<>
+        <div style={{marginTop:12,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.06)"}}>
+          <div style={{fontSize:9,fontWeight:800,letterSpacing:".08em",textTransform:"uppercase",color:"#3a4560",marginBottom:4}}>Vendre aujourd'hui</div>
+          {row("Prix de vente brut", fe(res.now.gross))}
+          {row(res.foreign ? "Frais (change 0,5 %" + (res.now.comm ? " + courtage" : "") + ")" : "Frais" + (res.now.comm ? " (courtage)" : ""), res.now.fees ? "−" + fe(res.now.fees) : fe(0))}
+          {row(res.now.gain >= 0 ? "Plus-value" : "Moins-value", fe(res.now.gain), cl(res.now.gain))}
+          {row("Impôt · " + res.now.regle, res.now.tax ? "−" + fe(res.now.tax) : fe(0))}
+          {row("Net dans ta poche", fe(res.now.net), "#dde3f0", true)}
+        </div>
+        <div style={{marginTop:10,paddingTop:8,borderTop:"1px solid rgba(255,255,255,.06)"}}>
+          <div style={{fontSize:9,fontWeight:800,letterSpacing:".08em",textTransform:"uppercase",color:"#3a4560",marginBottom:6}}>Vendre le {dFr(date)} (dans {res.months.toFixed(1).replace(".",",")} mois)</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
+            {[["Pessimiste","p10","#e85d5d"],["Médian","p50","#4f83f5"],["Optimiste","p90","#2ecc8f"]].map(([l,k,c]) => {
+              const s = res.scen[k], d = s.net - res.target;
+              return (
+                <div key={k} style={{background:"#161c2a",borderRadius:8,padding:"7px 8px"}}>
+                  <div style={{fontSize:9,color:c,fontWeight:800}}>{l}</div>
+                  <div className="mono" style={{fontSize:10,color:"#8892a8",marginTop:2}}>cours {pxAt(res.cone[k])}</div>
+                  <div className="mono" style={{fontSize:13,fontWeight:800,marginTop:3}}>{fe(s.net,0)}</div>
+                  <div className="mono" style={{fontSize:10,color:cl(d)}}>{d>=0?"+":"−"}{fe(Math.abs(d),0)} vs aujourd'hui</div>
+                </div>);
+            })}
+          </div>
+          <div style={{fontSize:9,color:"#3a4560",marginTop:4}}>Pessimiste = 1 chance sur 10 de faire moins bien · Optimiste = 1 chance sur 10 de faire mieux.</div>
+        </div>
+        <div style={{marginTop:10,background:pcol+"14",border:"1px solid "+pcol+"55",borderRadius:8,padding:"9px 10px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+            <span style={{fontSize:11,fontWeight:700}}>Chances qu'attendre rapporte plus</span>
+            <span className="mono" style={{fontSize:18,fontWeight:800,color:pcol}}>{pc} %</span>
+          </div>
+          <div className="bar" style={{marginTop:5}}><span style={{width:pc+"%",background:pcol}}/></div>
+          <div style={{fontSize:10,color:"#8892a8",marginTop:6,lineHeight:1.45}}>
+            Pour gagner à attendre, il faut que le cours dépasse <strong style={{color:"#dde3f0"}}>{pxAt(res.breakeven)}</strong> ({fp(Math.abs(res.breakeven) < 5e-4 ? 0 : res.breakeven*100,1)} par rapport à aujourd'hui) le {dFr(date)}{res.alt>0 ? ", en tenant compte des " + String(res.alt).replace(".",",") + " %/an que rapporterait l'argent vendu" : ""}.
+          </div>
+        </div>
+        <div style={{fontSize:9.5,color:"#8892a8",marginTop:9,lineHeight:1.5}}>
+          {res.peaFlip && <div style={{color:"#2ecc8f",marginBottom:4}}>✓ Le PEA aura 5 ans le {dFr(res.peaMatureDate)} : à cette date l'impôt passe de {pct1(TAX_PFU)} % à {pct1(TAX_PS)} % (prélèvements sociaux seuls). C'est inclus dans le calcul ci-dessus.</div>}
+          {pos.acct === "PEA" && <div style={{marginBottom:4}}>PEA : vendre une ligne sans retirer l'argent du PEA ne coûte aucun impôt. Le calcul suppose un retrait ; avant 5 ans, un retrait clôture le PEA. Impôt estimé ligne par ligne (le fisc le calcule sur l'ensemble du PEA).</div>}
+          {res.foreign && <div style={{marginBottom:4}}>Titre en devise : frais de change XTB de 0,5 % à la vente. Le cône inclut l'effet du taux EUR/USD ; cours en devise convertis au taux du jour.</div>}
+          {res.extrapolated && <div style={{color:"#f0a020",marginBottom:4}}>Au-delà de 12 mois, le cône est prolongé par calcul : fourchette moins solide.</div>}
+          <div><span style={{color:bd.col,fontWeight:700}}>Cône {bd.label.toLowerCase()}</span>{rel.ok ? " (vérifié sur 3 ans : " + Math.round(rel.cov*100) + " % de réussite pour une cible de 80 %)" : ""}. Ce sont des fourchettes de probabilité, pas des promesses. Frais XTB vérifiés le {dFr(XTB_FEES_CHECKED)}.</div>
+        </div>
+      </>)}
+    </div>
+  );
+}
+
+/* v21.3 — Écran « Prévisions » : réunit l'ancien Forecast (scénarios, thèses, macro) et l'ancien Moteur
+   (historique, risque, fiabilité). Le sous-onglet est piloté par l'App (liens internes « moteur » → Fiabilité). */
+function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx, snapshots, eurusd, spyHist, sub, onSub }) {
+  const [subSt, setSubSt] = useState("scen");
+  const cur = sub || subSt, setSub = onSub || setSubSt;
   return (
     <>
-      <div className="seg">
-        {[["scen","Scénarios"],["macro","Macro"],["theses","Thèses"],["opp","Opportunités"]].map(([k,l])=>
-          <div key={k} className={"it"+(sub===k?" ac":"")} onClick={()=>setSub(k)}>{l}</div>
+      <div className="seg" style={{overflowX:"auto",flexWrap:"nowrap"}}>
+        {[["scen","Scénarios"],["theses","Thèses"],["fiab","Fiabilité"],["hist","Historique"],["risk","Risque"],["macro","Macro"]].map(([k,l])=>
+          <div key={k} className={"it"+(cur===k?" ac":"")} style={{flex:"0 0 auto"}} onClick={()=>setSub(k)}>{l}</div>
         )}
       </div>
-      {sub==="scen" && <ScenariosView port={port} m={m} qHistMap={qHistMap} snapshots={snapshots}/>}
-      {sub==="macro" && <MacroView prices={prices} qHistMap={qHistMap} macroCtx={macroCtx} port={port}/>}
-      {sub==="theses" && <AnalysisView port={port} onSelect={onSelect}/>}
-      {sub==="opp" && <WatchlistView port={port} m={m}/>}
+      {cur==="scen" && <ScenariosView port={port} m={m} qHistMap={qHistMap} snapshots={snapshots}/>}
+      {cur==="theses" && <AnalysisView port={port} onSelect={onSelect}/>}
+      {cur==="macro" && <MacroView prices={prices} qHistMap={qHistMap} macroCtx={macroCtx} port={port}/>}
+      {(cur==="hist" || cur==="risk" || cur==="fiab") && <MemoryView snapshots={snapshots} port={port} m={m} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist} sub={cur}/>}
     </>
   );
 }
@@ -4063,6 +4571,42 @@ function ForecastView({ port, m, onSelect, prices, qHistMap, macroCtx, snapshots
 // MÉMOIRE — le passé : historique de valeur, P&L, contributions, fiabilité du moteur
 /* Carte 1 — le cône prédit à une date passée, superposé au prix RÉELLEMENT suivi depuis. */
 /* Carte 2 — quelles lignes le moteur prédit bien, lesquelles il rate. */
+/* v21.0 — Fiabilité des cônes vérifiée sur 3 ans de cours (back-test sans triche), par support. */
+function ConeReliabilityCard({ port }) {
+  const rows = (port||[]).filter(p=>p.val!=null).map(p=>({ t:p.t, r:p.coneRel || { badge:"na" } }))
+    .sort((a,b)=> (b.r.ok?1:0)-(a.r.ok?1:0) || ((a.r.cov||0)-(b.r.cov||0)));
+  if(!rows.length) return null;
+  const pc = v => v==null ? "—" : Math.round(v*100)+"%";
+  const nOk = rows.filter(x=>x.r.badge==="ok").length;
+  return (
+    <div className="card">
+      <div className="cd-ti"><h3>Fiabilité des cônes (3 ans)</h3><span className="dim" style={{fontSize:9}}>{nOk}/{rows.length} fiables</span></div>
+      <div style={{fontSize:10,color:"#8892a8",lineHeight:1.45,marginBottom:9}}>
+        On se replace à chaque date des 3 dernières années, on construit le cône avec les seules données connues ce jour-là, puis on regarde où le cours est réellement allé. Un bon cône contient le cours environ 8 fois sur 10.
+        Seule la partie statistique peut être vérifiée ainsi (pas les avis d'analystes d'alors).
+      </div>
+      <div style={{display:"flex",fontSize:8,fontWeight:800,color:"#3a4560",letterSpacing:".08em",textTransform:"uppercase",paddingBottom:4}}>
+        <span style={{flex:1.2}}>Support</span><span style={{flex:1,textAlign:"right"}}>3 mois</span><span style={{flex:1,textAlign:"right"}}>6 mois</span><span style={{flex:1,textAlign:"right"}}>12 mois*</span><span style={{flex:1.6,textAlign:"right"}}>Verdict</span>
+      </div>
+      {rows.map(({t,r})=>{
+        const bd = CONE_BADGE[r.badge] || CONE_BADGE.na;
+        return (
+          <div key={t} style={{display:"flex",alignItems:"baseline",padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.04)",fontSize:11}}>
+            <strong className="tk" style={{flex:1.2}}>{t}</strong>
+            <span className="mono" style={{flex:1,textAlign:"right"}}>{pc(r.m3&&r.m3.adj)}</span>
+            <span className="mono" style={{flex:1,textAlign:"right"}}>{pc(r.m6&&r.m6.adj)}</span>
+            <span className="mono" style={{flex:1,textAlign:"right",color:"#3a4560"}}>{pc(r.m12&&r.m12.adj)}</span>
+            <span style={{flex:1.6,textAlign:"right",color:bd.col,fontWeight:700,fontSize:10}}>{bd.label}{r.ok && r.mult!==1 ? " ·×"+r.mult.toFixed(2) : ""}</span>
+          </div>
+        );
+      })}
+      <div style={{fontSize:9,color:"#3a4560",marginTop:7,lineHeight:1.4}}>
+        Pourcentages après correction de largeur (×). *12 mois : indicatif seulement — 3 ans d'historique ne contiennent qu'une ou deux périodes de 12 mois vraiment indépendantes. Le verdict s'appuie sur 3 et 6 mois.
+      </div>
+    </div>
+  );
+}
+
 function ReliabilityByTickerCard({ snapshots }) {
   const rows = useMemo(()=>calibrationByTicker(snapshots), [snapshots]);
   if(!rows.length) return null;
@@ -4195,7 +4739,7 @@ function RiskDashboard({ port, m, qHistMap, spyHist }) {
     </div>
   );
 }
-function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
+function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist, sub: subProp }) {
   const precision = useMemo(()=>calcMotorPrecision(snapshots),[snapshots]);
   const [backtest, setBacktest] = useState(null);
   useEffect(() => {
@@ -4211,18 +4755,20 @@ function MemoryView({ snapshots, port, m, eurusd, qHistMap, spyHist }) {
     });
   }, [m.tot]);
 
-  const [sub, setSub] = useState("hist");
+  const [subSt, setSub] = useState("hist");
+  const sub = subProp || subSt;            // v21.3 — piloté par l'écran Prévisions (sa propre barre est alors masquée)
   return (
     <>
-      <div className="seg">
+      {!subProp && <div className="seg">
         {[["hist","Historique"],["risk","Risque"],["fiab","Fiabilité"]].map(([k,l])=>
           <div key={k} className={"it"+(sub===k?" ac":"")} onClick={()=>setSub(k)}>{l}</div>
         )}
-      </div>
+      </div>}
       {sub==="hist" && <HistoryView snapshots={snapshots} port={port} eurusd={eurusd} qHistMap={qHistMap} spyHist={spyHist}/>}
       {sub==="risk" && <RiskDashboard port={port} m={m} qHistMap={qHistMap} spyHist={spyHist}/>}
       {sub==="fiab" && (<>
       <MoteurAdjustments port={port}/>
+      <ConeReliabilityCard port={port}/>
       <ReliabilityByTickerCard snapshots={snapshots}/>
       <JournalCard port={port}/>
       {precision ? (
@@ -5166,7 +5712,7 @@ const FUND_INFO = {
   }
 };
 
-function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
+function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack, onSell }) {
   const p = port.find(x => x.t === ticker); if (!p) return null;
   const a = AN[ticker] || {};
   const fi = FUND_INFO[ticker];
@@ -5330,10 +5876,9 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     // On ne masque le cône futur QUE s'il ferait doublon avec la prévision passée, c'est-à-dire
     // s'il projette quasiment les mêmes bornes à l'horizon. Un cône qui s'élargit avec le temps
     // est NORMAL (l'incertitude croît) : ce n'est pas une raison de le cacher.
-    const kt = horizon/12, k = Math.sqrt(kt);
-    const oldLo = ((fc.p50||0)*kt - 1.28*((fc.p90-fc.p10)/2/1.28)*k)*100;
-    const oldHi = ((fc.p50||0)*kt + 1.28*((fc.p90-fc.p10)/2/1.28)*k)*100;
-    const newLo = f.p10*kt*100, newHi = f.p90*kt*100;
+    const co = coneAt(fc, horizon), cn = coneAt(f, horizon);   // v21.0 — même règle pour les deux
+    const oldLo = co.p10*100, oldHi = co.p90*100;
+    const newLo = cn.p10*100, newHi = cn.p90*100;
     // Seuil STRICT (0,5 pt) : on ne masque qu'un doublon quasi parfait. Objectif : le cône
     // futur reste visible à 3, 6, 9 et 12 mois — c'est l'information principale de la fiche.
     const quasiIdentique = Math.abs(newLo-oldLo) < 0.5 && Math.abs(newHi-oldHi) < 0.5;
@@ -5378,9 +5923,8 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
       pastFc = { ts0:s0.ts, date0:s0.date, px0:s0.port.find(x=>x.t===ticker).pxE, fc:s0.forecasts[ticker] };
     }
     const bandAt = (dt) => {                     // dt en jours depuis la prévision passée
-      const kt = Math.max(0, dt)/365, k = Math.sqrt(kt);
-      const mu = (pastFc.fc.p50||0)*kt, sig = ((pastFc.fc.p90-pastFc.fc.p10)/2/1.28)*k;
-      return { lo: mu-1.28*sig, mid: mu, hi: mu+1.28*sig };
+      const cn = coneAt(pastFc.fc, Math.max(0, dt)/30.4375);   // v21.0 — même règle que partout
+      return { lo: cn.p10, mid: cn.p50, hi: cn.p90 };
     };
     if(pastFc) {
       recentPts.forEach((pt, i) => {
@@ -5417,9 +5961,10 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
     const Fn = Math.max(6, Math.round(pastDS.length/3));
     const fPts = Array.from({length:Fn}, (_,i) => {
       const mo = horizon*(i+1)/Fn;               // mois fractionnaires jusqu'à l'horizon
-      const p10 = +(f.p10*mo/12*100).toFixed(2);
-      const p90 = +(f.p90*mo/12*100).toFixed(2);
-      const p50 = +(f.p50*mo/12*100).toFixed(2);
+      const cm = coneAt(f, mo);                  // v21.0 — centre ×h, largeur ×√h
+      const p10 = +(cm.p10*100).toFixed(2);
+      const p90 = +(cm.p90*100).toFixed(2);
+      const p50 = +(cm.p50*100).toFixed(2);
       return {
         date:`+${Number.isInteger(mo)?mo:mo.toFixed(1)}M`, seg:"forecast", pxHist:null, px:null,
         p10, p90, p50,
@@ -5448,14 +5993,17 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
 
   const hcol = risk.total>=65?"#e85d5d":risk.total>=40?"#f0a020":"#2ecc8f";
   const sigCol = {buy:"#2ecc8f",sell:"#e85d5d",hold:"#f0a020",spec:"#8b7cf5"}[p.sig]||"#8892a8";
-  const fAtH = (k) => f[k]*horizon/12*100; // prévision recalée sur l'horizon sélectionné
+  const fAtH = (k) => coneAt(f, horizon)[k]*100; // v21.0 — prévision recalée sur l'horizon (largeur ×√h)
   // Bornes de la zone de prévision (pour l'ombrage + le séparateur "aujourd'hui")
   const fcStart = (chartData.find(d=>d.seg==="trans")||{}).date || null;
   const fcEnd = chartData.length ? chartData[chartData.length-1].date : null;
 
   return (
     <div className="dt-ovr">
-      <div className="bk" onClick={onBack}>← Retour</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div className="bk" onClick={onBack}>← Retour</div>
+        {onSell && p.q > 0 && <button className="bn bn-b" style={{fontSize:10,padding:"5px 10px",marginRight:12}} onClick={()=>onSell(ticker)}>Simuler une vente →</button>}
+      </div>
 
       <div className="card" style={{marginBottom:9,border:"1px solid "+sigCol+"40",background:`linear-gradient(135deg, ${sigCol}14, transparent)`}}>
         <div className="cd-ti" style={{marginBottom:10}}>
@@ -5581,6 +6129,19 @@ function DetailView({ ticker, port, snapshots, alerts, eurusd, onBack }) {
                 : "cône non encore calibré"}
             </span>
           </div>
+          {(() => {   /* v21.0 — badge de fiabilité issu du back-test 3 ans */
+            const r = f.rel || { badge:"na" }; const bd = CONE_BADGE[r.badge] || CONE_BADGE.na;
+            return (
+              <div style={{fontSize:9,color:"#8892a8",marginBottom:6,display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
+                <span style={{background:bd.col+"22",color:bd.col,fontWeight:800,borderRadius:4,padding:"1px 6px",textTransform:"uppercase",letterSpacing:".06em"}}>{bd.label}</span>
+                {r.ok
+                  ? <span>vérifié sur 3 ans : le cours est resté dans la zone {Math.round(r.m3.adj*100)} % du temps à 3 mois{r.m6 ? ", "+Math.round(r.m6.adj*100)+" % à 6 mois" : ""} (cible 80 %){r.mult!==1 ? " · largeur corrigée ×"+r.mult.toFixed(2) : ""}</span>
+                  : <span>moins de 18 mois de cours : fiabilité non vérifiable</span>}
+                {f.regime && Math.abs(f.regime-1)>=0.05 && <span>· marché {f.regime>1?"plus agité":"plus calme"} que d'habitude (×{f.regime.toFixed(2)})</span>}
+                {f.capAdj <= -0.5 && <span>· primes subjectives plafonnées ({f.capAdj} pts)</span>}
+              </div>
+            );
+          })()}
           <div style={{display:"flex",gap:8,marginBottom:6,flexWrap:"wrap"}}>
             {[["─","#4f83f5","Cours réel"],["▬","rgba(136,146,168,.35)","Prévision passée"],
               ...(futureAddsValue?[["▬","rgba(79,131,245,.2)","Prévision future P10–P90"],["╌","#4f83f5","P50 médian"]]:[])].map(([sym,col,lbl])=>(
@@ -6009,7 +6570,7 @@ function MoteurAdjustments({ port }) {
     const f = forecast(p, MACRO);
     const ret = +(f.p50*100).toFixed(1);
     const impact = +(ret - f.mu12Raw).toFixed(1);
-    const causes = [["Fraîcheur analyste", f.freshnessAdj],["Ta thèse", f.thesisAdj],["Calibration", f.calibAdj]]
+    const causes = [["Fraîcheur analyste", f.freshnessAdj],["Ta thèse", f.thesisAdj],["Calibration", f.calibAdj],["Primes plafonnées", f.capAdj]]
       .filter(c=>Math.abs(c[1])>=0.5).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
     return { t:p.t, raw:f.mu12Raw, ret, impact, causes };
   }).sort((a,b)=>Math.abs(b.impact)-Math.abs(a.impact));
@@ -6033,8 +6594,32 @@ function MoteurAdjustments({ port }) {
   );
 }
 
+/* v21.3 — Navigation en 4 écrans. NAV_COMPAT traduit les anciens noms d'onglets (encore utilisés par
+   des liens internes, ex. la carte Global qui ouvre une ligne CTO ou PEA) vers le nouvel emplacement. */
+const NAV_TABS = [
+  { k:"port",  l:"Portefeuille" },
+  { k:"prev",  l:"Prévisions" },
+  { k:"opp",   l:"Opportunités" },
+  { k:"vente", l:"Vente" }
+];
+const NAV_COMPAT = {
+  global:  { tab:"port", portSub:"global" },
+  cto:     { tab:"port", portSub:"cto" },
+  pea:     { tab:"port", portSub:"pea" },
+  forecast:{ tab:"prev", prevSub:"scen" },
+  moteur:  { tab:"prev", prevSub:"fiab" }
+};
+function navResolve(k) {
+  if(NAV_COMPAT[k]) return NAV_COMPAT[k];
+  if(NAV_TABS.some(t => t.k === k)) return { tab:k };
+  return { tab:"port" };
+}
 function NavIcon({ k }) {
   const p = { width:20, height:20, viewBox:"0 0 24 24", fill:"none", stroke:"currentColor", strokeWidth:1.8, strokeLinecap:"round", strokeLinejoin:"round" };
+  if(k==="port")     return <svg {...p}><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M3 13h18"/></svg>;
+  if(k==="prev")     return <svg {...p}><path d="M3 20h18"/><path d="M4 16l5-5 4 3 7-8"/><path d="M14 6h6v6"/></svg>;
+  if(k==="opp")      return <svg {...p}><circle cx="11" cy="11" r="6.5"/><path d="M20.5 20.5l-4.9-4.9"/><path d="M11 8v6M8 11h6"/></svg>;
+  if(k==="vente")    return <svg {...p}><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 19h16"/></svg>;
   if(k==="global")   return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18"/></svg>;
   if(k==="cto")      return <svg {...p}><path d="M4 18l5-5 4 3 6.5-8.5"/><path d="M15 7.5h4.5V12"/></svg>;
   if(k==="pea")      return <svg {...p}><path d="M12 3l7 3v5c0 4.6-3 7.7-7 9-4-1.3-7-4.4-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>;
@@ -6466,7 +7051,13 @@ function App() {
   const [qHistMap, setQHistMap] = useState({});
   const [spyHistRaw, setSpyHist] = useState([]);
   const [status, setStatus] = useState("ld");
-  const [tab, setTab] = useState("global");
+  // v21.3 — 4 écrans : Portefeuille (Global/CTO/PEA) · Prévisions · Opportunités · Vente.
+  const [tab, setTabRaw] = useState("port");
+  const [portSub, setPortSub] = useState("global");
+  const [prevSub, setPrevSub] = useState("scen");
+  const [sellTk, setSellTk] = useState(null);
+  // Les liens internes existants utilisent encore les anciens noms d'onglets : ils sont traduits ici.
+  const setTab = k => { const r = navResolve(k); setTabRaw(r.tab); if(r.portSub) setPortSub(r.portSub); if(r.prevSub) setPrevSub(r.prevSub); };
 
   /* Rattrapage de l'historique au démarrage : récupère les clôtures enregistrées par le Worker
      et reconstitue les relevés des jours où l'app n'a pas été ouverte. Ne s'exécute qu'une fois
@@ -6790,8 +7381,9 @@ function App() {
   const mPEA = useMemo(() => metrics(enrichedPEA), [enrichedPEA]);
   const sellsCTO = enrichedCTO.filter(p => p.sig === "sell").length;
   const sellsPEA = enrichedPEA.filter(p => p.sig === "sell").length;
-  const curM = tab==="cto" ? mCTO : tab==="pea" ? mPEA : m;
-  const curSells = tab==="cto" ? sellsCTO : tab==="pea" ? sellsPEA : sells;
+  const view = tab === "port" ? portSub : tab;
+  const curM = view==="cto" ? mCTO : view==="pea" ? mPEA : m;
+  const curSells = view==="cto" ? sellsCTO : view==="pea" ? sellsPEA : sells;
 
   // Update countdown depuis lastTs
   useEffect(() => {
@@ -6823,22 +7415,30 @@ function App() {
         onSettings={() => setCfgOpen(true)}
       />
 
-      {tab !== "pea" && tab !== "global" && <Strip m={curM} alertCount={curSells}/>}
+      {view !== "pea" && view !== "global" && <Strip m={curM} alertCount={curSells}/>}
 
-      {tab === "global" && <ErrorBoundary inline label="Global"><GlobalDashboard portAll={enriched} portCTO={enrichedCTO} portPEA={enrichedPEA} onSelect={setDetail} onGoTab={setTab} qHistMap={liveHistMap} snapshots={snapshots} spyHist={spyHist} eurusd={eurusd}/></ErrorBoundary>}
-      {tab === "cto" && <ErrorBoundary inline label="CTO"><TodayView port={enrichedCTO} m={mCTO} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
-      {tab === "pea" && <ErrorBoundary inline label="PEA"><>
+      {tab === "port" && (
+        <div className="seg">
+          {[["global","Global"],["cto","CTO"],["pea","PEA"]].map(([k,l]) =>
+            <div key={k} className={"it"+(portSub===k?" ac":"")} onClick={()=>setPortSub(k)}>{l}</div>)}
+        </div>
+      )}
+      {view === "global" && <ErrorBoundary inline label="Global"><GlobalDashboard portAll={enriched} portCTO={enrichedCTO} portPEA={enrichedPEA} onSelect={setDetail} onGoTab={setTab} qHistMap={liveHistMap} snapshots={snapshots} spyHist={spyHist} eurusd={eurusd}/></ErrorBoundary>}
+      {view === "cto" && <ErrorBoundary inline label="CTO"><TodayView port={enrichedCTO} m={mCTO} eurusd={eurusd} prices={prices} lastTs={lastTs} macroCtx={macroCtx} snapshots={snapshots} qHistMap={liveHistMap} spyHist={spyHist} onSelect={setDetail} onTabChange={setTab} onRefresh={()=>fetchAll(false)}/></ErrorBoundary>}
+      {view === "pea" && <ErrorBoundary inline label="PEA"><>
         <PEAHeader port={enrichedPEA}/>
         {enrichedPEA.length
           ? <PEAView port={enrichedPEA} onSelect={setDetail} qHistMap={liveHistMap}/>
           : <div className="card" style={{margin:12}}><div className="lbl">Onglet PEA</div><div className="dim" style={{fontSize:12,marginTop:6,lineHeight:1.5}}>Aucune position PEA pour l'instant. Les ETF éligibles sont déjà référencés : ajoute un achat via ⚙ Réglages → Registre de transactions. Tes montants restent dans cet appareil.</div></div>}
       </></ErrorBoundary>}
-      {tab === "forecast" && <ErrorBoundary inline label="Forecast"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={liveHistMap} macroCtx={macroCtx} snapshots={snapshots}/></ErrorBoundary>}
-      {tab === "moteur" && <ErrorBoundary inline label="Moteur"><MemoryView snapshots={snapshots} port={enriched} m={m} eurusd={eurusd} qHistMap={liveHistMap} spyHist={spyHist}/></ErrorBoundary>}
+      {tab === "prev" && <ErrorBoundary inline label="Prévisions"><ForecastView port={enriched} m={m} onSelect={setDetail} prices={prices} qHistMap={liveHistMap} macroCtx={macroCtx} snapshots={snapshots} eurusd={eurusd} spyHist={spyHist} sub={prevSub} onSub={setPrevSub}/></ErrorBoundary>}
+      {tab === "opp" && <ErrorBoundary inline label="Opportunités"><OpportunityScanner port={enriched} onSelect={setDetail}/><WatchlistView port={enriched} m={m}/></ErrorBoundary>}
+      {tab === "vente" && <ErrorBoundary inline label="Vente"><SellSimulatorCard key={sellTk || "-"} port={enriched} initialTicker={sellTk}/></ErrorBoundary>}
 
       {detail && detailPort && <ErrorBoundary inline label="Détail"><DetailView
         ticker={detail} port={enriched} snapshots={snapshots}
         alerts={alerts} eurusd={eurusd} onBack={() => setDetail(null)}
+        onSell={t => { setSellTk(t); setTabRaw("vente"); setDetail(null); }}
       /></ErrorBoundary>}
 
       {cfgOpen && (
@@ -6867,14 +7467,8 @@ function App() {
       {toast && <div className="toast">{toast}</div>}
 
       <nav className="tab">
-        {[
-          {k:"global",  l:"Global"},
-          {k:"cto",     l:"CTO"},
-          {k:"pea",     l:"PEA"},
-          {k:"forecast",l:"Forecast"},
-          {k:"moteur",  l:"Moteur"}
-        ].map(t => (
-          <div key={t.k} className={"tb"+(tab===t.k?" ac":"")} onClick={() => { setTab(t.k); setDetail(null); setCfgOpen(false); }}>
+        {NAV_TABS.map(t => (
+          <div key={t.k} className={"tb"+(tab===t.k?" ac":"")} onClick={() => { setTabRaw(t.k); setDetail(null); setCfgOpen(false); }}>
             <div className="ic"><NavIcon k={t.k}/></div>
             <div>{t.l}</div>
           </div>
