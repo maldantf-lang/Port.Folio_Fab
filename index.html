@@ -122,7 +122,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot, Area, AreaChart, ComposedChart } = Recharts;
 
 /* ============== CONSTANTES ============== */
-const BUILD = "v20.36-2026-10-14-039";
+const BUILD = "v20.37-2026-11-03-040";
 
 /* ═══ FISCALITÉ (v20) — déterministe, projetée « à la revente » ═══
    Barème 2026 : prélèvements sociaux 18,6 % (la CSG sur les revenus du capital passe de 17,2 % à 18,6 %,
@@ -163,6 +163,7 @@ const STORE_KEY = "fab-pf-v6";
 const ALERTS_KEY = "fab-pf-alerts-v6";
 const DCA_KEY = "fab-pf-dca-v1";
 const WORKER_KEY = "fab-worker-url"; // URL du relais Cloudflare (source principale des cours)
+const WORKER2_KEY = "fab-worker2-url"; // v20.37 — relais secondaire facultatif (watchlist, secteurs, opportunités)
 const DEFAULT_WORKER = "https://portfolio-fab.maldantf.workers.dev"; // relais intégré par défaut (remplaçable en Réglages)
 const DB_NAME = "fab-pf-history";
 const DB_VERSION = 1;
@@ -1300,6 +1301,32 @@ function getWorkerUrl() {
   catch(e) {}
   return DEFAULT_WORKER;
 }
+function getWorker2Url() {
+  try { const u = (localStorage.getItem(WORKER2_KEY) || "").trim(); if (/^https:\/\//.test(u)) return u.replace(/\/+$/,""); }
+  catch(e) {}
+  return "";
+}
+/* v20.37 — L'app envoie elle-même ses symboles au relais (?s=CLE:SYMBOLE,…), par tranches de 22
+   (limite du Worker v2) : le Worker n'a plus jamais besoin d'être modifié pour suivre un support.
+   Relais principal : portefeuille, PEA, indices de référence (ils sont historisés chaque soir).
+   Relais secondaire (s'il est configuré) : watchlist et ETF sectoriels. Sans relais secondaire,
+   tout passe par le principal. Un ancien Worker (v1) ignore ?s= et renvoie sa propre liste. */
+const WORKER_CHUNK = 22;
+function workerCalls(yf, w1, w2) {
+  const valid = ([k,m]) => m && m.y && /^[A-Za-z0-9_.-]{1,12}$/.test(k) && /^[A-Za-z0-9.^=_-]{1,20}$/.test(m.y);
+  const all = Object.entries(yf || {}).filter(valid);
+  const isSide = ([,m]) => !!(m.watch || m.sector);
+  const main = w2 ? all.filter(e => !isSide(e)) : all;
+  const side = w2 ? all.filter(isSide) : [];
+  const calls = [];
+  const push = (u, arr) => {
+    for(let i=0;i<arr.length;i+=WORKER_CHUNK)
+      calls.push(u + (u.includes("?")?"&":"?") + "s=" + encodeURIComponent(arr.slice(i,i+WORKER_CHUNK).map(([k,m]) => k+":"+m.y).join(",")));
+  };
+  if (w1) push(w1, main);
+  if (w2) push(w2, side);
+  return calls;
+}
 async function fetchViaWorker(url, _retry) {
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), 9000);
@@ -1327,15 +1354,19 @@ async function fetchAllPrices(fast) {
   // et couvre tous les tickers. Sans relais/en échec : le cache local et PRICE_DEF prennent le relais.
   const wurl = getWorkerUrl();
   if (wurl) {
-    try {
-      const w = await fetchViaWorker(wurl);
-      if (w && w.prices && Object.keys(w.prices).length) {
-        Object.assign(results, w.prices);
-        const nowW = Date.now();
-        Object.keys(w.prices).forEach(t => { ts[t] = nowW; });
-        if (w.eurusd) eurusd = w.eurusd;
-      }
-    } catch(e) { DBG && console.warn("[Relais] indisponible", e.message); }
+    // v20.37 : tranches ?s= en parallèle ; si TOUTES échouent, dernier essai à l'ancienne (sans paramètre).
+    const got = await Promise.all(workerCalls(YF, wurl, getWorker2Url()).map(u =>
+      fetchViaWorker(u).catch(e => { DBG && console.warn("[Relais] tranche en échec", e.message); return null; })));
+    if (!got.some(w => w && w.prices && Object.keys(w.prices).length)) {
+      try { got.push(await fetchViaWorker(wurl)); } catch(e) { DBG && console.warn("[Relais] indisponible", e.message); }
+    }
+    got.forEach(w => {
+      if (!w || !w.prices || !Object.keys(w.prices).length) return;
+      Object.assign(results, w.prices);
+      const nowW = Date.now();
+      Object.keys(w.prices).forEach(t => { ts[t] = nowW; });
+      if (w.eurusd && eurusd == null) eurusd = w.eurusd;
+    });
   }
   const workerOk = Object.keys(results).length > 0;
   if (!workerOk) DBG && console.warn("[Relais] aucun cours reçu — cache/PRICE_DEF conservés");
@@ -4458,6 +4489,52 @@ function BioSettings({ pinActive }) {
 }
 
 // AUTO-DIAGNOSTIC — vérifie en direct l'état des dépendances de l'appli
+/* v20.37 — Relais secondaire facultatif (même code que le principal, déployé sous un autre nom).
+   Il prend la watchlist et les ETF sectoriels : le principal reste sous sa limite de sous-requêtes. */
+function Worker2Field() {
+  const [u2, setU2] = useState(() => { try { return localStorage.getItem(WORKER2_KEY) || ""; } catch(e){ return ""; } });
+  const [st, setSt] = useState("idle");
+  const [msg, setMsg] = useState("");
+  const save = () => {
+    const u = u2.trim();
+    try {
+      if (u === "") { localStorage.removeItem(WORKER2_KEY); setSt("idle"); setMsg("Relais secondaire retiré : tout passe par le relais principal."); return; }
+      if (!/^https:\/\//.test(u)) { setSt("fail"); setMsg("L'URL doit commencer par https://"); return; }
+      localStorage.setItem(WORKER2_KEY, u); setSt("idle"); setMsg("Enregistré. Pris en compte au prochain rafraîchissement.");
+    } catch(e){ setMsg("Impossible d'enregistrer (stockage bloqué ?)"); }
+  };
+  const test = async () => {
+    const u = u2.trim().replace(/\/+$/,"");
+    if (!/^https:\/\//.test(u)) { setSt("fail"); setMsg("URL invalide (https:// requis)."); return; }
+    setSt("testing"); setMsg(""); const t0 = Date.now();
+    try {
+      const j = await fetchViaWorker(u + (u.includes("?")?"&":"?") + "s=" + encodeURIComponent("SPY:SPY"));
+      if (j && j.prices && j.prices.SPY > 0) { setSt("ok"); setMsg("✓ Répond en " + (Date.now()-t0) + " ms" + (j.v === 2 ? " · version 2 (symboles envoyés par l'app)" : " · ancienne version")); }
+      else { setSt("fail"); setMsg("Le relais répond mais sans cours."); }
+    } catch(e){ setSt("fail"); setMsg("Le relais ne répond pas : " + (e.message || e)); }
+  };
+  return (
+    <div style={{borderTop:"1px solid rgba(255,255,255,.06)",marginTop:8,paddingTop:8}}>
+      <div className="row" style={{padding:"2px 0"}}>
+        <span style={{fontSize:11}}>{st==="fail"?"🔴":u2.trim()?"🟢":"⚪"} Relais secondaire</span>
+        <span className="mono" style={{fontSize:10,color:"#8892a8"}}>{u2.trim() ? "watchlist et secteurs" : "facultatif"}</span>
+      </div>
+      <div style={{fontSize:10,color:"#8892a8",marginTop:5}}>Adresse du relais secondaire</div>
+      <input value={u2} onChange={e=>setU2(e.target.value)} placeholder="https://….workers.dev"
+        spellCheck={false} autoCapitalize="off" autoCorrect="off"
+        style={{width:"100%",boxSizing:"border-box",background:"#161c2a",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,color:"#dde3f0",fontSize:11,padding:"7px 9px",marginTop:4,fontFamily:"'SF Mono',Consolas,monospace"}}/>
+      <div style={{display:"flex",gap:6,marginTop:6}}>
+        <button className="bn bn-b" style={{fontSize:10,padding:"4px 12px",flex:1}} onClick={save}>Enregistrer</button>
+        <button className="bn bn-b" style={{fontSize:10,padding:"4px 12px",flex:1}} onClick={test} disabled={st==="testing"}>{st==="testing"?"…":"Tester"}</button>
+      </div>
+      {msg && <div style={{fontSize:10,color:st==="ok"?"#2ecc8f":st==="fail"?"#e85d5d":"#8892a8",marginTop:5,lineHeight:1.4}}>{msg}</div>}
+      <div style={{fontSize:9,color:"#3a4560",marginTop:6,lineHeight:1.4}}>
+        Facultatif. Laisse vide : tout passe par le relais principal. Clé d'accès : ajoute « ?k=ta-clé » à la fin de chaque adresse.
+      </div>
+    </div>
+  );
+}
+
 function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap, fetchCount, notifPerm, onAskNotif }) {
   const [snapN, setSnapN] = useState(null);
   const [wurl, setWurl] = useState(() => { try { return localStorage.getItem(WORKER_KEY) || DEFAULT_WORKER; } catch(e){ return DEFAULT_WORKER; } });
@@ -4547,6 +4624,7 @@ function SystemHealth({ port, prices, eurusd, lastTs, priceTsMap, fetchCount, no
           Un relais est déjà intégré par défaut : les cours sont frais à l'ouverture, sans rien configurer. Tu peux le remplacer par le tien (Enregistrer), ou vider le champ + Enregistrer pour revenir au relais intégré.
         </div>
       </div>
+      <Worker2Field/>
 
       <div style={{fontSize:9,color:"#3a4560",marginTop:8,lineHeight:1.4}}>
         🟢 OK · 🟡 à surveiller · 🔴 problème. Les cours arrivent par ton relais Cloudflare ; s'il est indisponible, l'app affiche les dernières valeurs connues.
